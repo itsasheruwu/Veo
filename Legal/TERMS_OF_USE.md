@@ -1,132 +1,87 @@
-# Remodex — Terms of Use
+# Veo Terms of Use
 
-**Last updated:** March 25, 2026
+**Last updated:** August 6, 2026
 
-These Terms of Use ("Terms") govern your access to and use of the Remodex mobile application ("App"), developed and published by Emanuele Di Pietro ("Developer", "we", "us", or "our"). By downloading, installing, or using the App, you agree to these Terms. If you do not agree, do not use the App.
+These Terms of Use ("Terms") govern your use of Veo, a native macOS application maintained by Ash. By installing or using Veo, you agree to these Terms. If you do not agree, do not use the app.
 
----
+## 1. What Veo is
 
-## 1. Description of the App
+Veo is an open-source local interface for the Codex CLI installed on your Mac. It can open local project folders, display Codex threads and tool activity, submit prompts, respond to approval requests, and ask Codex to read files, run commands, or change files under an access level you select.
 
-Remodex is an iOS companion app for controlling a Codex runtime on your Mac. The App can connect to your Mac directly or through a developer-operated hosted relay. Core features include real-time chat, git actions, photo attachments, voice transcription, pairing, trusted reconnect, and subscription-gated functionality.
+Veo does not provide an AI service, Codex account, hosted backend, subscription, or warranty for third-party services.
 
-Most coding, repository, and workspace operations run on your paired Mac, not on our hosted relay.
+## 2. Your environment and responsibility
 
-## 2. Eligibility
+You are responsible for:
 
-You must be at least 13 years old, or the minimum age required in your jurisdiction, to use the App.
+- the projects, files, and credentials available on your Mac
+- the prompts, answers, commands, and approvals submitted through Veo
+- choosing an appropriate read-only, workspace-write, or full-access mode
+- reviewing commands, output, and changes before relying on, committing, publishing, or deploying them
+- complying with the licenses, policies, and laws that apply to your work
+- securing your Mac and maintaining backups of important data
 
-## 3. Pairing and Security
+Full-access mode can allow Codex and its tools to operate outside the selected project without filesystem sandboxing. Enable it only when appropriate.
 
-The App does not require a Remodex user account. Instead, it pairs with your Mac through a QR code flow and secure cryptographic session setup. You are responsible for keeping your paired devices secure and for activity performed through your paired environment.
+## 3. AI output and tool actions
 
-## 4. Pro Subscription
+AI-generated output can be incomplete, inaccurate, insecure, or unsuitable for your purpose. Tool actions can modify or delete data, use credentials available in your environment, or interact with third-party systems. Review important output and actions independently.
 
-### 4.1 Subscription Features
+You remain responsible for decisions and work performed with Veo, including source changes, messages, releases, purchases, deployments, and other external actions.
 
-The App offers an optional Pro subscription. Pro may include features such as:
+## 4. Third-party products and services
 
-- faster service tiers or related runtime defaults
-- git actions from iPhone
-- voice transcription
-- subagents and slash-command workflows
-- access to developer-operated hosted relay/connectivity features
+You must install and configure the Codex CLI separately. Codex, OpenAI, source-control hosts, package registries, model providers, MCP servers, and other tools used from your workspace may be governed by their own terms, privacy policies, licenses, availability, and charges.
 
-Feature availability can vary based on the connected runtime, platform limitations, and your current build/configuration.
+Veo does not control and is not responsible for those third-party products or for their output, availability, billing, policies, or conduct.
 
-### 4.2 Billing
+Veo is an independent project. It is not an official OpenAI product and is not endorsed by or affiliated with OpenAI.
 
-- Payment is charged to your Apple ID account at confirmation of purchase.
-- Subscriptions renew automatically unless cancelled at least 24 hours before the end of the billing period.
-- Renewal is charged by Apple within 24 hours before the current period ends.
-- You can manage or cancel subscriptions in your Apple account settings.
+## 5. Acceptable use
 
-### 4.3 Trials and Refunds
+You may not use Veo to:
 
-- If a free trial is offered, any unused portion is forfeited when you purchase a subscription.
-- Refunds are handled by Apple under App Store rules.
+- violate applicable law or the rights of others
+- access data or systems without authorization
+- create, distribute, or operate malware or abusive systems
+- interfere with Veo, Codex, or third-party services
+- bypass security controls or conceal unauthorized activity
+- misrepresent unreviewed generated output as verified work
 
-## 5. Developer-Operated Services
+## 6. Open-source license
 
-To provide the App Store experience, Remodex may operate hosted services such as:
+The Veo source code is distributed under the repository's [Apache License 2.0](../LICENSE). That license governs copying, modification, and distribution of the source. Third-party components remain subject to their own licenses.
 
-- a relay that routes traffic between your iPhone and paired Mac
-- a trusted reconnect endpoint
+These Terms address use of the app and do not remove rights granted by an applicable open-source license.
 
-These services are part of the Remodex product offering. They do not run Codex for you and do not replace your paired Mac runtime.
+## 7. Ownership
 
-## 6. Third-Party Services
+The Veo name, branding, and original app presentation belong to the maintainer. Third-party names and marks belong to their respective owners. No license to a third-party mark is granted or implied.
 
-The App also relies on third-party services, including:
+## 8. Availability and changes
 
-- **Apple** for App Store billing, subscriptions, and platform services
-- **RevenueCat** for subscription/entitlement handling
-- **OpenAI / ChatGPT** for voice transcription when you use voice mode
+Veo is an evolving open-source project. Features, compatibility, documentation, and distribution may change or stop at any time. Continuous maintenance, support, compatibility with every Codex release, and uninterrupted availability are not promised.
 
-Your use of those services may also be subject to their own terms and privacy policies.
+## 9. Disclaimer of warranties
 
-## 7. Acceptable Use
+TO THE MAXIMUM EXTENT PERMITTED BY LAW, VEO IS PROVIDED "AS IS" AND "AS AVAILABLE," WITHOUT WARRANTIES OF ANY KIND, EXPRESS OR IMPLIED. WE DO NOT GUARANTEE THAT OUTPUT WILL BE ACCURATE, THAT TOOL ACTIONS WILL BE SAFE OR REVERSIBLE, OR THAT THE APP WILL BE ERROR-FREE, SECURE, OR AVAILABLE.
 
-You agree not to:
+## 10. Limitation of liability
 
-- use the App for unlawful purposes
-- interfere with or abuse the App, bridge, relay, or connected runtime
-- transmit malware, harmful payloads, or abusive traffic
-- attempt to bypass security, entitlement, or pairing protections
-- use the App to infringe the rights of others
+TO THE MAXIMUM EXTENT PERMITTED BY LAW, THE MAINTAINER AND CONTRIBUTORS WILL NOT BE LIABLE FOR INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, EXEMPLARY, OR PUNITIVE DAMAGES, OR FOR LOSS OF DATA, PROFITS, REVENUE, OR BUSINESS OPPORTUNITY, ARISING FROM OR RELATED TO VEO.
 
-## 8. Open Source
+TO THE MAXIMUM EXTENT PERMITTED BY LAW, TOTAL LIABILITY FOR CLAIMS RELATING TO VEO WILL NOT EXCEED THE AMOUNT YOU PAID DIRECTLY FOR VEO DURING THE TWELVE MONTHS BEFORE THE CLAIM, IF ANY.
 
-Remodex includes open-source code and is published in public source form. Source-code use is governed by the applicable repository license. These Terms apply to the distributed mobile application and any related services we operate for it.
+Some jurisdictions do not allow certain warranty exclusions or liability limitations, so parts of these sections may not apply to you. Mandatory consumer rights remain unaffected.
 
-## 9. Intellectual Property
+## 11. Ending use
 
-The Remodex name, branding, and app presentation are owned by the Developer, except for third-party marks belonging to their respective owners. Nothing in these Terms grants you rights to our branding beyond normal use of the App.
+You may stop using Veo at any time. The maintainer may stop distributing or maintaining it. Provisions that should reasonably survive—such as ownership, warranty disclaimers, and liability limitations—will continue to apply.
 
-## 10. Availability and Changes
+## 12. General terms
 
-We may update, change, suspend, or discontinue features of the App, hosted relay, pricing, or subscription offerings at any time. We may also update these Terms, and your continued use after an update constitutes acceptance of the revised Terms.
+Applicable law governs these Terms. If a provision is found unenforceable, the remaining provisions continue in effect. A failure to enforce a provision is not a waiver of the right to enforce it later.
 
-## 11. Disclaimer of Warranties
+## 13. Contact
 
-THE APP AND ANY RELATED SERVICES ARE PROVIDED "AS IS" AND "AS AVAILABLE" WITHOUT WARRANTIES OF ANY KIND, TO THE MAXIMUM EXTENT PERMITTED BY LAW. WE DO NOT GUARANTEE THAT THE APP, HOSTED RELAY, OR YOUR CONNECTED RUNTIME WILL ALWAYS BE AVAILABLE, ERROR-FREE, OR SECURE.
-
-## 12. Limitation of Liability
-
-TO THE MAXIMUM EXTENT PERMITTED BY LAW, THE DEVELOPER WILL NOT BE LIABLE FOR INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, EXEMPLARY, OR PUNITIVE DAMAGES, OR FOR LOSS OF DATA, PROFITS, REVENUE, OR BUSINESS OPPORTUNITY, ARISING FROM OR RELATED TO YOUR USE OF THE APP OR RELATED SERVICES.
-
-TO THE MAXIMUM EXTENT PERMITTED BY LAW, THE DEVELOPER'S TOTAL LIABILITY FOR ANY CLAIM ARISING OUT OF OR RELATING TO THE APP OR RELATED SERVICES WILL NOT EXCEED THE AMOUNT YOU PAID FOR THE APP'S SUBSCRIPTIONS IN THE TWELVE (12) MONTHS BEFORE THE CLAIM.
-
-## 13. Suspension and Termination
-
-We may suspend or terminate access to the App's hosted services, or your use of the App, if needed to protect users, infrastructure, legal compliance, or service integrity.
-
-## 14. Governing Law
-
-These Terms are governed by the laws of Italy, without regard to conflict-of-law rules. Any dispute relating to these Terms will be resolved in the courts of Italy, unless applicable law requires otherwise.
-
-## 15. Apple App Store Terms
-
-If you obtained the App through the Apple App Store, the following additional terms apply:
-
-- These Terms are between you and the Developer only, and not with Apple.
-- The license granted to you for the App is limited to a non-transferable license to use the App on Apple-branded products that you own or control, subject to the Apple Media Services Usage Rules.
-- Apple also publishes a standard end-user license framework for App Store apps: [Apple Licensed Application End User License Agreement (Standard EULA)](https://www.apple.com/legal/internet-services/itunes/dev/stdeula/).
-- The Developer, not Apple, is responsible for providing maintenance and support for the App.
-- In the event of any failure of the App to conform to an applicable warranty, you may notify Apple, and Apple may refund the purchase price, if any, under its applicable policies. To the maximum extent permitted by law, Apple has no other warranty obligation with respect to the App.
-- The Developer, not Apple, is responsible for addressing claims relating to the App, including product liability claims, claims that the App fails to conform to legal or regulatory requirements, and claims arising under consumer protection, privacy, or similar laws.
-- The Developer, not Apple, is responsible for investigating, defending, settling, and discharging any third-party intellectual property infringement claim relating to the App.
-- You represent and warrant that you are not located in a country subject to a U.S. Government embargo, and that you are not listed on any U.S. Government list of prohibited or restricted parties.
-- Apple and its subsidiaries are third-party beneficiaries of these Terms and may enforce them against you as applicable.
-
-## 16. Severability
-
-If any provision of these Terms is found unenforceable, the remaining provisions will remain in full force and effect.
-
-## 17. Contact
-
-If you have questions about these Terms, you can reach us at:
-
-- **Email:** emandipietro@gmail.com
-- **GitHub:** [github.com/Emanuele-web04/remodex](https://github.com/Emanuele-web04/remodex)
-- **X (Twitter):** [@emanueledpt](https://x.com/emanueledpt)
+For questions about Veo or these Terms, contact Ash through the [Veo repository](https://github.com/itsasheruwu/Veo). Do not post credentials, private prompts, or other sensitive information in a public issue.

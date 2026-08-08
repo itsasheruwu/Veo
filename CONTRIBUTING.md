@@ -1,177 +1,110 @@
-# Contributing to Remodex
+# Contributing to Veo
 
-I am not actively accepting contributions right now.
+Thanks for helping improve Veo. This repository contains a single native macOS app that connects directly to the Codex CLI installed on the same Mac.
 
-This project is very early. Things change fast, priorities shift, and I'm still figuring out the right direction. If you open a PR or issue, there's a good chance I close it, defer it, or never get to it. That's not personal — I just need to stay focused.
+## Before you start
 
-## If you still want to contribute
+- Use macOS 14 or later and Xcode 16 or later.
+- Install and authenticate the Codex CLI.
+- Read [AGENTS.md](AGENTS.md) for the repository's runtime invariants and implementation guardrails.
+- Keep unrelated local changes intact. The repository is often developed with an in-progress working tree.
 
-Read this whole file first.
+Veo is local-first. Contributions must not add a hosted control plane, remote relay, phone companion, account or purchase gate, bundled credentials, analytics, or hardcoded production service.
 
-### What I'm most likely to accept
+## Build the app
 
-- Small, focused bug fixes
-- Small reliability or performance improvements
-- Typo and documentation fixes
-
-### What I'm least likely to accept
-
-- Large PRs
-- Drive-by feature work
-- Opinionated rewrites or refactors
-- Scope expansion I didn't ask for
-
-### Before opening a PR
-
-- **Open an issue first** for anything non-trivial. Describe the problem, not your solution.
-- Keep changes minimal. One fix per PR.
-- Explain exactly what changed and exactly why.
-- If it touches UI, include a screenshot or video.
-
-Opening a PR does not create an obligation on my side. I may close it. I may ignore it. I may take the idea and implement it differently. That's how early-stage projects work.
-
----
-
-## Local Development Setup
-
-### Prerequisites
-
-- **Node.js** v18+
-- **[Codex CLI](https://github.com/openai/codex)** installed and working
-- **[Codex desktop app](https://openai.com/index/codex/)** (optional — for viewing threads on Mac)
-- **macOS** (required for desktop refresh; core bridge works on any OS)
-- **Xcode 16+** (only for building the iOS app)
-- **iPhone** with the Remodex app (or built from source)
-
-### Bridge setup
+For the normal local build and launch flow:
 
 ```sh
-# Clone the repo
-git clone https://github.com/Emanuele-web04/remodex.git
-cd remodex
-
-# Start a local relay + bridge together
-./run-local-remodex.sh
+./script/build_and_run.sh
 ```
 
-This launcher:
-1. Spawns a Codex `app-server` process
-2. Starts a local relay on `/relay/{sessionId}`
-3. Points the bridge at that relay
-4. Prints a QR code in your terminal for the initial trust bootstrap
-
-For a temporary public tunnel to that local relay, start the tunnel in one terminal:
+For a build followed by process verification:
 
 ```sh
-cloudflared tunnel --url http://127.0.0.1:9000
+./script/build_and_run.sh --verify
 ```
 
-Then pass the generated URL to the launcher in another terminal:
+The equivalent build command is:
 
 ```sh
-./run-local-remodex.sh --relay-url https://<random>.trycloudflare.com
+xcodebuild \
+  -project Veo.xcodeproj \
+  -scheme Veo \
+  -configuration Debug \
+  -derivedDataPath /tmp/veo-derived \
+  build \
+  CODE_SIGNING_ALLOWED=NO
 ```
 
-If you only want the bridge process:
+The only shared scheme is `Veo`. Do not add iOS, widget, menu-bar helper, or mobile package graphs. The existing `MenuBarExtra` belongs to the Mac app process.
+
+## Understand the boundaries
+
+### Runtime
+
+- `CodexAppServerClient` owns one local `codex app-server --stdio` subprocess.
+- App-server stdout is newline-delimited JSON-RPC only. Send diagnostics to stderr.
+- Correlate every response by request ID and keep one runtime owner per app process.
+- Resolve Codex from `CODEX_EXECUTABLE`, the GUI `PATH`, Homebrew, or common local install paths.
+
+### Threads and projects
+
+- A thread's recorded local `cwd` is authoritative.
+- Keep every repository visible in the sidebar; selecting a project must not filter away other repositories.
+- Opening or creating a cross-project thread must switch local context automatically.
+- Default new threads to workspace-scoped writes. Broader access must remain explicit.
+
+### Timeline and turns
+
+- `turn/started` can arrive without a usable turn ID, so preserve the per-thread running fallback.
+- Recover the active turn through `thread/read` before interrupting when needed.
+- Rehydrate the selected thread and running state after reconnect or relaunch.
+- Keep assistant output item-scoped and merge late deltas into their original items.
+- Preserve item-aware history reconciliation, structured request UI, and plan/reasoning structure.
+
+## Code organization
+
+- Put shared runtime and state logic in `Services/` or `Stores/`.
+- Keep protocol and presentation models in `Models/`.
+- Keep views focused on layout, interaction, and rendering.
+- Prefer SwiftUI and native macOS windows, menus, sidebars, inspectors, settings, keyboard shortcuts, and accessibility APIs.
+- Use semantic system colors and preserve the app's dark desktop presentation.
+- Avoid duplicated coordinators, placeholder code, one-off compatibility layers, and dead predecessor terminology.
+
+## Documentation
+
+Documentation must describe the current Veo app, its direct local transport, and the actual repository layout. Do not add instructions for mobile pairing, relays, subscriptions, hosted deployment, or production domains.
+
+When behavior changes, update the README, legal notice, contributor guidance, or agent guidance in the same change when relevant. Keep `AGENTS.md` and `CLAUDE.md` aligned.
+
+## Validation
+
+Use verification proportional to the change:
+
+- Documentation-only changes: check links, commands, formatting, and stale terms.
+- Small Swift changes: inspect the affected path, run a targeted `Veo` build, launch the built app, and verify the process.
+- Runtime or UI changes: also exercise the affected workflow in the packaged app when practical.
+
+Do not run Xcode tests unless the task explicitly requires them. A successful build alone does not prove thread recovery, JSON-RPC behavior, or UI state.
+
+Before handing off a change, run:
 
 ```sh
-cd phodex-bridge
-npm install
-REMODEX_RELAY="ws://localhost:9000/relay" npm start
+git diff --check
 ```
 
-That runs `remodex up`, which:
-1. Spawns a Codex `app-server` process
-2. Connects to the configured relay
-3. On macOS, starts the built-in background bridge service
-4. Prints a QR code in your terminal when first-time pairing or recovery is needed
+## Pull requests
 
-Scan the QR code with the Remodex iOS app to trust that Mac.
+Keep pull requests narrow and explain:
 
-### iOS app setup
+- what user-visible or runtime behavior changed
+- which project and thread invariants were considered
+- how the change was verified
+- any behavior that still needs live verification
 
-```sh
-cd CodexMobile
-open CodexMobile.xcodeproj
-```
+Never include credentials, private project paths, generated build products, local Codex state, or personal environment files.
 
-1. Select your team in **Signing & Capabilities** (you'll need an Apple Developer account)
-2. Pick a target device (physical iPhone or simulator)
-3. Build and run (Cmd+R)
+## License
 
-The app uses SwiftUI and the current project target is iOS 18.6. No CocoaPods or SPM dependencies — it's a standalone Xcode project.
-
-### Testing a full local session
-
-1. Start the local launcher: `./run-local-remodex.sh`
-2. Open the iOS app and scan the QR code
-3. Create a new thread from the app
-4. Send a message — you should see Codex respond in real-time
-5. Try git operations from the phone (commit, push, branch switching)
-6. Reopen the app and verify that the trusted reconnect path is used instead of forcing a fresh QR immediately
-
-### Environment variables
-
-For OSS/local development, prefer the launcher above. If you want to point the bridge process at your own relay manually without the launcher, export `REMODEX_RELAY` in your shell:
-
-```sh
-# Connect to an existing Codex instance instead of spawning one
-REMODEX_CODEX_ENDPOINT=ws://localhost:8080 npm start
-
-# Use your own self-hosted relay endpoint (`ws://` is unencrypted)
-REMODEX_RELAY="ws://localhost:9000/relay" npm start
-
-# Enable auto-refresh of Codex.app on Mac
-REMODEX_REFRESH_ENABLED=true npm start
-```
-
-### Project structure
-
-```
-remodex/
-├── phodex-bridge/          # Node.js CLI bridge (npm package)
-│   ├── bin/remodex.js      # CLI entrypoint
-│   └── src/
-│       ├── bridge.js               # Core relay + message forwarding
-│       ├── codex-transport.js      # Spawn vs WebSocket abstraction
-│       ├── codex-desktop-refresher.js  # Debounced Codex.app refresh
-│       ├── git-handler.js          # Git command execution from phone
-│       ├── workspace-handler.js    # Workspace/cwd management
-│       ├── session-state.js        # Thread persistence (~/.remodex/)
-│       ├── rollout-watch.js        # Thread event log tailing
-│       └── qr.js                   # QR code generation
-│
-├── CodexMobile/            # Xcode project root
-│   ├── CodexMobile/        # App source target
-│   │   ├── Services/       # Core services
-│   │   │   ├── CodexService.swift              # Main service coordinator
-│   │   │   ├── CodexService+Connection.swift   # WebSocket connection
-│   │   │   ├── CodexService+Incoming.swift     # Message handling
-│   │   │   ├── CodexService+Messages.swift     # Message composition
-│   │   │   ├── CodexService+History.swift      # Thread history
-│   │   │   ├── CodexService+ThreadsTurns.swift # Thread/turn management
-│   │   │   ├── GitActionsService.swift         # Git operations
-│   │   │   └── AppEnvironment.swift            # Runtime config
-│   │   ├── Views/          # SwiftUI views
-│   │   │   ├── Turn/       # Message timeline + composer
-│   │   │   ├── Sidebar/    # Project/thread navigation
-│   │   │   └── Home/       # Home + onboarding
-│   │   └── Models/         # Data models
-│   ├── CodexMobileTests/   # Unit tests
-│   ├── CodexMobileUITests/ # UI tests
-│   └── BuildSupport/       # Build support files
-```
-
-### Code style
-
-- **Bridge**: CommonJS, no transpilation, no TypeScript. Keep it simple.
-- **iOS**: SwiftUI, async/await, MainActor isolation. Follow existing patterns.
-- No linter or formatter is enforced — just match what's already there.
-
-### Trust model
-
-- The first QR pairing is possession-based: it contains the relay URL and a live session ID.
-- After that first handshake, the iPhone stores a trusted Mac record and can ask the relay for the Mac's current live session again.
-- Set `REMODEX_RELAY` to a relay you control when you are not using the local launcher, or pass the relay URL to the launcher with `--relay-url`. Use `wss://` when you want TLS in transit.
-- Remodex uses an authenticated end-to-end encrypted transport after pairing completes. The relay code is public for inspection, but deployed relay details should stay in private config.
-- The built-in daemon / background service path is currently macOS-only. Linux and Windows can still run the bridge, but contributors should treat the daemon logic as platform-specific.
+By contributing, you agree that your contributions may be distributed under the repository's [Apache License 2.0](LICENSE).

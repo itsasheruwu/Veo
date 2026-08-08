@@ -1,0 +1,52 @@
+name: Veo macOS Build
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/veo-macos-build.yml"
+      - "BuildSupport/**"
+      - "Veo.xcodeproj/**"
+      - "Veo/**"
+      - "script/**"
+  pull_request:
+    paths:
+      - ".github/workflows/veo-macos-build.yml"
+      - "BuildSupport/**"
+      - "Veo.xcodeproj/**"
+      - "Veo/**"
+      - "script/**"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Veo
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Build unsigned debug app
+        run: |
+          set -euo pipefail
+
+          xcodebuild \
+            -project Veo.xcodeproj \
+            -scheme Veo \
+            -configuration Debug \
+            -derivedDataPath "$RUNNER_TEMP/veo-derived" \
+            build \
+            CODE_SIGNING_ALLOWED=NO

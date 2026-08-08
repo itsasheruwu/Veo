@@ -1,52 +1,36 @@
-# Dependencies
-node_modules/
-
 # macOS
 .DS_Store
 **/.DS_Store
 
-# Xcode user data
+# Xcode user state
 *.xcuserdatad/
 **/xcuserdata/
 *.xcworkspace/xcuserdata/
 
-# Xcode build
+# Xcode build products
 DerivedData/
 build/
-*.ipa
+*.xcarchive
+*.dSYM
+*.dSYM.zip
 
-# Environment / secrets
+# Local environment and credentials
 .env
 .env.*
-*.pem
-*.p12
-*.key
 *.cer
-CodexMobile/BuildSupport/PrivateOverrides.xcconfig
-phodex-bridge/src/private-defaults.json
-security_best_practices_report.md
+*.key
+*.p12
+*.pem
 
-# Build artifacts
+# Local agent and editor state
+.claude/
+.codex/
+.cursor/
+.plan/
+.vscode/
+
+# Temporary files
 *.swp
 *.swo
 *~
 output/
-
-# Minified JS bundles (not part of this project)
-/main-*.js
-/main.js
-/deeplinks-*.js
-/links-*.js
-/scheme-*.js
-/initial-route-atom-*.js
-/use-navigate-to-local-conversation-*.js
-/preload.js
-
-# Temp files
-$TMP_PLACEHOLDER
-
-# Claude project config (local only)
-.claude/
-
-# VS Code
-.vscode/

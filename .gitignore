@@ -1,0 +1,36 @@
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Xcode user state
+*.xcuserdatad/
+**/xcuserdata/
+*.xcworkspace/xcuserdata/
+
+# Xcode build products
+DerivedData/
+build/
+*.xcarchive
+*.dSYM
+*.dSYM.zip
+
+# Local environment and credentials
+.env
+.env.*
+*.cer
+*.key
+*.p12
+*.pem
+
+# Local agent and editor state
+.claude/
+.codex/
+.cursor/
+.plan/
+.vscode/
+
+# Temporary files
+*.swp
+*.swo
+*~
+output/

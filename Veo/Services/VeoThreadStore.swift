@@ -74,7 +74,7 @@ actor VeoThreadStore {
         try openIfNeeded()
         let sql = """
         SELECT veo_id, codex_thread_id, cwd, title, preview, updated_at, status,
-               is_pinned, parent_thread_id, meta_json
+               is_pinned, parent_thread_id, meta_json, workspace_kind
         FROM threads
         WHERE is_archived = ?
         ORDER BY updated_at DESC;
@@ -96,7 +96,7 @@ actor VeoThreadStore {
         let bare = DesktopThreadSelection.parse(veoID).bareID
         let sql = """
         SELECT veo_id, codex_thread_id, cwd, title, preview, updated_at, status,
-               is_pinned, parent_thread_id, meta_json
+               is_pinned, parent_thread_id, meta_json, workspace_kind
         FROM threads
         WHERE veo_id = ?
         LIMIT 1;
@@ -125,8 +125,8 @@ actor VeoThreadStore {
         let sql = """
         INSERT INTO threads (
             veo_id, codex_thread_id, cwd, title, preview, updated_at, status,
-            is_pinned, is_archived, parent_thread_id, meta_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            is_pinned, is_archived, parent_thread_id, meta_json, workspace_kind
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(veo_id) DO UPDATE SET
             codex_thread_id = excluded.codex_thread_id,
             cwd = excluded.cwd,
@@ -137,7 +137,8 @@ actor VeoThreadStore {
             is_pinned = excluded.is_pinned,
             is_archived = excluded.is_archived,
             parent_thread_id = excluded.parent_thread_id,
-            meta_json = excluded.meta_json;
+            meta_json = excluded.meta_json,
+            workspace_kind = excluded.workspace_kind;
         """
         let statement = try prepare(sql)
         defer { sqlite3_finalize(statement) }
@@ -152,6 +153,7 @@ actor VeoThreadStore {
         sqlite3_bind_int(statement, 9, isArchived ? 1 : 0)
         try bindOptionalText(statement, 10, parentBare)
         try bindText(statement, 11, metaJSON)
+        try bindText(statement, 12, thread.workspaceKind.rawValue)
         try stepDone(statement)
     }
 
@@ -240,6 +242,17 @@ actor VeoThreadStore {
             try bindText(statement, 1, bare)
             try stepDone(statement)
         }
+    }
+
+    func appManagedWorkspacePaths() throws -> Set<String> {
+        try openIfNeeded()
+        let statement = try prepare("SELECT DISTINCT cwd FROM threads WHERE workspace_kind IN ('projectless', 'temporary');")
+        defer { sqlite3_finalize(statement) }
+        var paths = Set<String>()
+        while sqlite3_step(statement) == SQLITE_ROW {
+            if let path = columnText(statement, 0) { paths.insert(path) }
+        }
+        return paths
     }
 
     func veoID(forCodexThreadID codexThreadID: String) throws -> String? {
@@ -370,9 +383,20 @@ actor VeoThreadStore {
             is_pinned INTEGER NOT NULL DEFAULT 0,
             is_archived INTEGER NOT NULL DEFAULT 0,
             parent_thread_id TEXT,
-            meta_json TEXT NOT NULL DEFAULT '{}'
+            meta_json TEXT NOT NULL DEFAULT '{}',
+            workspace_kind TEXT NOT NULL DEFAULT 'project'
         );
         """)
+        if try !hasColumn("workspace_kind", in: "threads") {
+            try exec("ALTER TABLE threads ADD COLUMN workspace_kind TEXT NOT NULL DEFAULT 'project';")
+        }
+        // The first projectless implementation called every app-managed chat
+        // "temporary". Normalize those rows once; future temporary chats are
+        // an explicit user choice.
+        if try schemaVersion() < 1 {
+            try exec("UPDATE threads SET workspace_kind = 'projectless' WHERE workspace_kind = 'temporary';")
+            try exec("PRAGMA user_version = 1;")
+        }
         try exec("""
         CREATE TABLE IF NOT EXISTS turns (
             veo_id TEXT NOT NULL,
@@ -487,6 +511,8 @@ actor VeoThreadStore {
         let isPinned = sqlite3_column_int(statement, 7) != 0
         let parentBare = columnText(statement, 8)
         let meta = jsonObject(columnText(statement, 9) ?? "{}") ?? [:]
+        let workspaceKind = columnText(statement, 10)
+            .flatMap(DesktopWorkspaceKind.init(rawValue:)) ?? .project
         return DesktopThread.makeVeo(
             id: veoBare,
             title: title,
@@ -502,8 +528,25 @@ actor VeoThreadStore {
             canAcceptDirectInput: meta["canAcceptDirectInput"] as? Bool,
             activeFlags: meta.stringArray("activeFlags") ?? [],
             agentDepth: meta.number("agentDepth").map(Int.init),
-            sessionID: meta.string("sessionId")
+            sessionID: meta.string("sessionId"),
+            workspaceKind: workspaceKind
         )
+    }
+
+    private func hasColumn(_ column: String, in table: String) throws -> Bool {
+        let statement = try prepare("PRAGMA table_info(\(table));")
+        defer { sqlite3_finalize(statement) }
+        while sqlite3_step(statement) == SQLITE_ROW {
+            if columnText(statement, 1) == column { return true }
+        }
+        return false
+    }
+
+    private func schemaVersion() throws -> Int {
+        let statement = try prepare("PRAGMA user_version;")
+        defer { sqlite3_finalize(statement) }
+        guard sqlite3_step(statement) == SQLITE_ROW else { return 0 }
+        return Int(sqlite3_column_int(statement, 0))
     }
 
     private func prepare(_ sql: String) throws -> OpaquePointer? {

@@ -124,6 +124,7 @@ final class DesktopCodexStore: ObservableObject {
     private let realtimeAudio: RealtimeAudioCoordinator
     private let defaults: UserDefaults
     private let threadStore = VeoThreadStore()
+    private let temporaryWorkspaceService: DesktopTemporaryWorkspaceService
     private var hasStarted = false
     private var connectionTask: Task<Void, Never>?
     private var planModeThreadIDs = Set<String>()
@@ -165,6 +166,7 @@ final class DesktopCodexStore: ObservableObject {
     init(
         client: CodexAppServerClient? = nil,
         gitService: LocalGitService? = nil,
+        temporaryWorkspaceService: DesktopTemporaryWorkspaceService = DesktopTemporaryWorkspaceService(),
         defaults: UserDefaults = .standard
     ) {
         let resolvedClient = client ?? CodexAppServerClient()
@@ -173,6 +175,7 @@ final class DesktopCodexStore: ObservableObject {
         self.utilityInference = DesktopUtilityInferenceCoordinator(client: resolvedClient)
         self.gitService = gitService ?? LocalGitService()
         self.realtimeAudio = resolvedRealtimeAudio
+        self.temporaryWorkspaceService = temporaryWorkspaceService
         self.defaults = defaults
 
         if let savedPath = defaults.string(forKey: "VeoDesktop.workspacePath"),
@@ -413,17 +416,38 @@ final class DesktopCodexStore: ObservableObject {
 
     private func loadVeoThreadsFromStore(archived: Bool? = nil) async {
         do {
+            let storedActive = try await threadStore.listThreads(archived: false)
+            let storedArchived = try await threadStore.listThreads(archived: true)
+            let storedThreads = storedActive + storedArchived
+            var unavailableTemporaryThreadIDs = Set<String>()
+            var temporaryRestoreError: Error?
+            for thread in storedThreads where thread.workspaceKind.isAppManaged {
+                do {
+                    try temporaryWorkspaceService.ensureWorkspace(for: thread)
+                } catch {
+                    unavailableTemporaryThreadIDs.insert(thread.id)
+                    temporaryRestoreError = error
+                }
+            }
+            try? temporaryWorkspaceService.removeOrphanedWorkspaces(
+                keeping: Set(storedThreads.filter {
+                    $0.workspaceKind.isAppManaged && !unavailableTemporaryThreadIDs.contains($0.id)
+                }.map(\.cwd))
+            )
             let active = Self.threadsWithExistingWorkspaces(
-                try await threadStore.listThreads(archived: false)
+                storedActive.filter { !unavailableTemporaryThreadIDs.contains($0.id) }
             )
             let archivedRows = Self.threadsWithExistingWorkspaces(
-                try await threadStore.listThreads(archived: true)
+                storedArchived.filter { !unavailableTemporaryThreadIDs.contains($0.id) }
             )
             threads = active.sorted { $0.updatedAt > $1.updatedAt }
             archivedThreads = archivedRows.sorted { $0.updatedAt > $1.updatedAt }
             rebuildCodexMappings()
             clearMissingSelectionIfNeeded(origin: .veo)
             clearMissingWorkspaceIfNeeded()
+            if let temporaryRestoreError {
+                transientError = "A temporary chat workspace could not be restored: \(temporaryRestoreError.localizedDescription)"
+            }
             if let archived, archived != isBrowsingArchivedThreads {
                 return
             }
@@ -545,6 +569,31 @@ final class DesktopCodexStore: ObservableObject {
 
     var hasExplicitWorkspace: Bool {
         selectedThread != nil || workspaceURL != nil
+    }
+
+    var currentWorkspaceKind: DesktopWorkspaceKind? {
+        if let selectedThread { return selectedThread.workspaceKind }
+        return workspaceURL == nil ? nil : .project
+    }
+
+    var isProjectlessWorkspace: Bool {
+        currentWorkspaceKind?.isAppManaged == true
+    }
+
+    var canToggleTemporaryChat: Bool {
+        guard let thread = selectedThread else { return false }
+        return thread.origin == .veo
+            && thread.workspaceKind.isAppManaged
+            && thread.runtimeThreadID == nil
+            && !isBusyTurn
+    }
+
+    var isTemporaryChat: Bool {
+        selectedThread?.workspaceKind == .temporary
+    }
+
+    var canUseProjectChanges: Bool {
+        currentWorkspaceKind == .project || gitRepository != nil || selectedTurnDiff?.isEmpty == false
     }
 
     var canSend: Bool {
@@ -1781,7 +1830,8 @@ final class DesktopCodexStore: ObservableObject {
                         canAcceptDirectInput: thread.canAcceptDirectInput,
                         activeFlags: thread.activeFlags,
                         agentDepth: thread.agentDepth,
-                        sessionID: thread.sessionID
+                        sessionID: thread.sessionID,
+                        workspaceKind: thread.workspaceKind
                     )
                     replaceThread(updated)
                     rebuildCodexMappings()
@@ -1837,7 +1887,8 @@ final class DesktopCodexStore: ObservableObject {
                         canAcceptDirectInput: thread.canAcceptDirectInput,
                         activeFlags: thread.activeFlags,
                         agentDepth: thread.agentDepth,
-                        sessionID: thread.sessionID
+                        sessionID: thread.sessionID,
+                        workspaceKind: thread.workspaceKind
                     )
                     replaceThread(updated)
                 } catch {
@@ -1939,13 +1990,29 @@ final class DesktopCodexStore: ObservableObject {
     func deleteThread(_ thread: DesktopThread) {
         if thread.origin == .veo {
             let affectedThreadIDs = threadFamilyIDs(rootedAt: thread.id)
+            let temporaryPaths = Set(affectedThreadIDs.compactMap { id -> String? in
+                guard let affected = findThread(id), affected.workspaceKind.isAppManaged else { return nil }
+                return affected.cwd
+            })
             Task {
                 do {
                     for id in affectedThreadIDs {
                         try await threadStore.deleteThread(veoID: id)
                     }
+                    let retainedTemporaryPaths = try await threadStore.appManagedWorkspacePaths()
+                    var cleanupError: Error?
+                    for path in temporaryPaths where !retainedTemporaryPaths.contains(path) {
+                        do {
+                            try temporaryWorkspaceService.removeWorkspace(atPath: path)
+                        } catch {
+                            cleanupError = error
+                        }
+                    }
                     reconcileDeletedThreadIDs(affectedThreadIDs)
                     rebuildCodexMappings()
+                    if let cleanupError {
+                        transientError = "The chat was deleted, but its temporary files could not be removed yet: \(cleanupError.localizedDescription)"
+                    }
                 } catch {
                     transientError = "Chat could not be deleted: \(error.localizedDescription)"
                 }
@@ -2021,7 +2088,8 @@ final class DesktopCodexStore: ObservableObject {
                         preview: object.string("preview") ?? thread.preview,
                         cwd: object.string("cwd") ?? thread.cwd,
                         codexThreadId: forkedCodexID,
-                        parentThreadID: thread.id
+                        parentThreadID: thread.id,
+                        workspaceKind: thread.workspaceKind
                     )
                     try await threadStore.upsertThread(forked, isArchived: false)
                     threads.removeAll(where: { $0.id == forked.id })
@@ -2093,7 +2161,8 @@ final class DesktopCodexStore: ObservableObject {
                         title: "Review · \(sourceThread.title)",
                         cwd: sourceThread.cwd,
                         codexThreadId: reviewRuntimeID,
-                        parentThreadID: sourceThread.id
+                        parentThreadID: sourceThread.id,
+                        workspaceKind: sourceThread.workspaceKind
                     )
                     try await threadStore.upsertThread(reviewThread, isArchived: false)
                     threads.removeAll(where: { $0.id == reviewThread.id })
@@ -2116,9 +2185,35 @@ final class DesktopCodexStore: ObservableObject {
         }
     }
 
+    func beginNewChat() {
+        createNewChat(workspaceKind: .projectless, projectURL: nil)
+    }
+
+    func beginProjectChat(at url: URL) {
+        setWorkspace(url)
+        createNewChat(workspaceKind: .project, projectURL: url)
+    }
+
     /// Switching away from a running thread is allowed: the turn keeps running on the
     /// runtime and `thread/resume` rehydrates its state when the thread is selected again.
-    func beginNewChat() {
+    private func createNewChat(workspaceKind: DesktopWorkspaceKind, projectURL: URL?) {
+        let bareID = UUID().uuidString
+        let targetWorkspaceURL: URL
+        do {
+            switch workspaceKind {
+            case .project:
+                guard let projectURL else {
+                    throw CodexAppServerClientError.invalidInput("Choose a project before starting this chat.")
+                }
+                targetWorkspaceURL = projectURL.standardizedFileURL
+            case .projectless, .temporary:
+                targetWorkspaceURL = try temporaryWorkspaceService.createWorkspace(forVeoID: bareID)
+            }
+        } catch {
+            transientError = "Chat could not be created: \(error.localizedDescription)"
+            return
+        }
+
         if realtimeSession != nil { stopRealtimeVoice() }
         searchOccurrencesTask?.cancel()
         stopInteractiveTerminalForContextChange()
@@ -2133,25 +2228,11 @@ final class DesktopCodexStore: ObservableObject {
         saveCurrentDraft()
         newChatGenerationID = UUID()
 
-        guard let workspaceURL else {
-            selectedThreadID = nil
-            defaults.removeObject(forKey: "VeoDesktop.selectedThreadID")
-            timeline = []
-            activeTurnID = nil
-            isSubmittingTurn = false
-            isRunningTurn = false
-            isPlanModeEnabled = false
-            isGoalModeEnabled = false
-            activeGoalObjective = nil
-            transientError = nil
-            availableSkillSuggestions = []
-            composerSuggestions = []
-            restoreDraft()
-            refreshInvalidatedGitContextIfNeeded()
-            return
-        }
-
-        let created = DesktopThread.makeVeo(cwd: workspaceURL.path)
+        let created = DesktopThread.makeVeo(
+            id: bareID,
+            cwd: targetWorkspaceURL.path,
+            workspaceKind: workspaceKind
+        )
         let previousDraftContext = currentDraftContextID
         threads.removeAll(where: { $0.id == created.id })
         threads.insert(created, at: 0)
@@ -2179,6 +2260,13 @@ final class DesktopCodexStore: ObservableObject {
                 await loadAccountResources()
             }
         }
+    }
+
+    func toggleSelectedChatTemporary() {
+        guard canToggleTemporaryChat, let selectedThreadID,
+              let index = threads.firstIndex(where: { $0.id == selectedThreadID }) else { return }
+        threads[index].workspaceKind = threads[index].workspaceKind == .temporary ? .projectless : .temporary
+        persistVeoThread(threads[index], isArchived: false)
     }
 
     func selectThread(_ id: String?) {
@@ -2245,15 +2333,16 @@ final class DesktopCodexStore: ObservableObject {
         panel.directoryURL = workspaceURL ?? FileManager.default.homeDirectoryForCurrentUser
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        setWorkspace(url)
-        beginNewChat()
+        beginProjectChat(at: url)
     }
 
     func chooseMediaAttachments() {
         guard hasExplicitWorkspace else { return }
         let panel = NSOpenPanel()
         panel.title = "Attach image or audio"
-        panel.message = accessMode == .fullAccess
+        panel.message = selectedThread?.workspaceKind.isAppManaged == true
+            ? "Selected media will be copied into this projectless chat."
+            : accessMode == .fullAccess
             ? "Choose local media for this message."
             : "Choose media inside the current project."
         panel.prompt = "Attach"
@@ -2269,8 +2358,12 @@ final class DesktopCodexStore: ObservableObject {
     func chooseFileMention() {
         guard hasExplicitWorkspace else { return }
         let panel = NSOpenPanel()
-        panel.title = "Mention a project file"
-        panel.message = "Choose a file inside \(effectiveWorkspaceURL.lastPathComponent)."
+        panel.title = selectedThread?.workspaceKind.isAppManaged == true
+            ? "Mention a file"
+            : "Mention a project file"
+        panel.message = selectedThread?.workspaceKind.isAppManaged == true
+            ? "Selected files will be copied into this projectless chat."
+            : "Choose a file inside \(effectiveWorkspaceURL.lastPathComponent)."
         panel.prompt = "Mention"
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
@@ -2684,24 +2777,36 @@ final class DesktopCodexStore: ObservableObject {
         var added = false
 
         for rawURL in urls {
-            let url = rawURL.standardizedFileURL.resolvingSymlinksInPath()
+            var url = rawURL.standardizedFileURL.resolvingSymlinksInPath()
             guard url.isFileURL else { continue }
             var isDirectory: ObjCBool = false
             guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
                   !isDirectory.boolValue else { continue }
 
-            let pathIsInWorkspace = isInsideWorkspace(url)
+            var pathIsInWorkspace = isInsideWorkspace(url)
+            if !pathIsInWorkspace, selectedThread?.workspaceKind.isAppManaged == true {
+                do {
+                    url = try temporaryWorkspaceService.importFile(
+                        at: url,
+                        intoWorkspaceAtPath: effectiveWorkspaceURL.path
+                    ).standardizedFileURL.resolvingSymlinksInPath()
+                    pathIsInWorkspace = true
+                } catch {
+                    transientError = "Could not copy \(rawURL.lastPathComponent) into this temporary chat: \(error.localizedDescription)"
+                    continue
+                }
+            }
             let fileExtension = url.pathExtension.lowercased()
             let kind: DesktopComposerAttachment.Kind
             if forceFileMention || (!imageExtensions.contains(fileExtension) && !audioExtensions.contains(fileExtension)) {
                 guard pathIsInWorkspace else {
-                    transientError = "File mentions must stay inside the current project."
+                    transientError = "File mentions must stay inside the current workspace."
                     continue
                 }
                 kind = .fileMention
             } else if imageExtensions.contains(fileExtension) {
                 guard accessMode == .fullAccess || pathIsInWorkspace else {
-                    transientError = "Workspace access can attach media only from the current project."
+                    transientError = "Workspace access can attach media only from the current workspace."
                     continue
                 }
                 kind = .localImage
@@ -2711,7 +2816,7 @@ final class DesktopCodexStore: ObservableObject {
                     continue
                 }
                 guard accessMode == .fullAccess || pathIsInWorkspace else {
-                    transientError = "Workspace access can attach media only from the current project."
+                    transientError = "Workspace access can attach media only from the current workspace."
                     continue
                 }
                 kind = .localAudio
@@ -2762,14 +2867,14 @@ final class DesktopCodexStore: ObservableObject {
                 let isInWorkspace = url.path == workspace || url.path.hasPrefix(workspace + "/")
                 if attachment.kind == .fileMention, !isInWorkspace {
                     throw CodexAppServerClientError.invalidInput(
-                        "File mentions must stay inside this chat's project."
+                        "File mentions must stay inside this chat's workspace."
                     )
                 }
                 if attachment.kind != .fileMention,
                    accessMode != .fullAccess,
                    !isInWorkspace {
                     throw CodexAppServerClientError.invalidInput(
-                        "Workspace access cannot send \(attachment.name) from outside this chat's project."
+                        "Workspace access cannot send \(attachment.name) from outside this chat's workspace."
                     )
                 }
             case .image, .audio:
@@ -2924,7 +3029,6 @@ final class DesktopCodexStore: ObservableObject {
 
         let requestedThreadID = selectedThreadID
         let queueKey = requestedThreadID ?? currentDraftContextID
-        let newChatWorkspacePath = requestedThreadID == nil ? effectiveWorkspaceURL.path : nil
         let originNewChatGenerationID = requestedThreadID == nil ? newChatGenerationID : nil
         // Reserve before enqueue so the composer never treats this as a waiting follow-up.
         queuedDeliveryInFlightIDs.insert(payload.id)
@@ -2938,7 +3042,6 @@ final class DesktopCodexStore: ObservableObject {
                 to: requestedThreadID,
                 fromQueue: true,
                 queuedUnder: queueKey,
-                newChatWorkspacePath: newChatWorkspacePath,
                 newChatGenerationID: originNewChatGenerationID,
                 inFlightAlreadyReserved: true
             )
@@ -2971,7 +3074,6 @@ final class DesktopCodexStore: ObservableObject {
             Task { await flushNextQueuedDraft(threadID: threadID) }
         } else {
             let queueKey = currentQueueContextID
-            let workspacePath = effectiveWorkspaceURL.path
             let generationID = newChatGenerationID
             Task {
                 guard let payload = queuedDraftsByThreadID[queueKey]?.first else { return }
@@ -2982,7 +3084,6 @@ final class DesktopCodexStore: ObservableObject {
                     to: nil,
                     fromQueue: true,
                     queuedUnder: queueKey,
-                    newChatWorkspacePath: workspacePath,
                     newChatGenerationID: generationID
                 )
             }
@@ -4343,7 +4444,8 @@ final class DesktopCodexStore: ObservableObject {
                         activeFlags: (threadObject["status"] as? [String: Any])?.stringArray("activeFlags")
                             ?? existing.activeFlags,
                         agentDepth: existing.agentDepth,
-                        sessionID: threadObject.string("sessionId") ?? existing.sessionID
+                        sessionID: threadObject.string("sessionId") ?? existing.sessionID,
+                        workspaceKind: existing.workspaceKind
                     )
                     replaceThread(updated)
                     persistVeoThread(updated, isArchived: archivedThreads.contains(where: { $0.id == uiThreadID }))
@@ -4374,7 +4476,6 @@ final class DesktopCodexStore: ObservableObject {
         to requestedThreadID: String?,
         fromQueue: Bool = false,
         queuedUnder initialQueueKey: String? = nil,
-        newChatWorkspacePath: String? = nil,
         newChatGenerationID originNewChatGenerationID: UUID? = nil,
         inFlightAlreadyReserved: Bool = false
     ) async {
@@ -4410,13 +4511,14 @@ final class DesktopCodexStore: ObservableObject {
                 uiThreadID = originUIThreadID
             } else {
                 // Legacy path: create a Veo chat if New Chat somehow had no selection.
-                let startWorkspacePath: String
-                if let newChatWorkspacePath {
-                    startWorkspacePath = newChatWorkspacePath
-                } else {
-                    startWorkspacePath = try workspacePath(for: nil)
-                }
-                let created = DesktopThread.makeVeo(cwd: startWorkspacePath)
+                let createdBareID = UUID().uuidString
+                let startWorkspacePath = try temporaryWorkspaceService
+                    .createWorkspace(forVeoID: createdBareID).path
+                let created = DesktopThread.makeVeo(
+                    id: createdBareID,
+                    cwd: startWorkspacePath,
+                    workspaceKind: .projectless
+                )
                 try await threadStore.upsertThread(created, isArchived: false)
                 threads.removeAll(where: { $0.id == created.id })
                 threads.insert(created, at: 0)
@@ -4985,7 +5087,8 @@ final class DesktopCodexStore: ObservableObject {
             canAcceptDirectInput: thread.canAcceptDirectInput,
             activeFlags: thread.activeFlags,
             agentDepth: thread.agentDepth,
-            sessionID: thread.sessionID
+            sessionID: thread.sessionID,
+            workspaceKind: thread.workspaceKind
         )
         replaceThread(updated)
         persistVeoThread(updated, isArchived: archivedThreads.contains(where: { $0.id == updated.id }))
@@ -5079,7 +5182,8 @@ final class DesktopCodexStore: ObservableObject {
             canAcceptDirectInput: thread.canAcceptDirectInput,
             activeFlags: thread.activeFlags,
             agentDepth: thread.agentDepth,
-            sessionID: thread.sessionID
+            sessionID: thread.sessionID,
+            workspaceKind: thread.workspaceKind
         )
         replaceThread(updated)
         persistVeoThread(updated, isArchived: archivedThreads.contains(where: { $0.id == threadID }))

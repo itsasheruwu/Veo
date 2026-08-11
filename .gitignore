@@ -1,5 +1,6 @@
 # macOS
 .DS_Store
+dist/
 **/.DS_Store
 
 # Xcode user state

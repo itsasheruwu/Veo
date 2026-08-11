@@ -30,6 +30,7 @@ Veo has no hosted backend, subscription, relay, phone companion, or bundled cred
 ### One workspace across every project
 
 - Keep chats from all local repositories visible in one sidebar.
+- Start a projectless chat immediately in an isolated, app-managed workspace, then optionally mark it temporary before its first turn.
 - Group chats by project, rename project labels, pin important threads, and search across the catalog.
 - Open a new project at any time; selecting a chat restores its recorded `cwd` automatically.
 - Optionally show existing Codex CLI history alongside Veo-owned chats.
@@ -73,6 +74,12 @@ Veo exposes the capabilities the connected Codex CLI actually reports. Runtime s
 - macOS 14 or later
 - A locally installed and authenticated [Codex CLI](https://github.com/openai/codex)
 - Xcode 16 or later when building from source
+
+## Install a release
+
+Download the latest DMG from [GitHub Releases](https://github.com/itsasheruwu/Veo/releases), open it, and drag **Veo** to the **Applications** shortcut. A standard macOS `.pkg` installer is also attached to each release.
+
+Veo is currently distributed with a hardened-runtime ad-hoc signature, not a Developer ID signature or Apple notarization. On first launch, right-click **Veo** in Applications and choose **Open**. If macOS still blocks it, use **System Settings → Privacy & Security → Open Anyway**. Only download installers from this repository.
 
 Confirm that Codex is ready:
 
@@ -127,12 +134,12 @@ The repository contains one shared scheme and one product target: the native mac
 ## First run
 
 1. Open Veo and wait for the local runtime indicator to become ready.
-2. Choose **Open Project** and select a folder.
+2. Choose **New Chat** for a projectless workspace, or choose **Open Project** and select a folder.
 3. Choose an access level. New chats default to **Workspace**.
 4. Select a model and any supported reasoning or collaboration options.
-5. Send a message. Veo creates the chat with the selected folder as its working directory.
+5. Send a message. Veo uses the chat's managed scratch directory or selected project as its working directory.
 
-Opening a project changes the context for new work; it never filters other repositories out of the sidebar.
+Projectless chats keep their scratch files until permanent deletion. Opening a project remains the explicit route to project-backed work and never filters other repositories out of the sidebar.
 
 ## Access levels
 

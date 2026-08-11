@@ -279,7 +279,11 @@ struct DesktopWorkspaceView: View {
             }
             Button("Cancel", role: .cancel) { commandDeleteTarget = nil }
         } message: { thread in
-            Text("“\(thread.title)” will be removed from Veo. Local project files are not reverted.")
+            if thread.workspaceKind.isAppManaged {
+                Text("“\(thread.title)” and its projectless workspace will be removed from Veo.")
+            } else {
+                Text("“\(thread.title)” will be removed from Veo. Local project files are not reverted.")
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
             store.shutDown()
@@ -321,13 +325,25 @@ struct DesktopWorkspaceView: View {
                 .help("New chat (⌘N)")
             }
 
+            if store.canToggleTemporaryChat {
+                ToolbarItem(id: "temporary-chat", placement: .primaryAction) {
+                    Button {
+                        store.toggleSelectedChatTemporary()
+                    } label: {
+                        DesktopTemporaryChatIcon(isEnabled: store.isTemporaryChat)
+                    }
+                    .help(store.isTemporaryChat ? "Temporary chat on" : "Make this chat temporary")
+                    .accessibilityLabel(store.isTemporaryChat ? "Temporary chat on" : "Make this chat temporary")
+                }
+            }
+
             ToolbarItem(id: "reveal-project", placement: .primaryAction) {
                 Button {
                     store.revealWorkspace()
                 } label: {
-                    Label("Reveal project", systemImage: "folder")
+                    Label("Reveal in Finder", systemImage: "folder")
                 }
-                .help("Reveal project in Finder")
+                .help("Reveal workspace in Finder")
                 .disabled(!store.hasExplicitWorkspace)
             }
 
@@ -338,7 +354,7 @@ struct DesktopWorkspaceView: View {
                     Label("Changes", systemImage: "doc.text.magnifyingglass")
                 }
                 .help("Review repository and live turn changes")
-                .disabled(!store.hasExplicitWorkspace && store.selectedTurnDiff?.isEmpty != false)
+                .disabled(!store.canUseProjectChanges)
             }
 
             ToolbarItem(id: "terminal", placement: .primaryAction) {
@@ -347,7 +363,7 @@ struct DesktopWorkspaceView: View {
                 } label: {
                     Label("Terminal", systemImage: "terminal")
                 }
-                .help(showsInteractiveTerminal ? "Hide terminal panel" : "Show project terminal panel")
+                .help(showsInteractiveTerminal ? "Hide terminal panel" : "Show workspace terminal panel")
                 .keyboardShortcut("`", modifiers: .control)
                 .disabled(!store.hasExplicitWorkspace)
             }
@@ -362,6 +378,66 @@ struct DesktopWorkspaceView: View {
                 .keyboardShortcut("i", modifiers: [.command, .option])
             }
         }
+    }
+}
+
+private struct DesktopTemporaryChatIcon: View {
+    let isEnabled: Bool
+
+    var body: some View {
+        ZStack {
+            Canvas { context, size in
+                let scaleX = size.width / 20
+                let scaleY = size.height / 20
+                var bubble = Path()
+                bubble.move(to: CGPoint(x: 6 * scaleX, y: 15 * scaleY))
+                bubble.addCurve(
+                    to: CGPoint(x: 3 * scaleX, y: 11 * scaleY),
+                    control1: CGPoint(x: 4 * scaleX, y: 15 * scaleY),
+                    control2: CGPoint(x: 3 * scaleX, y: 13 * scaleY)
+                )
+                bubble.addLine(to: CGPoint(x: 3 * scaleX, y: 8 * scaleY))
+                bubble.addCurve(
+                    to: CGPoint(x: 7 * scaleX, y: 4 * scaleY),
+                    control1: CGPoint(x: 3 * scaleX, y: 6 * scaleY),
+                    control2: CGPoint(x: 5 * scaleX, y: 4 * scaleY)
+                )
+                bubble.addLine(to: CGPoint(x: 13 * scaleX, y: 4 * scaleY))
+                bubble.addCurve(
+                    to: CGPoint(x: 17 * scaleX, y: 8 * scaleY),
+                    control1: CGPoint(x: 15 * scaleX, y: 4 * scaleY),
+                    control2: CGPoint(x: 17 * scaleX, y: 6 * scaleY)
+                )
+                bubble.addLine(to: CGPoint(x: 17 * scaleX, y: 11 * scaleY))
+                bubble.addCurve(
+                    to: CGPoint(x: 13 * scaleX, y: 15 * scaleY),
+                    control1: CGPoint(x: 17 * scaleX, y: 13 * scaleY),
+                    control2: CGPoint(x: 15 * scaleX, y: 15 * scaleY)
+                )
+                bubble.addLine(to: CGPoint(x: 10 * scaleX, y: 15 * scaleY))
+                bubble.addLine(to: CGPoint(x: 6 * scaleX, y: 18 * scaleY))
+                bubble.addLine(to: CGPoint(x: 6.5 * scaleX, y: 15 * scaleY))
+
+                context.stroke(
+                    bubble,
+                    with: .foreground,
+                    style: StrokeStyle(
+                        lineWidth: 1.65,
+                        lineCap: .round,
+                        lineJoin: .round,
+                        dash: [2.6, 2.1]
+                    )
+                )
+            }
+
+            if isEnabled {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 7.5, weight: .bold))
+                    .offset(y: -0.5)
+            }
+        }
+        .frame(width: 20, height: 20)
+        .foregroundStyle(isEnabled ? .primary : .secondary)
     }
 }
 
@@ -862,7 +938,11 @@ private struct DesktopSidebarView: View {
     }
 
     private var workspaceGroups: [(path: String, name: String, threads: [DesktopThread])] {
-        projectGroups(for: store.filteredThreads)
+        projectGroups(for: store.filteredThreads.filter { $0.workspaceKind == .project })
+    }
+
+    private var temporaryThreads: [DesktopThread] {
+        sortedThreads(store.filteredThreads.filter { $0.workspaceKind.isAppManaged })
     }
 
     private var codexWorkspaceGroups: [(path: String, name: String, threads: [DesktopThread])] {
@@ -1034,7 +1114,9 @@ private struct DesktopSidebarView: View {
                 deleteTarget = nil
             }
         } message: { thread in
-            if thread.origin == .veo {
+            if thread.origin == .veo, thread.workspaceKind.isAppManaged {
+                Text("“\(thread.title),” its spawned descendants, and its projectless workspace will be removed from Veo.")
+            } else if thread.origin == .veo {
                 Text("“\(thread.title)” and its spawned descendants will be removed from Veo. Local project files are not reverted.")
             } else {
                 Text("“\(thread.title)” and its spawned descendants will be removed from Codex history. Local project files are not reverted.")
@@ -1088,6 +1170,63 @@ private struct DesktopSidebarView: View {
                     .onMove { offsets, destination in
                         moveThreads(pinnedThreads, from: offsets, to: destination)
                     }
+                }
+            }
+
+            if !temporaryThreads.isEmpty {
+                Section {
+                    if !isProjectCollapsed(temporaryGroupKey) {
+                        let entries = flattenedEntries(for: temporaryThreads)
+                        ForEach(entries) { entry in
+                            DesktopThreadRow(
+                                thread: entry.thread,
+                                pendingRequestCount: store.pendingRequestCount(for: entry.thread.id),
+                                agentState: store.agentState(for: entry.thread.id),
+                                searchSnippet: store.searchSnippet(for: entry.thread.id),
+                                treeDepth: entry.depth,
+                                hasChildren: entry.hasChildren,
+                                isExpanded: expandedAgentThreadIDs.contains(entry.thread.id),
+                                isSelected: store.selectedThreadID == entry.thread.id,
+                                isTurnActive: store.isThreadTurnActive(entry.thread.id),
+                                toggleExpanded: { toggleAgentThread(entry.thread.id) }
+                            )
+                            .tag(entry.thread.id)
+                            .moveDisabled(!canManuallyReorder)
+                            .contextMenu { threadContextMenu(entry.thread) }
+                        }
+                        .onMove { offsets, destination in
+                            moveThreads(entries.map(\.thread), from: offsets, to: destination)
+                        }
+                    }
+                } header: {
+                    HStack(spacing: 5) {
+                        Button {
+                            toggleProject(temporaryGroupKey)
+                        } label: {
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 9, weight: .semibold))
+                                .rotationEffect(.degrees(isProjectCollapsed(temporaryGroupKey) ? 0 : 90))
+                                .frame(width: 13, height: 18)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(!store.searchText.isEmpty)
+                        .help(isProjectCollapsed(temporaryGroupKey) ? "Expand Projectless Chats" : "Collapse Projectless Chats")
+                        .accessibilityLabel(isProjectCollapsed(temporaryGroupKey) ? "Expand Projectless Chats" : "Collapse Projectless Chats")
+
+                        HStack(spacing: 5) {
+                            Image(systemName: "bubble.left.and.bubble.right")
+                                .resizable()
+                                .scaledToFit()
+                                .symbolRenderingMode(.monochrome)
+                                .foregroundStyle(veoAccent)
+                                .frame(width: 14, height: 12)
+                            Text("Projectless Chats")
+                                .foregroundStyle(.secondary)
+                        }
+                        .font(.system(size: 12.5, weight: .semibold))
+                    }
+                    .textCase(nil)
                 }
             }
 
@@ -1515,8 +1654,12 @@ private struct DesktopSidebarView: View {
     }
 
     private var allSidebarProjectPaths: Set<String> {
-        Set(workspaceGroups.map(\.path) + codexWorkspaceGroups.map(\.path))
+        var paths = Set(workspaceGroups.map(\.path) + codexWorkspaceGroups.map(\.path))
+        if !temporaryThreads.isEmpty { paths.insert(temporaryGroupKey) }
+        return paths
     }
+
+    private var temporaryGroupKey: String { "__veo_temporary_chats__" }
 
     @ViewBuilder
     private func codexThreadRow(
@@ -2541,7 +2684,7 @@ private struct DesktopWelcomeView: View {
 
             Spacer(minLength: DesktopTheme.spaceXL)
 
-            Text("Veo runs Codex locally in the project folder you choose.")
+            Text("Veo runs Codex locally in a temporary workspace or a project folder you choose.")
                 .font(.system(size: 11.5, weight: .medium))
                 .foregroundStyle(.secondary)
                 .padding(.bottom, 28)
@@ -2942,7 +3085,7 @@ private struct DesktopComposerView: View {
 
             ComposerTextView(
                 text: $store.draft,
-                placeholder: isWelcome ? "Message Codex in this project…" : "Send follow-up",
+                placeholder: isWelcome ? "Message Codex in this workspace…" : "Send follow-up",
                 placeholderColor: composerPlaceholderColor,
                 fontSize: isWelcome ? 15 : 14,
                 minHeight: isWelcome ? 70 : 34,
@@ -3213,7 +3356,7 @@ private struct DesktopComposerView: View {
                                     }
                                     Spacer(minLength: 8)
                                     if project.path == store.effectiveWorkspaceURL.path,
-                                       store.hasExplicitWorkspace {
+                                       store.currentWorkspaceKind == .project {
                                         Image(systemName: "checkmark")
                                             .font(.system(size: 10, weight: .bold))
                                             .foregroundStyle(veoAccent)
@@ -3262,6 +3405,7 @@ private struct DesktopComposerView: View {
     private var knownProjects: [(path: String, name: String)] {
         var latestUpdateByPath: [String: Date] = [:]
         for thread in store.threads {
+            guard thread.workspaceKind == .project else { continue }
             latestUpdateByPath[thread.cwd] = max(latestUpdateByPath[thread.cwd] ?? .distantPast, thread.updatedAt)
         }
         if let workspaceURL = store.workspaceURL {
@@ -3276,9 +3420,7 @@ private struct DesktopComposerView: View {
 
     private func chooseExistingProject(_ path: String) {
         isProjectChooserPresented = false
-        guard !store.hasExplicitWorkspace || store.effectiveWorkspaceURL.path != path else { return }
-        store.setWorkspace(URL(fileURLWithPath: path, isDirectory: true))
-        store.beginNewChat()
+        store.beginProjectChat(at: URL(fileURLWithPath: path, isDirectory: true))
     }
 
     private var composerPlaceholderColor: NSColor {
@@ -3810,18 +3952,19 @@ private struct DesktopInspectorView: View {
                     }
                 }
 
-                inspectorSection("Project") {
+                inspectorSection("Workspace") {
                     Label(
-                        store.hasExplicitWorkspace ? store.effectiveWorkspaceURL.lastPathComponent : "No project selected",
-                        systemImage: "folder"
+                        store.selectedThread?.workspaceName
+                            ?? (store.workspaceURL?.lastPathComponent ?? "No workspace selected"),
+                        systemImage: store.isProjectlessWorkspace ? "bubble.left.and.bubble.right" : "folder"
                     )
                         .font(.system(size: 12, weight: .semibold))
-                    Text(store.hasExplicitWorkspace ? store.effectiveWorkspaceURL.path : "Open a project before starting a chat.")
+                    Text(store.hasExplicitWorkspace ? store.effectiveWorkspaceURL.path : "Start a new chat or open a project.")
                         .font(.system(size: 10.5, design: .monospaced))
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
                     HStack {
-                        Button("Choose…") { store.chooseWorkspace() }
+                        Button("Choose Project…") { store.chooseWorkspace() }
                         Button("Reveal") { store.revealWorkspace() }
                             .disabled(!store.hasExplicitWorkspace)
                     }

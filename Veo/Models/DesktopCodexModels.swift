@@ -401,6 +401,14 @@ enum DesktopThreadOrigin: String, Codable, Hashable {
     case codex
 }
 
+enum DesktopWorkspaceKind: String, Codable, Hashable {
+    case project
+    case projectless
+    case temporary
+
+    var isAppManaged: Bool { self != .project }
+}
+
 /// Stable UI selection key for Veo-owned chats vs Codex history chats.
 enum DesktopThreadSelection: Hashable, Codable {
     case veo(String)
@@ -455,11 +463,14 @@ struct DesktopThread: Identifiable, Hashable {
     var activeFlags: [String]
     let agentDepth: Int?
     var origin: DesktopThreadOrigin
+    var workspaceKind: DesktopWorkspaceKind
     /// Codex app-server thread id used for RPC. For Codex-origin rows this is the bare Codex id.
     var codexThreadId: String?
 
     var workspaceName: String {
-        URL(fileURLWithPath: cwd).lastPathComponent.nilIfEmpty ?? "General"
+        if workspaceKind == .temporary { return "Temporary Chat" }
+        if workspaceKind == .projectless { return "Projectless Chat" }
+        return URL(fileURLWithPath: cwd).lastPathComponent.nilIfEmpty ?? "General"
     }
 
     var selection: DesktopThreadSelection {
@@ -545,6 +556,7 @@ struct DesktopThread: Identifiable, Hashable {
             activeFlags: statusObject?.stringArray("activeFlags") ?? [],
             agentDepth: spawn?.number("depth").map(Int.init),
             origin: origin,
+            workspaceKind: .project,
             codexThreadId: origin == .codex ? rawID : object.string("codexThreadId")
         )
     }
@@ -564,7 +576,8 @@ struct DesktopThread: Identifiable, Hashable {
         canAcceptDirectInput: Bool? = nil,
         activeFlags: [String] = [],
         agentDepth: Int? = nil,
-        sessionID: String? = nil
+        sessionID: String? = nil,
+        workspaceKind: DesktopWorkspaceKind = .project
     ) -> DesktopThread {
         return DesktopThread(
             id: DesktopThreadSelection.veo(id).storageKey,
@@ -584,6 +597,7 @@ struct DesktopThread: Identifiable, Hashable {
             activeFlags: activeFlags,
             agentDepth: agentDepth,
             origin: .veo,
+            workspaceKind: workspaceKind,
             codexThreadId: codexThreadId
         )
     }

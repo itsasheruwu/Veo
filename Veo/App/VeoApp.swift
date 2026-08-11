@@ -10,6 +10,7 @@ import SwiftUI
 struct VeoApp: App {
     @StateObject private var store = DesktopCodexStore()
     @StateObject private var navigation = DesktopNavigationState()
+    @StateObject private var updateService = DesktopUpdateService()
     @AppStorage(DesktopAppearancePreferences.appearanceModeKey) private var appearanceModeRaw =
         DesktopAppearanceMode.dark.rawValue
 
@@ -20,6 +21,7 @@ struct VeoApp: App {
     var body: some Scene {
         WindowGroup("Veo", id: "workspace") {
             DesktopWorkspaceView(store: store, navigation: navigation)
+                .environmentObject(updateService)
                 .preferredColorScheme(preferredColorScheme)
         }
         .defaultSize(width: 1440, height: 900)
@@ -72,6 +74,15 @@ struct VeoApp: App {
                     NSApp.activate(ignoringOtherApps: true)
                 }
                 .keyboardShortcut(",", modifiers: .command)
+            }
+
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") {
+                    updateService.checkForUpdates(userInitiated: true)
+                    navigation.showSettings(.updates)
+                    NSApp.activate(ignoringOtherApps: true)
+                }
+                .disabled(updateService.isBusy)
             }
         }
 

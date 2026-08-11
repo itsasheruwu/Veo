@@ -2234,12 +2234,14 @@ final class DesktopCodexStore: ObservableObject {
             workspaceKind: workspaceKind
         )
         let previousDraftContext = currentDraftContextID
+        let previousThreadID = selectedThreadID
         threads.removeAll(where: { $0.id == created.id })
         threads.insert(created, at: 0)
         rebuildCodexMappings()
         persistVeoThread(created, isArchived: false)
         selectedThreadID = created.id
         defaults.set(created.id, forKey: "VeoDesktop.selectedThreadID")
+        discardTemporaryChatIfNeeded(leaving: previousThreadID)
         migrateDraftContext(from: previousDraftContext, to: created.id)
         timeline = []
         activeTurnID = nil
@@ -2269,6 +2271,19 @@ final class DesktopCodexStore: ObservableObject {
         persistVeoThread(threads[index], isArchived: false)
     }
 
+    /// Temporary chats are ephemeral: once the user leaves one it is deleted along with
+    /// its app-managed scratch folder. Deletion is deferred while a turn is still running
+    /// and retried from `turn/completed`.
+    private func discardTemporaryChatIfNeeded(leaving previousThreadID: String?) {
+        guard let previousThreadID, previousThreadID != selectedThreadID,
+              let thread = findThread(previousThreadID),
+              thread.origin == .veo,
+              thread.workspaceKind == .temporary else { return }
+        guard activeTurnIDByThread[previousThreadID] == nil,
+              queuedDraftsByThreadID[previousThreadID]?.isEmpty != false else { return }
+        deleteThread(thread)
+    }
+
     func selectThread(_ id: String?) {
         guard selectedThreadID != id else { return }
         if let id {
@@ -2290,12 +2305,14 @@ final class DesktopCodexStore: ObservableObject {
         threadMinimapTopicStartIDs = nil
         isLoadingTimeline = false
         saveCurrentDraft()
+        let previousThreadID = selectedThreadID
         selectedThreadID = id
         if let id {
             defaults.set(id, forKey: "VeoDesktop.selectedThreadID")
         } else {
             defaults.removeObject(forKey: "VeoDesktop.selectedThreadID")
         }
+        discardTemporaryChatIfNeeded(leaving: previousThreadID)
         timeline = []
         activeTurnID = nil
         isSubmittingTurn = false
@@ -5466,6 +5483,7 @@ final class DesktopCodexStore: ObservableObject {
                 if !(turn?["error"] is [String: Any]) {
                     Task { await flushNextQueuedDraft(threadID: eventThreadID) }
                 }
+                discardTemporaryChatIfNeeded(leaving: eventThreadID)
             case "thread/tokenUsage/updated":
                 if let usageObject = params["tokenUsage"] as? [String: Any],
                    let usage = DesktopTokenUsage.parse(usageObject) {

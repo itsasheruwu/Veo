@@ -203,6 +203,8 @@ struct DesktopWorkspaceView: View {
                 } else {
                     DesktopSidebarView(store: store) {
                         navigation.showSettings()
+                    } openUpdates: {
+                        navigation.showSettings(.updates)
                     }
                 }
             }
@@ -907,8 +909,10 @@ private struct DesktopPendingRequestView: View {
 
 private struct DesktopSidebarView: View {
     @Environment(\.veoAccent) private var veoAccent
+    @EnvironmentObject private var updateService: DesktopUpdateService
     @ObservedObject var store: DesktopCodexStore
     let openSettings: () -> Void
+    let openUpdates: () -> Void
     @AppStorage("VeoDesktop.collapsedProjectPaths") private var collapsedProjectPathsJSON = "[]"
     @AppStorage("VeoDesktop.sidebarOrganization") private var sidebarOrganizationRaw = DesktopSidebarOrganization.byProject.rawValue
     @AppStorage("VeoDesktop.sidebarSortMode") private var sidebarSortModeRaw = DesktopSidebarSortMode.priority.rawValue
@@ -1577,6 +1581,7 @@ private struct DesktopSidebarView: View {
     private var sidebarFooter: some View {
         VStack(spacing: 0) {
             Divider()
+            updateStatusRow
             HStack(spacing: 10) {
                 Button {
                     if store.runtimeState.isReady {
@@ -1610,6 +1615,126 @@ private struct DesktopSidebarView: View {
                 .accessibilityLabel("Settings")
             }
             .padding(DesktopTheme.spaceM)
+        }
+    }
+
+    /// Sits directly above the runtime status so update state reads before connection state.
+    @ViewBuilder
+    private var updateStatusRow: some View {
+        Button {
+            switch updateService.phase {
+            case .readyToRelaunch:
+                updateService.relaunch()
+            case let .available(release):
+                if updateService.canInstallInPlace, release.downloadURL != nil {
+                    updateService.installUpdate(release)
+                } else {
+                    openUpdates()
+                }
+            case .checking, .downloading:
+                openUpdates()
+            default:
+                updateService.checkForUpdates(userInitiated: true)
+            }
+        } label: {
+            HStack(spacing: 8) {
+                updateIcon
+                if case let .downloading(progress) = updateService.phase, progress < 1 {
+                    DesktopShimmerText(
+                        text: updateStatusTitle,
+                        font: .system(size: 11.5, weight: .medium),
+                        isActive: true
+                    )
+                } else {
+                    Text(updateStatusTitle)
+                        .font(.system(size: 11.5, weight: .medium))
+                        .foregroundStyle(updateIsActionable ? veoAccent : .secondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                Button(action: openUpdates) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+                .help("Update settings")
+                .accessibilityLabel("Update settings")
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, DesktopTheme.spaceM)
+        .padding(.top, 9)
+        .help(updateStatusHelp)
+        .accessibilityLabel("Software update")
+        .accessibilityValue(updateStatusTitle)
+    }
+
+    private var updateIsActionable: Bool {
+        switch updateService.phase {
+        case .available, .readyToRelaunch: return true
+        default: return false
+        }
+    }
+
+    @ViewBuilder
+    private var updateIcon: some View {
+        switch updateService.phase {
+        case .checking:
+            ProgressView()
+                .controlSize(.mini)
+                .frame(width: 8, height: 8)
+        case .downloading:
+            Image(systemName: "arrow.down.circle")
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(veoAccent)
+        case .available, .readyToRelaunch:
+            Circle()
+                .fill(veoAccent)
+                .frame(width: 8, height: 8)
+        case .failed:
+            Image(systemName: "exclamationmark.circle")
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(.orange)
+        case .idle, .upToDate:
+            Image(systemName: "checkmark.circle")
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var updateStatusTitle: String {
+        switch updateService.phase {
+        case .checking:
+            return "Checking for updates…"
+        case let .downloading(progress):
+            return progress >= 1 ? "Installing update…" : "Downloading update…"
+        case let .available(release):
+            return "Update available — \(release.version)"
+        case let .readyToRelaunch(release):
+            return "Relaunch to finish \(release.version)"
+        case .failed:
+            return "Update check failed"
+        case .upToDate:
+            return "Veo \(updateService.currentVersion) is up to date"
+        case .idle:
+            return "Check for updates"
+        }
+    }
+
+    private var updateStatusHelp: String {
+        switch updateService.phase {
+        case .available:
+            return updateService.canInstallInPlace
+                ? "Download and install this update"
+                : "Open the release page"
+        case .readyToRelaunch:
+            return "Relaunch Veo to finish updating"
+        case let .failed(message):
+            return message
+        default:
+            return "Check for updates"
         }
     }
 

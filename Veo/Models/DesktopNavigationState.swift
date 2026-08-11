@@ -14,6 +14,7 @@ enum DesktopSettingsCategory: String, CaseIterable, Identifiable {
     case appearance
     case terminal
     case runtime
+    case updates
     case account
     case integrations
 
@@ -25,6 +26,7 @@ enum DesktopSettingsCategory: String, CaseIterable, Identifiable {
         case .appearance: return "Appearance"
         case .terminal: return "Terminal"
         case .runtime: return "Runtime"
+        case .updates: return "Updates"
         case .account: return "Account"
         case .integrations: return "Integrations"
         }
@@ -36,6 +38,7 @@ enum DesktopSettingsCategory: String, CaseIterable, Identifiable {
         case .appearance: return "Theme, accent, and materials"
         case .terminal: return "Docked terminal and agent CLIs"
         case .runtime: return "Local Codex connection"
+        case .updates: return "Version checks and auto updates"
         case .account: return "Identity, usage, and limits"
         case .integrations: return "Skills, plugins, apps, and MCP"
         }
@@ -47,6 +50,7 @@ enum DesktopSettingsCategory: String, CaseIterable, Identifiable {
         case .appearance: return "paintbrush"
         case .terminal: return "apple.terminal"
         case .runtime: return "bolt.horizontal.circle"
+        case .updates: return "arrow.down.circle"
         case .account: return "person.crop.circle"
         case .integrations: return "puzzlepiece.extension"
         }

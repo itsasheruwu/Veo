@@ -108,6 +108,7 @@ struct DesktopSettingsSidebarView: View {
 struct DesktopSettingsPage: View {
     @ObservedObject var store: DesktopCodexStore
     @ObservedObject var navigation: DesktopNavigationState
+    @EnvironmentObject private var updateService: DesktopUpdateService
     @AppStorage(DesktopTerminalPreferences.agentCLIsEnabledKey) private var agentCLIsEnabled = false
     @AppStorage(DesktopTerminalPreferences.yoloModeKey) private var agentCLIsYoloMode = false
     @AppStorage(DesktopTerminalPreferences.yoloClaudeKey) private var agentCLIsYoloClaude = true
@@ -621,6 +622,97 @@ struct DesktopSettingsPage: View {
                         .foregroundStyle(.secondary)
                         .labelStyle(SettingsNoteLabelStyle())
                 }
+            }
+
+        case .updates:
+            VStack(alignment: .leading, spacing: 22) {
+                HStack {
+                    sectionTitle("Software update")
+                    Spacer()
+                    if updateService.isBusy {
+                        ProgressView().controlSize(.small)
+                    }
+                    Button("Check Now") { updateService.checkForUpdates(userInitiated: true) }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(updateService.isBusy)
+                }
+
+                SettingsPanel {
+                    SettingsRow(
+                        title: "Installed version",
+                        detail: updateStatusDetail,
+                        systemImage: updateStatusSymbol,
+                        iconColor: updateStatusColor
+                    ) {
+                        updateActionButton
+                    }
+
+                    SettingsPanelDivider()
+
+                    SettingsRow(
+                        title: "Check automatically",
+                        detail: "Look for new Veo releases on launch and every few hours.",
+                        systemImage: "arrow.triangle.2.circlepath"
+                    ) {
+                        Toggle("Check automatically", isOn: $updateService.automaticChecks)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .controlSize(.small)
+                    }
+
+                    SettingsPanelDivider()
+
+                    SettingsRow(
+                        title: "Install automatically",
+                        detail: updateService.canInstallInPlace
+                            ? "Download and install updates without asking. Veo asks before relaunching."
+                            : "This build runs from a location Veo cannot replace, so updates open the release page instead.",
+                        systemImage: "square.and.arrow.down",
+                        nestDepth: 1,
+                        nestStyle: .leaf
+                    ) {
+                        Toggle("Install automatically", isOn: $updateService.automaticInstall)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .controlSize(.small)
+                            .disabled(!updateService.automaticChecks || !updateService.canInstallInPlace)
+                    }
+                }
+
+                if let release = updateService.availableRelease, !release.notes.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        sectionTitle("What's new in \(release.title)")
+                        ScrollView {
+                            Text(release.notes)
+                                .font(.system(size: 11.5))
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(12)
+                        }
+                        .frame(maxHeight: 220)
+                        .background(
+                            Color.primary.opacity(0.035),
+                            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        )
+                    }
+                }
+
+                if case let .failed(message) = updateService.phase {
+                    Label(message, systemImage: "exclamationmark.triangle")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(.secondary)
+                        .labelStyle(SettingsNoteLabelStyle())
+                }
+
+                Label(
+                    "Updates come from the public Veo releases on GitHub. Veo verifies the downloaded app's code signature before replacing the installed copy.",
+                    systemImage: "lock.shield"
+                )
+                .font(.system(size: 11.5))
+                .foregroundStyle(.secondary)
+                .labelStyle(SettingsNoteLabelStyle())
             }
 
         case .account:
@@ -1356,6 +1448,85 @@ struct DesktopSettingsPage: View {
         case .ready: return "checkmark.circle.fill"
         case .starting: return "clock.fill"
         case .unavailable: return "exclamationmark.triangle.fill"
+        }
+    }
+
+    private var updateStatusDetail: String {
+        switch updateService.phase {
+        case .checking:
+            return "Checking for a newer release…"
+        case let .downloading(progress):
+            return progress >= 1
+                ? "Installing Veo \(updateService.availableRelease?.version ?? "")…"
+                : "Downloading Veo \(updateService.availableRelease?.version ?? "")…"
+        case let .available(release):
+            return "Veo \(release.version) is available. You have \(updateService.currentVersion)."
+        case let .readyToRelaunch(release):
+            return "Veo \(release.version) is installed. Relaunch to start using it."
+        case .failed:
+            return "Veo \(updateService.currentVersion) — last check failed."
+        case .upToDate:
+            return lastCheckDetail
+        case .idle:
+            return "Veo \(updateService.currentVersion)"
+        }
+    }
+
+    private var lastCheckDetail: String {
+        guard let lastCheck = updateService.lastCheck else {
+            return "Veo \(updateService.currentVersion) is up to date."
+        }
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .full
+        let relative = formatter.localizedString(for: lastCheck, relativeTo: Date())
+        return "Veo \(updateService.currentVersion) is up to date. Checked \(relative)."
+    }
+
+    private var updateStatusSymbol: String {
+        switch updateService.phase {
+        case .checking, .downloading: return "arrow.triangle.2.circlepath"
+        case .available: return "arrow.down.circle.fill"
+        case .readyToRelaunch: return "arrow.clockwise.circle.fill"
+        case .failed: return "exclamationmark.triangle.fill"
+        case .idle, .upToDate: return "checkmark.circle.fill"
+        }
+    }
+
+    private var updateStatusColor: Color {
+        switch updateService.phase {
+        case .available, .readyToRelaunch: return accentColor
+        case .failed: return .orange
+        case .checking, .downloading: return .secondary
+        case .idle, .upToDate: return .green
+        }
+    }
+
+    @ViewBuilder
+    private var updateActionButton: some View {
+        switch updateService.phase {
+        case let .available(release):
+            HStack(spacing: 8) {
+                Button("Skip") { updateService.skipAvailableVersion() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                Button(updateService.canInstallInPlace && release.downloadURL != nil
+                    ? "Install"
+                    : "Download") {
+                    updateService.installUpdate(release)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+            }
+        case .readyToRelaunch:
+            Button("Relaunch") { updateService.relaunch() }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+        case .downloading, .checking:
+            ProgressView().controlSize(.small)
+        case .failed, .idle, .upToDate:
+            Button("Release Notes") { updateService.openReleasePage() }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
         }
     }
 }

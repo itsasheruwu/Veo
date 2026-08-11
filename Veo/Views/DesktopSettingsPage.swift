@@ -121,6 +121,8 @@ struct DesktopSettingsPage: View {
         DesktopSidebarMaterial.solid.rawValue
     @AppStorage(DesktopAppearancePreferences.composerMaterialKey) private var composerMaterialRaw =
         DesktopComposerMaterial.liquidGlass.rawValue
+    @AppStorage(DesktopAppearancePreferences.windowMaterialKey) private var windowMaterialRaw =
+        DesktopWindowMaterial.solid.rawValue
     @AppStorage(DesktopAppearancePreferences.threadMinimapVisibleKey) private var showsThreadMinimap = true
     @AppStorage(DesktopAppearancePreferences.threadMinimapMaterialKey) private var threadMinimapMaterialRaw =
         DesktopMinimapMaterial.liquidGlass.rawValue
@@ -164,6 +166,13 @@ struct DesktopSettingsPage: View {
         )
     }
 
+    private var windowMaterialBinding: Binding<DesktopWindowMaterial> {
+        Binding(
+            get: { DesktopWindowMaterial(rawValue: windowMaterialRaw) ?? .solid },
+            set: { windowMaterialRaw = $0.rawValue }
+        )
+    }
+
     private var threadMinimapMaterialBinding: Binding<DesktopMinimapMaterial> {
         Binding(
             get: { DesktopMinimapMaterial(rawValue: threadMinimapMaterialRaw) ?? .liquidGlass },
@@ -180,8 +189,9 @@ struct DesktopSettingsPage: View {
 
     var body: some View {
         ZStack {
-            DesktopTheme.canvas
-                .ignoresSafeArea()
+            DesktopWindowChromeBackground(
+                material: DesktopWindowMaterial(rawValue: windowMaterialRaw) ?? .solid
+            )
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 30) {
@@ -1284,6 +1294,23 @@ struct DesktopSettingsPage: View {
                         ) {
                             appearanceModeBinding.wrappedValue = mode
                         }
+                    }
+                }
+
+                SettingsPanel {
+                    SettingsRow(
+                        title: "Theme material",
+                        detail: windowMaterialBinding.wrappedValue.title,
+                        systemImage: "macwindow"
+                    ) {
+                        Picker("Theme material", selection: windowMaterialBinding) {
+                            ForEach(DesktopWindowMaterial.allCases) { material in
+                                Text(material.title).tag(material)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.segmented)
+                        .frame(maxWidth: 280)
                     }
                 }
             }

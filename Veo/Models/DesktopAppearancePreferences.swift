@@ -49,6 +49,7 @@ enum DesktopChromeMaterial: String, CaseIterable, Identifiable {
 typealias DesktopSidebarMaterial = DesktopChromeMaterial
 typealias DesktopComposerMaterial = DesktopChromeMaterial
 typealias DesktopMinimapMaterial = DesktopChromeMaterial
+typealias DesktopWindowMaterial = DesktopChromeMaterial
 
 private struct VeoAccentKey: EnvironmentKey {
     static let defaultValue = Color(red: 0.18, green: 0.55, blue: 0.98)
@@ -67,6 +68,7 @@ enum DesktopAppearancePreferences {
     static let accentColorKey = "VeoDesktop.accentColor"
     static let sidebarMaterialKey = "VeoDesktop.sidebarMaterial"
     static let composerMaterialKey = "VeoDesktop.composerMaterial"
+    static let windowMaterialKey = "VeoDesktop.windowMaterial"
     static let threadMinimapVisibleKey = "VeoDesktop.threadMinimapVisible"
     static let threadMinimapMaterialKey = "VeoDesktop.threadMinimapMaterial"
 
@@ -83,6 +85,12 @@ enum DesktopAppearancePreferences {
     static var sidebarMaterial: DesktopSidebarMaterial {
         let raw = defaults.string(forKey: sidebarMaterialKey) ?? DesktopSidebarMaterial.solid.rawValue
         return DesktopSidebarMaterial(rawValue: raw) ?? .solid
+    }
+
+    /// Material behind the main window canvas (conversation and settings panes).
+    static var windowMaterial: DesktopWindowMaterial {
+        let raw = defaults.string(forKey: windowMaterialKey) ?? DesktopWindowMaterial.solid.rawValue
+        return DesktopWindowMaterial(rawValue: raw) ?? .solid
     }
 
     static var composerMaterial: DesktopComposerMaterial {

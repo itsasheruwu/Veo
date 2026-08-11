@@ -2242,6 +2242,7 @@ final class DesktopCodexStore: ObservableObject {
         selectedThreadID = created.id
         defaults.set(created.id, forKey: "VeoDesktop.selectedThreadID")
         discardTemporaryChatIfNeeded(leaving: previousThreadID)
+        discardUnusedNewChatIfNeeded(leaving: previousThreadID)
         migrateDraftContext(from: previousDraftContext, to: created.id)
         timeline = []
         activeTurnID = nil
@@ -2284,6 +2285,25 @@ final class DesktopCodexStore: ObservableObject {
         deleteThread(thread)
     }
 
+    /// A brand-new chat that never started a turn is not worth keeping: leaving it
+    /// should feel like the chat was never created. Anything with a runtime thread,
+    /// timeline content, a pending queue, or a saved draft is preserved.
+    private func discardUnusedNewChatIfNeeded(leaving previousThreadID: String?) {
+        guard let previousThreadID, previousThreadID != selectedThreadID,
+              let thread = findThread(previousThreadID),
+              thread.origin == .veo,
+              thread.runtimeThreadID == nil,
+              thread.preview.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !thread.isPinned,
+              activeTurnIDByThread[previousThreadID] == nil,
+              queuedDraftsByThreadID[previousThreadID]?.isEmpty != false,
+              !threads.contains(where: { $0.parentThreadID == previousThreadID }) else { return }
+        let draftContextID = "thread:\(previousThreadID)"
+        guard (draftsByContextID[draftContextID] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              (attachmentsByContextID[draftContextID] ?? []).isEmpty else { return }
+        deleteThread(thread)
+    }
+
     func selectThread(_ id: String?) {
         guard selectedThreadID != id else { return }
         if let id {
@@ -2313,6 +2333,7 @@ final class DesktopCodexStore: ObservableObject {
             defaults.removeObject(forKey: "VeoDesktop.selectedThreadID")
         }
         discardTemporaryChatIfNeeded(leaving: previousThreadID)
+        discardUnusedNewChatIfNeeded(leaving: previousThreadID)
         timeline = []
         activeTurnID = nil
         isSubmittingTurn = false

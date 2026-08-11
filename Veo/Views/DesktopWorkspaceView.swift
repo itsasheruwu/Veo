@@ -177,6 +177,36 @@ extension View {
     }
 }
 
+/// Solid / Mica / Liquid Glass canvas behind the main window content.
+struct DesktopWindowChromeBackground: View {
+    let material: DesktopWindowMaterial
+
+    var body: some View {
+        switch material {
+        case .solid:
+            DesktopTheme.canvas
+                .ignoresSafeArea()
+        case .mica:
+            DesktopVisualEffectBackground(material: .underWindowBackground)
+                .ignoresSafeArea()
+        case .liquidGlass:
+            liquidGlass
+        }
+    }
+
+    @ViewBuilder
+    private var liquidGlass: some View {
+        if #available(macOS 26.0, *) {
+            Color.clear
+                .glassEffect(.regular, in: Rectangle())
+                .ignoresSafeArea()
+        } else {
+            DesktopVisualEffectBackground(material: .underWindowBackground)
+                .ignoresSafeArea()
+        }
+    }
+}
+
 struct DesktopWorkspaceView: View {
     @ObservedObject var store: DesktopCodexStore
     @ObservedObject var navigation: DesktopNavigationState
@@ -1353,7 +1383,9 @@ private struct DesktopSidebarView: View {
         .labelStyle(VeoSidebarLabelStyle())
         .padding(.horizontal, 10)
         .padding(.top, DesktopTheme.sidebarTitlebarClearance)
-        .padding(.bottom, DesktopTheme.spaceL)
+        // The expanded search field supplies its own spacing, so the standing
+        // gap below the buttons would otherwise read as dead space.
+        .padding(.bottom, showsSearch ? DesktopTheme.spaceXS : DesktopTheme.spaceL)
     }
 
     private var repositoryHeader: some View {
@@ -2348,6 +2380,8 @@ private struct DesktopConversationView: View {
     @AppStorage(DesktopAppearancePreferences.threadMinimapVisibleKey) private var showsThreadMinimap = true
     @AppStorage(DesktopAppearancePreferences.threadMinimapMaterialKey) private var threadMinimapMaterialRaw =
         DesktopMinimapMaterial.liquidGlass.rawValue
+    @AppStorage(DesktopAppearancePreferences.windowMaterialKey) private var windowMaterialRaw =
+        DesktopWindowMaterial.solid.rawValue
     @State private var isPinnedToBottom = true
     @State private var autoScrollGeneration = 0
     @State private var isAutoScrollInFlight = false
@@ -2359,8 +2393,9 @@ private struct DesktopConversationView: View {
     var body: some View {
         VStack(spacing: 0) {
             ZStack {
-                DesktopTheme.canvas
-                    .ignoresSafeArea()
+                DesktopWindowChromeBackground(
+                    material: DesktopWindowMaterial(rawValue: windowMaterialRaw) ?? .solid
+                )
 
                 switch store.runtimeState {
                 case .starting:

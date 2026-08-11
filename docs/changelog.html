@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Changelog — Veo</title>
+<meta name="description" content="What changed in each Veo release.">
+<meta name="color-scheme" content="dark">
+<link rel="icon" href="assets/favicon.png">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="brand" href="index.html"><img src="assets/veo-icon.png" alt=""> Veo</a>
+    <nav class="nav-links">
+      <a href="index.html">Overview</a>
+      <a href="downloads.html">Downloads</a>
+      <a href="changelog.html" class="active">Changelog</a>
+      <a href="about.html">About</a>
+      <a class="hide-sm" href="https://github.com/itsasheruwu/Veo">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+<section class="page-head">
+  <div class="wrap">
+    <h1>Changelog</h1>
+    <p class="lede">Every Veo release, newest first. Tags and signed assets live on <a href="https://github.com/itsasheruwu/Veo/releases" style="color:var(--accent)">GitHub Releases</a>.</p>
+  </div>
+</section>
+
+<div class="wrap" style="padding-bottom:40px">
+
+  <article class="release" id="v1-2-0">
+    <div class="side">
+      <div class="ver">1.2</div>
+      <div class="date">10 Aug 2026</div>
+      <div style="margin-top:10px"><span class="tag">Latest</span></div>
+    </div>
+    <div>
+      <div class="block">
+        <h3>Temporary chats that delete themselves</h3>
+        <p>A chat marked temporary now removes itself once it stops being the selected chat — SQLite rows, forked children, and the app-managed scratch folder go together. Deletion defers while a turn is running or drafts are queued, and retries from <code>turn/completed</code>.</p>
+      </div>
+      <div class="block">
+        <h3>In-app updates</h3>
+        <p>A GitHub-backed update service with a sidebar status row above the runtime state, plus a new Updates settings category. Automatic checks are on by default; automatic installs stay opt-in and are unavailable when the running bundle is not replaceable. Downloads are code-signature verified before atomically replacing the installed app.</p>
+      </div>
+      <div class="block">
+        <p class="faint"><a href="downloads.html" style="color:var(--accent)">Download 1.2</a> · <a href="https://github.com/itsasheruwu/Veo/releases/tag/v1.2.0" style="color:var(--accent)">Tag v1.2.0</a></p>
+      </div>
+    </div>
+  </article>
+
+  <article class="release" id="v1-1-0">
+    <div class="side">
+      <div class="ver">1.1</div>
+      <div class="date">10 Aug 2026</div>
+    </div>
+    <div>
+      <div class="block">
+        <h3>Projectless chats</h3>
+        <p>Start a chat immediately without picking a repository. It runs in an isolated, app-managed workspace, and can be marked temporary before its first turn. Opening a project stays the explicit route to project-backed work, and never filters the rest of the sidebar away.</p>
+      </div>
+      <div class="block">
+        <h3>Release installers</h3>
+        <p>Builds now ship as a drag-to-Applications DMG and a standard macOS PKG, both universal for Apple silicon and Intel.</p>
+      </div>
+      <div class="block">
+        <p class="faint"><a href="https://github.com/itsasheruwu/Veo/releases/tag/v1.1.0" style="color:var(--accent)">Tag v1.1.0</a></p>
+      </div>
+    </div>
+  </article>
+
+  <article class="release" id="v1-0-0">
+    <div class="side">
+      <div class="ver">1.0</div>
+      <div class="date">9 Aug 2026</div>
+    </div>
+    <div>
+      <div class="block">
+        <h3>Initial release</h3>
+        <p>Veo arrives as a native, local-first macOS workspace for Codex: project-aware chats, a rich task timeline, review tools, and a docked interactive terminal — all driven by a direct local <code>codex app-server</code> transport with no hosted backend in between.</p>
+        <ul class="bullets">
+          <li>Chats from every local repository in one sidebar, with per-chat working directories.</li>
+          <li>Streaming responses, reasoning, plans, commands, diffs, and tool calls in an item-scoped timeline.</li>
+          <li>Inline approvals, permission prompts, and MCP forms.</li>
+          <li>A SwiftTerm-backed PTY docked beside the conversation.</li>
+          <li>Light / Dark / system appearance, Veo accent colors, and Solid, Mica, or Liquid Glass surfaces.</li>
+        </ul>
+      </div>
+      <div class="block">
+        <p class="faint"><a href="https://github.com/itsasheruwu/Veo/releases/tag/v1.0.0" style="color:var(--accent)">Tag v1.0.0</a></p>
+      </div>
+    </div>
+  </article>
+
+</div>
+
+<section class="section-tight">
+  <div class="wrap">
+    <div class="cta">
+      <h2>Update from inside the app.</h2>
+      <p>Veo 1.2 and later check for releases themselves and verify the signature before installing.</p>
+      <div class="hero-actions" style="margin-bottom:0">
+        <a class="btn btn-primary btn-lg" href="downloads.html">Get Veo 1.2</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <a class="brand" href="index.html"><img src="assets/veo-icon.png" alt=""> Veo</a>
+    <nav>
+      <b>Product</b>
+      <a href="index.html">Overview</a>
+      <a href="downloads.html">Downloads</a>
+      <a href="changelog.html">Changelog</a>
+    </nav>
+    <nav>
+      <b>Project</b>
+      <a href="about.html">About</a>
+      <a href="https://github.com/itsasheruwu/Veo">Source</a>
+      <a href="https://github.com/itsasheruwu/Veo/issues">Issues</a>
+    </nav>
+    <nav>
+      <b>Legal</b>
+      <a href="https://github.com/itsasheruwu/Veo/blob/main/Legal/PRIVACY_POLICY.md">Privacy</a>
+      <a href="https://github.com/itsasheruwu/Veo/blob/main/Legal/TERMS_OF_USE.md">Terms</a>
+      <a href="https://github.com/itsasheruwu/Veo/blob/main/LICENSE">License</a>
+    </nav>
+    <p class="fine">Veo is an independent open-source project under the Apache License 2.0. It is not an official OpenAI product, and it is not affiliated with or endorsed by OpenAI.</p>
+  </div>
+</footer>
+
+</body>
+</html>

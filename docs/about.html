@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>About — Veo</title>
+<meta name="description" content="How Veo works: the local Codex transport, what it stores, what it sends over the network, and how to contribute.">
+<meta name="color-scheme" content="dark">
+<link rel="icon" href="assets/favicon.png">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="brand" href="index.html"><img src="assets/veo-icon.png" alt=""> Veo</a>
+    <nav class="nav-links">
+      <a href="index.html">Overview</a>
+      <a href="downloads.html">Downloads</a>
+      <a href="changelog.html">Changelog</a>
+      <a href="about.html" class="active">About</a>
+      <a class="hide-sm" href="https://github.com/itsasheruwu/Veo">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+<section class="page-head">
+  <div class="wrap">
+    <h1>About Veo</h1>
+    <p class="lede">A local-first macOS workspace for the Codex CLI. One Mac app, one direct local transport, and nothing hosted in between.</p>
+  </div>
+</section>
+
+<section class="section-tight">
+  <div class="wrap grid grid-2">
+    <div class="card">
+      <h3>What Veo is</h3>
+      <ul class="bullets">
+        <li>A native SwiftUI Mac app that runs your locally installed Codex CLI.</li>
+        <li>A project-aware chat catalog with per-chat working directories.</li>
+        <li>A timeline for reasoning, commands, diffs, tool calls, and approvals.</li>
+        <li>A docked interactive terminal in the current project.</li>
+        <li>Open source under the Apache License 2.0.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>What Veo isn't</h3>
+      <ul class="bullets">
+        <li>No hosted backend, relay, or product API.</li>
+        <li>No subscription, purchase gate, or account of its own.</li>
+        <li>No phone companion or pairing flow.</li>
+        <li>No analytics service, and no bundled credentials.</li>
+        <li>Not an official OpenAI product.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="section-tight">
+  <div class="wrap">
+    <div class="section-label">Architecture</div>
+    <h2>How a turn actually runs.</h2>
+    <p class="lede mt-32">Veo owns one local Codex runtime per app process. It launches <code>codex app-server</code> and correlates JSON-RPC responses by request ID. The app-server's stdout stays protocol-only — newline-delimited JSON-RPC — while diagnostics stay on stderr and never enter protocol parsing.</p>
+    <pre class="pre mt-32">Veo.xcodeproj/            <span class="c">Xcode project and the shared Veo scheme</span>
+BuildSupport/             <span class="c">Bundle metadata</span>
+Veo/
+  App/                    <span class="c">SwiftUI entry point and scenes</span>
+  Models/                 <span class="c">Protocol, preference, and navigation models</span>
+  Services/               <span class="c">App-server transport, PTY, Git, utilities</span>
+  Stores/                 <span class="c">Thread, runtime, timeline coordination</span>
+  Views/                  <span class="c">Workspace, composer, terminal, review, settings</span>
+script/build_and_run.sh   <span class="c">Build, launch, logging, verification helper</span>
+Legal/                    <span class="c">Privacy notice and terms</span></pre>
+    <p class="lede mt-32">Thread identity and project identity stay separate, which is why switching chats can switch your local context without hiding the rest of the workspace.</p>
+  </div>
+</section>
+
+<section class="section-tight">
+  <div class="wrap">
+    <div class="section-label">Data</div>
+    <h2>Where your things live.</h2>
+    <table class="table mt-32">
+      <thead><tr><th>What</th><th>Where</th></tr></thead>
+      <tbody>
+        <tr><td>Interface preferences</td><td>macOS preferences — selected project and chat, access mode, appearance, terminal options, model choices</td></tr>
+        <tr><td>Veo chats &amp; timeline</td><td>SQLite under Application Support, in <code>com.ash.Veo/Threads</code></td></tr>
+        <tr><td>Codex credentials &amp; history</td><td>Owned by the locally installed CLI. Veo never displays or retains your authentication secrets</td></tr>
+        <tr><td>Projectless scratch files</td><td>An app-managed workspace, kept until the chat is permanently deleted</td></tr>
+      </tbody>
+    </table>
+    <p class="lede mt-32">Veo does not operate an analytics service or a product backend. The Codex subprocess may contact OpenAI or another configured provider, tools may reach external services, and interface features such as site icons may fetch public resources — each following the feature you use and the permissions you granted.</p>
+    <p class="faint mt-32">Details in the <a href="https://github.com/itsasheruwu/Veo/blob/main/Legal/PRIVACY_POLICY.md" style="color:var(--accent)">Privacy Notice</a> and <a href="https://github.com/itsasheruwu/Veo/blob/main/Legal/TERMS_OF_USE.md" style="color:var(--accent)">Terms of Use</a>.</p>
+  </div>
+</section>
+
+<section class="section-tight">
+  <div class="wrap">
+    <div class="section-label">Questions</div>
+    <h2>FAQ</h2>
+    <div class="mt-32">
+      <details open>
+        <summary>Does Veo include Codex?</summary>
+        <p>No. Veo runs the Codex CLI you install and authenticate yourself. It discovers the binary from an explicit <code>CODEX_EXECUTABLE</code>, the GUI process <code>PATH</code>, and standard Homebrew and local install locations.</p>
+      </details>
+      <details>
+        <summary>Does Veo cost anything?</summary>
+        <p>No. Veo is free and open source, with no subscription or purchase gate. Whatever your Codex account and model provider charge is between you and them.</p>
+      </details>
+      <details>
+        <summary>Can I use my existing Codex CLI history?</summary>
+        <p>Yes. Veo owns its own chat catalog, but existing Codex CLI history can appear in a separate sidebar section when you enable it in Settings. It's off by default. With sidebar organization set to project, those threads group under project headers just like Veo's own.</p>
+      </details>
+      <details>
+        <summary>What does Veo let the model touch?</summary>
+        <p>Read only, Workspace, or Full access — chosen explicitly, and never silently broadened. Approvals and permission prompts are answered inline in the timeline, and agent CLI commands in the docked terminal are gated separately from ordinary shell commands.</p>
+      </details>
+      <details>
+        <summary>Is there an iPhone or web version?</summary>
+        <p>No, and there won't be. Veo is deliberately one Mac app with one direct local transport — no mobile companion, relay, or pairing flow.</p>
+      </details>
+      <details>
+        <summary>Which Macs are supported?</summary>
+        <p>macOS 14 or later, on Apple silicon or Intel. Releases ship as a universal binary.</p>
+      </details>
+    </div>
+  </div>
+</section>
+
+<section class="section-tight">
+  <div class="wrap grid grid-2">
+    <div>
+      <div class="section-label">Contributing</div>
+      <h2>Patches welcome.</h2>
+      <p class="lede mt-32">Read <a href="https://github.com/itsasheruwu/Veo/blob/main/CONTRIBUTING.md" style="color:var(--accent)">CONTRIBUTING.md</a> first. Keep changes Mac-native, local-first, and centered on the direct local Codex transport. Shared logic belongs in services and coordinators, not duplicated across views.</p>
+    </div>
+    <div>
+      <div class="section-label">License</div>
+      <h2>Apache 2.0.</h2>
+      <p class="lede mt-32">Use it, fork it, ship your own build. Veo is an independent project and is not affiliated with or endorsed by OpenAI.</p>
+      <div class="hero-actions" style="justify-content:flex-start;margin-bottom:0">
+        <a class="btn btn-ghost" href="https://github.com/itsasheruwu/Veo">Browse the source</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <a class="brand" href="index.html"><img src="assets/veo-icon.png" alt=""> Veo</a>
+    <nav>
+      <b>Product</b>
+      <a href="index.html">Overview</a>
+      <a href="downloads.html">Downloads</a>
+      <a href="changelog.html">Changelog</a>
+    </nav>
+    <nav>
+      <b>Project</b>
+      <a href="about.html">About</a>
+      <a href="https://github.com/itsasheruwu/Veo">Source</a>
+      <a href="https://github.com/itsasheruwu/Veo/issues">Issues</a>
+    </nav>
+    <nav>
+      <b>Legal</b>
+      <a href="https://github.com/itsasheruwu/Veo/blob/main/Legal/PRIVACY_POLICY.md">Privacy</a>
+      <a href="https://github.com/itsasheruwu/Veo/blob/main/Legal/TERMS_OF_USE.md">Terms</a>
+      <a href="https://github.com/itsasheruwu/Veo/blob/main/LICENSE">License</a>
+    </nav>
+    <p class="fine">Veo is an independent open-source project under the Apache License 2.0. It is not an official OpenAI product, and it is not affiliated with or endorsed by OpenAI.</p>
+  </div>
+</footer>
+
+</body>
+</html>

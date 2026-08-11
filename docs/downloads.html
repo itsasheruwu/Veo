@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Downloads — Veo</title>
+<meta name="description" content="Download Veo for macOS as a DMG or PKG, verify the checksum, or build it from source with Xcode.">
+<meta name="color-scheme" content="dark">
+<link rel="icon" href="assets/favicon.png">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="brand" href="index.html"><img src="assets/veo-icon.png" alt=""> Veo</a>
+    <nav class="nav-links">
+      <a href="index.html">Overview</a>
+      <a href="downloads.html" class="active">Downloads</a>
+      <a href="changelog.html">Changelog</a>
+      <a href="about.html">About</a>
+      <a class="hide-sm" href="https://github.com/itsasheruwu/Veo">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+<section class="page-head">
+  <div class="wrap">
+    <h1>Downloads</h1>
+    <p class="lede">One app, two installers, no account. Veo is a universal binary for Apple silicon and Intel Macs.</p>
+  </div>
+</section>
+
+<div class="wrap">
+  <div class="dl-hero">
+    <img src="assets/veo-icon.png" alt="Veo app icon">
+    <div class="meta">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+        <span class="tag">Latest</span>
+        <strong style="font-size:20px;letter-spacing:-.02em">Veo 1.2</strong>
+        <span class="faint">· 10 Aug 2026</span>
+      </div>
+      <p class="muted" style="margin-bottom:18px;font-size:14.5px">In-app updates and auto-deleting temporary chats. macOS 14 or later.</p>
+      <div class="actions">
+        <a class="btn btn-primary" href="https://github.com/itsasheruwu/Veo/releases/download/v1.2.0/Veo-1.2-macOS-universal.dmg">Download DMG · 9.3 MB</a>
+        <a class="btn btn-ghost" href="https://github.com/itsasheruwu/Veo/releases/download/v1.2.0/Veo-1.2-macOS-universal.pkg">Installer PKG · 8.2 MB</a>
+        <a class="btn btn-ghost" href="changelog.html">Release notes</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<section class="section-tight">
+  <div class="wrap grid grid-2">
+    <div class="card">
+      <h3>Before you install</h3>
+      <ul class="bullets">
+        <li>macOS 14 or later.</li>
+        <li>A locally installed and authenticated <a href="https://github.com/openai/codex" style="color:var(--accent)">Codex CLI</a>. Veo runs it for you; it does not ship one.</li>
+        <li>Xcode 16 or later, only if you build from source.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Install</h3>
+      <ol class="steps" style="margin-top:12px">
+        <li>Open the <b>DMG</b> and drag <b>Veo</b> onto the <b>Applications</b> shortcut — or run the <b>PKG</b> for a standard installer flow.</li>
+        <li>Launch Veo. It discovers your Codex CLI from <code>CODEX_EXECUTABLE</code>, your <code>PATH</code>, and the usual Homebrew and local install locations.</li>
+        <li>Press <kbd>⌘O</kbd> to open a project, or <kbd>⌘N</kbd> to start a projectless chat right away.</li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<section class="section-tight">
+  <div class="wrap">
+    <div class="section-label">Verify</div>
+    <h2>Checksums</h2>
+    <p class="lede mt-32">Compare before you open. Run <code>shasum -a 256 ~/Downloads/Veo-1.2-macOS-universal.dmg</code> and match the digest below.</p>
+    <table class="table mt-32">
+      <thead><tr><th>File</th><th>SHA-256</th></tr></thead>
+      <tbody>
+        <tr><td>Veo-1.2 · DMG</td><td class="hash">4a1d3dac87eb86b83df239cc78003061ed7d475c56e8255388acf53320de1de0</td></tr>
+        <tr><td>Veo-1.2 · PKG</td><td class="hash">d3abbc667a28f5890ad4955a3549f501f8d1d4184cfed068d3f292ca59a0893f</td></tr>
+        <tr><td>Veo-1.1 · DMG</td><td class="hash">e7086f76b13cb68b923a52a4f8ab47ccac4f320eb75ee48b4cdb1ab1c48870d4</td></tr>
+        <tr><td>Veo-1.1 · PKG</td><td class="hash">a696f23389c2b9c8cc5f3e3362b64050b08887945975052495885d6ec8f5989d</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="section-tight">
+  <div class="wrap grid grid-2">
+    <div>
+      <div class="section-label">Staying current</div>
+      <h2>Updates</h2>
+      <p class="lede mt-32">Since 1.2, Veo checks GitHub for new releases on its own and shows the status in the sidebar above the runtime row.</p>
+      <ul class="bullets mt-32">
+        <li>Automatic checks are on by default.</li>
+        <li>Automatic installs stay opt-in, and are unavailable when the running bundle can't be replaced in place.</li>
+        <li>Downloads are code-signature verified before atomically replacing the installed app.</li>
+      </ul>
+      <p class="faint mt-32">Settings → Updates.</p>
+    </div>
+    <div>
+      <div class="section-label">From source</div>
+      <h2>Build it yourself</h2>
+      <pre class="pre mt-32"><span class="c"># clone</span>
+git clone https://github.com/itsasheruwu/Veo.git
+cd Veo
+
+<span class="c"># build the only product scheme</span>
+xcodebuild -project Veo.xcodeproj \
+  -scheme Veo -configuration Debug \
+  -derivedDataPath /tmp/veo-derived build \
+  CODE_SIGNING_ALLOWED=NO
+
+open /tmp/veo-derived/Build/Products/Debug/Veo.app</pre>
+      <p class="faint mt-32">Or use <code>script/build_and_run.sh</code>, which handles building, launching, and log verification.</p>
+    </div>
+  </div>
+</section>
+
+<section class="section-tight">
+  <div class="wrap">
+    <div class="section-label">Archive</div>
+    <h2>Previous versions</h2>
+    <table class="table mt-32">
+      <thead><tr><th>Version</th><th>Released</th><th>Highlight</th><th>Files</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>1.2</td><td>10 Aug 2026</td><td>In-app updates, temporary chats</td>
+          <td><a href="https://github.com/itsasheruwu/Veo/releases/tag/v1.2.0" style="color:var(--accent)">Release</a></td>
+        </tr>
+        <tr>
+          <td>1.1</td><td>10 Aug 2026</td><td>Projectless chats, DMG + PKG installers</td>
+          <td><a href="https://github.com/itsasheruwu/Veo/releases/tag/v1.1.0" style="color:var(--accent)">Release</a></td>
+        </tr>
+        <tr>
+          <td>1.0</td><td>9 Aug 2026</td><td>Initial release</td>
+          <td><a href="https://github.com/itsasheruwu/Veo/releases/tag/v1.0.0" style="color:var(--accent)">Release</a></td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="faint mt-32">Every build is also attached to <a href="https://github.com/itsasheruwu/Veo/releases" style="color:var(--accent)">GitHub Releases</a>.</p>
+  </div>
+</section>
+
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <a class="brand" href="index.html"><img src="assets/veo-icon.png" alt=""> Veo</a>
+    <nav>
+      <b>Product</b>
+      <a href="index.html">Overview</a>
+      <a href="downloads.html">Downloads</a>
+      <a href="changelog.html">Changelog</a>
+    </nav>
+    <nav>
+      <b>Project</b>
+      <a href="about.html">About</a>
+      <a href="https://github.com/itsasheruwu/Veo">Source</a>
+      <a href="https://github.com/itsasheruwu/Veo/issues">Issues</a>
+    </nav>
+    <nav>
+      <b>Legal</b>
+      <a href="https://github.com/itsasheruwu/Veo/blob/main/Legal/PRIVACY_POLICY.md">Privacy</a>
+      <a href="https://github.com/itsasheruwu/Veo/blob/main/Legal/TERMS_OF_USE.md">Terms</a>
+      <a href="https://github.com/itsasheruwu/Veo/blob/main/LICENSE">License</a>
+    </nav>
+    <p class="fine">Veo is an independent open-source project under the Apache License 2.0. It is not an official OpenAI product, and it is not affiliated with or endorsed by OpenAI.</p>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Veo — a native Mac workspace for Codex</title>
+<meta name="description" content="Veo turns the locally installed Codex CLI into a focused macOS app: project-aware chats, a live task timeline, review tools, and a real docked terminal. Local-first, open source, no hosted backend.">
+<meta name="color-scheme" content="dark">
+<link rel="icon" href="assets/favicon.png">
+<link rel="stylesheet" href="styles.css">
+<meta property="og:title" content="Veo — a native Mac workspace for Codex">
+<meta property="og:description" content="Project-aware chats, a live task timeline, review tools, and a real docked terminal. Local-first and open source.">
+<meta property="og:image" content="assets/veo-icon.png">
+</head>
+<body>
+
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="brand" href="index.html"><img src="assets/veo-icon.png" alt=""> Veo</a>
+    <nav class="nav-links">
+      <a href="index.html" class="active">Overview</a>
+      <a href="downloads.html">Downloads</a>
+      <a href="changelog.html">Changelog</a>
+      <a href="about.html">About</a>
+      <a class="hide-sm" href="https://github.com/itsasheruwu/Veo">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+<section class="hero">
+  <div class="wrap">
+    <span class="eyebrow"><span class="tag">1.2</span> <b>In-app updates</b> &amp; auto-deleting temporary chats</span>
+    <h1>A native Mac workspace<br>for <span class="grad">Codex</span>.</h1>
+    <p class="lede">Veo turns the Codex CLI you already have installed into a focused macOS app — every project in one sidebar, a timeline that keeps its shape, and a real terminal beside the conversation.</p>
+    <div class="hero-actions">
+      <a class="btn btn-primary btn-lg" href="downloads.html">Download for macOS</a>
+      <a class="btn btn-ghost btn-lg" href="https://github.com/itsasheruwu/Veo">View source</a>
+    </div>
+    <p class="hero-meta"><span>macOS 14+</span> · <span>Universal (Apple silicon &amp; Intel)</span> · <span>Free &amp; open source</span></p>
+  </div>
+</section>
+
+<div class="wrap mock-stage">
+  <figure class="shot">
+    <img src="assets/veo-workspace.png" width="2160" height="1356"
+         alt="The Veo workspace: chats grouped by project in the sidebar, a Codex answer in the timeline with its reasoning step above it, and the composer showing the model, reasoning effort, access mode, and context usage.">
+    <figcaption>Veo 1.2, asked about itself.</figcaption>
+  </figure>
+</div>
+
+<div class="divider"></div>
+
+<section>
+  <div class="wrap">
+    <div class="section-label">No service in the middle</div>
+    <h2>Your CLI, your projects,<br>your machine.</h2>
+    <p class="lede mt-32">There is no Veo cloud between the app and Codex. Veo launches <code>codex app-server</code> directly and speaks newline-delimited JSON-RPC over stdin and stdout. No hosted backend, no relay, no subscription, no bundled credentials.</p>
+
+    <div class="arch mt-48">
+      <div class="box hi">Veo.app — projects · chats · composer · review · terminal</div>
+      <div class="link">local stdio</div>
+      <div class="box">codex app-server (your local CLI)</div>
+      <div class="link">&nbsp;</div>
+      <div class="box">Codex account · models · tools · history</div>
+    </div>
+  </div>
+</section>
+
+<section style="padding-top:0">
+  <div class="wrap">
+    <div class="section-label">What you get</div>
+    <h2>Built for the way work actually spreads out.</h2>
+
+    <div class="grid grid-3 mt-48">
+      <div class="card">
+        <div class="ico">▤</div>
+        <h3>One workspace, every repo</h3>
+        <p>Chats from all your local repositories stay visible in a single sidebar. Selecting a chat restores its recorded working directory — without filtering the rest of your work away.</p>
+      </div>
+      <div class="card">
+        <div class="ico">◈</div>
+        <h3>A timeline that holds its shape</h3>
+        <p>Responses, reasoning, plans, commands, file changes, and tool calls stream in without flattening or reordering. Late deltas merge into the row they belong to.</p>
+      </div>
+      <div class="card">
+        <div class="ico">✎</div>
+        <h3>A composer that knows the project</h3>
+        <p>Pick the model, reasoning effort, service tier, and access mode the runtime reports. Mention project files, attach context, queue follow-ups, and type <code>/</code> for native commands.</p>
+      </div>
+      <div class="card">
+        <div class="ico">▮</div>
+        <h3>A real docked terminal</h3>
+        <p>A SwiftTerm-backed interactive PTY — not a command box. Shell editing, tabs, live resizing, and full-screen TUIs in the current project, one <kbd>⌃`</kbd> away.</p>
+      </div>
+      <div class="card">
+        <div class="ico">◐</div>
+        <h3>Mac-native throughout</h3>
+        <p>System appearance or Light/Dark, a Veo accent color, Solid / Mica / Liquid Glass surfaces, real toolbars, menus, Finder integration, and a menu bar extra.</p>
+      </div>
+      <div class="card">
+        <div class="ico">⌦</div>
+        <h3>Chats that clean up after themselves</h3>
+        <p>Start a projectless chat instantly in an app-managed workspace, mark it temporary before the first turn, and let it delete itself — rows, forks, and scratch folder together.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section style="padding-top:0">
+  <div class="wrap">
+    <div class="grid grid-2">
+      <div>
+        <div class="section-label">Access model</div>
+        <h2>Explicit by default.</h2>
+        <p class="lede mt-32">Veo defaults to workspace-scoped writes and never silently broadens a chat to your whole disk. Full access is always a choice you make, and may be restricted further by managed Codex requirements.</p>
+        <ul class="bullets mt-32">
+          <li>Approvals, permission prompts, and MCP forms are answered inline in the timeline.</li>
+          <li>Claude and Codex CLI commands in the terminal are gated separately from ordinary shell commands.</li>
+          <li>Full-access bypass flags for agent CLIs are opt-in and off by default.</li>
+        </ul>
+      </div>
+      <div>
+        <table class="table">
+          <thead><tr><th>Mode</th><th>Filesystem access</th></tr></thead>
+          <tbody>
+            <tr><td>Read only</td><td>Inspect files and local state, no workspace writes</td></tr>
+            <tr><td>Workspace</td><td>Write inside the selected project and approved temporary locations</td></tr>
+            <tr><td>Full access</td><td>Operate outside the project without filesystem sandboxing</td></tr>
+          </tbody>
+        </table>
+        <p class="faint mt-32">Keep work under version control, and read approval requests before accepting them.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section style="padding-top:0">
+  <div class="wrap">
+    <div class="section-label">Muscle memory</div>
+    <h2>Keyboard first.</h2>
+    <div class="keys mt-48">
+      <div class="key-row"><kbd>⌘N</kbd> New chat</div>
+      <div class="key-row"><kbd>⌘O</kbd> Open project</div>
+      <div class="key-row"><kbd>⇧⌘R</kbd> Refresh chats</div>
+      <div class="key-row"><kbd>⌘.</kbd> Stop the active turn</div>
+      <div class="key-row"><kbd>⌃`</kbd> Toggle terminal</div>
+      <div class="key-row"><kbd>⌥⌘I</kbd> Toggle inspector</div>
+      <div class="key-row"><kbd>⌘,</kbd> Settings</div>
+      <div class="key-row"><kbd>↩</kbd> Send a message</div>
+      <div class="key-row"><kbd>⇧↩</kbd> Insert a newline</div>
+    </div>
+    <p class="faint mt-32">Slash commands: <code>/model</code> · <code>/permissions</code> · <code>/review</code> · <code>/compact</code> · <code>/fork</code> · <code>/diff</code> · <code>/terminal</code> · <code>/usage</code></p>
+  </div>
+</section>
+
+<section style="padding-top:0">
+  <div class="wrap">
+    <div class="cta">
+      <h2>Bring your own Codex.</h2>
+      <p>Install the app, point it at a project, and keep working. Veo needs nothing but the CLI you already have.</p>
+      <div class="hero-actions" style="margin-bottom:0">
+        <a class="btn btn-primary btn-lg" href="downloads.html">Download Veo 1.2</a>
+        <a class="btn btn-ghost btn-lg" href="about.html">How it works</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <a class="brand" href="index.html"><img src="assets/veo-icon.png" alt=""> Veo</a>
+    <nav>
+      <b>Product</b>
+      <a href="index.html">Overview</a>
+      <a href="downloads.html">Downloads</a>
+      <a href="changelog.html">Changelog</a>
+    </nav>
+    <nav>
+      <b>Project</b>
+      <a href="about.html">About</a>
+      <a href="https://github.com/itsasheruwu/Veo">Source</a>
+      <a href="https://github.com/itsasheruwu/Veo/issues">Issues</a>
+    </nav>
+    <nav>
+      <b>Legal</b>
+      <a href="https://github.com/itsasheruwu/Veo/blob/main/Legal/PRIVACY_POLICY.md">Privacy</a>
+      <a href="https://github.com/itsasheruwu/Veo/blob/main/Legal/TERMS_OF_USE.md">Terms</a>
+      <a href="https://github.com/itsasheruwu/Veo/blob/main/LICENSE">License</a>
+    </nav>
+    <p class="fine">Veo is an independent open-source project under the Apache License 2.0. It is not an official OpenAI product, and it is not affiliated with or endorsed by OpenAI.</p>
+  </div>
+</footer>
+
+</body>
+</html>

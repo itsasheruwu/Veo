@@ -214,12 +214,59 @@ struct DesktopWindowChromeBackground: View {
     }
 }
 
+private struct DesktopNotificationToast: View {
+    let toast: DesktopNotificationService.Toast
+    let dismiss: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+                .font(.system(size: 14, weight: .semibold))
+                .padding(.top, 1)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(toast.title)
+                    .font(.system(size: 12.5, weight: .semibold))
+                Text(toast.detail)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button(action: dismiss) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 20, height: 20)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Dismiss warning")
+        }
+        .padding(12)
+        .frame(width: 360)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .stroke(DesktopTheme.hairline, lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.18), radius: 16, y: 8)
+        .accessibilityElement(children: .combine)
+    }
+}
+
 struct DesktopWorkspaceView: View {
+    @EnvironmentObject private var notifications: DesktopNotificationService
+    @EnvironmentObject private var menuBarController: DesktopMenuBarController
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.openWindow) private var openWindow
     @ObservedObject var store: DesktopCodexStore
     @ObservedObject var navigation: DesktopNavigationState
     @AppStorage("VeoDesktop.inspectorVisible") private var inspectorVisible = false
     @AppStorage(DesktopAppearancePreferences.accentColorKey) private var accentColorHex =
         DesktopAppearancePreferences.defaultAccentHex
+    @AppStorage(DesktopNotificationPreferences.menuBarIconKey) private var showsMenuBarIcon = true
     @StateObject private var terminalHub = DesktopLocalTerminalHub()
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var showsChanges = false
@@ -268,8 +315,27 @@ struct DesktopWorkspaceView: View {
         .frame(minWidth: 920, minHeight: 640)
         .tint(accentColor)
         .environment(\.veoAccent, accentColor)
+        .overlay(alignment: .topTrailing) {
+            if let toast = notifications.toast {
+                DesktopNotificationToast(toast: toast) {
+                    notifications.dismissToast()
+                }
+                .padding(.top, 46)
+                .padding(.trailing, 18)
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: notifications.toast)
         .task {
+            store.attachNotifications(notifications)
+            menuBarController.configure(store: store) {
+                openWindow(id: "workspace")
+            }
+            menuBarController.setVisible(showsMenuBarIcon)
             store.startIfNeeded()
+        }
+        .onChange(of: showsMenuBarIcon) { _, visible in
+            menuBarController.setVisible(visible)
         }
         .onChange(of: store.composerCommandDestinationRequest) { _, destination in
             guard let destination else { return }
@@ -4214,52 +4280,5 @@ private struct DesktopInspectorView: View {
             return String(format: "%.1fK", Double(value) / 1_000)
         }
         return "\(value)"
-    }
-}
-
-struct DesktopMenuBarView: View {
-    @ObservedObject var store: DesktopCodexStore
-    @Environment(\.openWindow) private var openWindow
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Veo").font(.headline)
-                    Text(store.runtimeState.title)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                Circle()
-                    .fill(store.runtimeState.isReady ? Color.green : Color.orange)
-                    .frame(width: 8, height: 8)
-            }
-
-            Divider()
-
-            Button("Open Veo") {
-                openWindow(id: "workspace")
-                NSApp.activate(ignoringOtherApps: true)
-            }
-            Button("New Chat") {
-                store.beginNewChat()
-                openWindow(id: "workspace")
-                NSApp.activate(ignoringOtherApps: true)
-            }
-            Button("Open Project…") {
-                store.chooseWorkspace()
-                openWindow(id: "workspace")
-                NSApp.activate(ignoringOtherApps: true)
-            }
-
-            Divider()
-
-            Button("Quit Veo") {
-                NSApp.terminate(nil)
-            }
-        }
-        .padding(12)
-        .frame(width: 240)
     }
 }

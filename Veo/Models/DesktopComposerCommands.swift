@@ -15,6 +15,7 @@ enum DesktopComposerCommandAction: Hashable {
     case reasoning
     case permissions
     case newChat
+    case temporaryChat
     case compact
     case review
     case rename
@@ -52,6 +53,7 @@ struct DesktopComposerCommand: Identifiable, Hashable {
     let name: String
     let description: String
     let action: DesktopComposerCommandAction
+    var systemImage = "command"
     var supportsInlineArguments = false
 
     var id: String { name }
@@ -64,35 +66,36 @@ struct DesktopComposerCommand: Identifiable, Hashable {
     // Veo's native command catalog. Every entry maps to a real in-app action or destination;
     // terminal-only presentation commands intentionally stay in the docked Codex CLI.
     static let all: [DesktopComposerCommand] = [
-        .init(name: "model", description: "Choose a model in the command palette", action: .model),
-        .init(name: "reasoning", description: "Choose reasoning effort in the command palette", action: .reasoning),
-        .init(name: "permissions", description: "Choose workspace access in the command palette", action: .permissions),
-        .init(name: "review", description: "Review current changes and find issues", action: .review, supportsInlineArguments: true),
-        .init(name: "rename", description: "Rename the current chat in Veo", action: .rename, supportsInlineArguments: true),
-        .init(name: "new", description: "Start a new chat", action: .newChat, supportsInlineArguments: true),
-        .init(name: "archive", description: "Archive the current Veo chat", action: .archive),
-        .init(name: "delete", description: "Delete the current Veo chat with confirmation", action: .delete),
-        .init(name: "fork", description: "Fork the current chat at a chosen point", action: .fork),
-        .init(name: "init", description: "Create an AGENTS.md for this project", action: .initAgents),
-        .init(name: "compact", description: "Summarize history and free context", action: .compact),
-        .init(name: "plan", description: "Switch to Plan mode", action: .plan, supportsInlineArguments: true),
-        .init(name: "goal", description: "Set or view a long-running goal", action: .goal, supportsInlineArguments: true),
-        .init(name: "copy", description: "Copy the last response as Markdown", action: .copyLastResponse),
-        .init(name: "diff", description: "Open Veo's Changes view", action: .changes),
-        .init(name: "mention", description: "Mention a project file", action: .mention),
-        .init(name: "status", description: "Open Veo's task inspector", action: .status),
-        .init(name: "usage", description: "Open Veo's account usage and limits", action: .usage),
-        .init(name: "skills", description: "Open Veo's skills and integrations", action: .integrations),
-        .init(name: "mcp", description: "Open Veo's MCP integrations", action: .integrations),
-        .init(name: "apps", description: "Open Veo's connected apps", action: .integrations),
-        .init(name: "plugins", description: "Open Veo's plugin manager", action: .integrations),
-        .init(name: "appearance", description: "Open Veo's appearance settings", action: .settings(.appearance)),
-        .init(name: "terminal", description: "Open Veo's docked terminal", action: .terminal),
-        .init(name: "runtime", description: "Open Veo's local runtime settings", action: .settings(.runtime)),
-        .init(name: "reconnect", description: "Reconnect Veo to the local Codex runtime", action: .reconnect),
-        .init(name: "reveal", description: "Reveal the current project in Finder", action: .revealProject),
-        .init(name: "refresh", description: "Refresh Veo's chat list", action: .refreshChats),
-        .init(name: "stop", description: "Stop the active turn", action: .stop),
-        .init(name: "clear", description: "Clear the composer and start a new Veo chat", action: .newChat),
+        .init(name: "model", description: "Choose a model in the command palette", action: .model, systemImage: "cube"),
+        .init(name: "reasoning", description: "Choose reasoning effort in the command palette", action: .reasoning, systemImage: "brain"),
+        .init(name: "permissions", description: "Choose workspace access in the command palette", action: .permissions, systemImage: "shield"),
+        .init(name: "review", description: "Review current changes and find issues", action: .review, systemImage: "doc.text.magnifyingglass", supportsInlineArguments: true),
+        .init(name: "rename", description: "Rename the current chat in Veo", action: .rename, systemImage: "pencil", supportsInlineArguments: true),
+        .init(name: "new", description: "Start a new chat", action: .newChat, systemImage: "square.and.pencil", supportsInlineArguments: true),
+        .init(name: "temporary", description: "Make this unused projectless chat temporary", action: .temporaryChat, systemImage: "timer"),
+        .init(name: "archive", description: "Archive the current Veo chat", action: .archive, systemImage: "archivebox"),
+        .init(name: "delete", description: "Delete the current Veo chat with confirmation", action: .delete, systemImage: "trash"),
+        .init(name: "fork", description: "Fork the current chat at a chosen point", action: .fork, systemImage: "arrow.triangle.branch"),
+        .init(name: "init", description: "Create an AGENTS.md for this project", action: .initAgents, systemImage: "doc.badge.plus"),
+        .init(name: "compact", description: "Summarize history and free context", action: .compact, systemImage: "arrow.down.right.and.arrow.up.left"),
+        .init(name: "plan", description: "Switch to Plan mode", action: .plan, systemImage: "list.bullet.clipboard", supportsInlineArguments: true),
+        .init(name: "goal", description: "Set or view a long-running goal", action: .goal, systemImage: "target", supportsInlineArguments: true),
+        .init(name: "copy", description: "Copy the last response as Markdown", action: .copyLastResponse, systemImage: "doc.on.doc"),
+        .init(name: "diff", description: "Open Veo's Changes view", action: .changes, systemImage: "arrow.left.arrow.right"),
+        .init(name: "mention", description: "Mention a project file", action: .mention, systemImage: "at"),
+        .init(name: "status", description: "Open Veo's task inspector", action: .status, systemImage: "sidebar.trailing"),
+        .init(name: "usage", description: "Open Veo's account usage and limits", action: .usage, systemImage: "gauge.with.dots.needle.50percent"),
+        .init(name: "skills", description: "Open Veo's skills and integrations", action: .integrations, systemImage: "bolt.badge.checkmark"),
+        .init(name: "mcp", description: "Open Veo's MCP integrations", action: .integrations, systemImage: "server.rack"),
+        .init(name: "apps", description: "Open Veo's connected apps", action: .integrations, systemImage: "square.grid.2x2"),
+        .init(name: "plugins", description: "Open Veo's plugin manager", action: .integrations, systemImage: "puzzlepiece.extension"),
+        .init(name: "appearance", description: "Open Veo's appearance settings", action: .settings(.appearance), systemImage: "paintbrush"),
+        .init(name: "terminal", description: "Open Veo's docked terminal", action: .terminal, systemImage: "apple.terminal"),
+        .init(name: "runtime", description: "Open Veo's local runtime settings", action: .settings(.runtime), systemImage: "bolt.horizontal.circle"),
+        .init(name: "reconnect", description: "Reconnect Veo to the local Codex runtime", action: .reconnect, systemImage: "arrow.clockwise"),
+        .init(name: "reveal", description: "Reveal the current project in Finder", action: .revealProject, systemImage: "folder"),
+        .init(name: "refresh", description: "Refresh Veo's chat list", action: .refreshChats, systemImage: "arrow.clockwise"),
+        .init(name: "stop", description: "Stop the active turn", action: .stop, systemImage: "stop.circle"),
+        .init(name: "clear", description: "Clear the composer and start a new Veo chat", action: .newChat, systemImage: "eraser"),
     ]
 }

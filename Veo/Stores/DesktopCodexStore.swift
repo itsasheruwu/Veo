@@ -9,6 +9,14 @@ import Foundation
 import SwiftUI
 import UniformTypeIdentifiers
 
+private struct DesktopAccountSnapshot {
+    var overview = DesktopAccountOverview()
+    var workspaceMessages: [DesktopWorkspaceMessage] = []
+    var resetCreditCount = 0
+    var resetCreditID: String?
+    var failures: [String] = []
+}
+
 @MainActor
 final class DesktopCodexStore: ObservableObject {
     @Published var runtimeState: DesktopRuntimeState = .starting
@@ -92,8 +100,10 @@ final class DesktopCodexStore: ObservableObject {
     @Published var selectedRealtimeVoiceID: String?
     @Published private(set) var realtimeSession: DesktopRealtimeSessionState?
     @Published private(set) var realtimeTranscript = ""
+    @Published private(set) var isLoadingAccountOverview = false
     @Published private(set) var isLoadingAccountResources = false
     @Published private(set) var integrationMutationID: String?
+    @Published private(set) var accountOverviewMessage: String?
     @Published private(set) var accountResourcesMessage: String?
     @Published var models: [DesktopModelOption] = []
     @Published var selectedModelID: String?
@@ -143,12 +153,14 @@ final class DesktopCodexStore: ObservableObject {
     private var codexThreadsLoadGeneration = 0
     private var pendingRequestQueues: [String: [DesktopPendingRequest]] = [:]
     private var pendingRequestOrder: [String] = []
+    private weak var notifications: DesktopNotificationService?
     private var newChatGenerationID = UUID()
     private var skillPathsByWorkspacePath: [String: Set<String>] = [:]
     private var pendingRealtimeAudioChunks: [RealtimeAudioCoordinator.PCMChunk] = []
     private var isSendingRealtimeAudio = false
     private var realtimeAudioGeneration = UUID()
     private var realtimeStartTask: Task<Void, Never>?
+    private var accountOverviewLoadGeneration = UUID()
     private var accountResourcesLoadGeneration = UUID()
     private var interactiveTerminalPendingOutput = Data()
     private var interactiveTerminalPendingProcessID: String?
@@ -669,6 +681,32 @@ final class DesktopCodexStore: ObservableObject {
         pendingRequestCountsByThreadID[threadID] ?? 0
     }
 
+    func attachNotifications(_ service: DesktopNotificationService) {
+        notifications = service
+    }
+
+    /// Announces background work. The originating chat is "foreground" only when it
+    /// is the selected one, so alerts stay quiet for what the user is watching.
+    private func notify(_ alert: DesktopNotificationService.Alert, threadID: String?) {
+        notifications?.post(alert, isForegroundThread: threadID == selectedThreadID)
+    }
+
+    private func threadTitle(_ threadID: String?) -> String {
+        threadID.flatMap { findThread($0)?.title } ?? "Veo"
+    }
+
+    /// Both the selected-thread and background event paths funnel here so a
+    /// completed turn is announced exactly once, wherever it was observed.
+    private func announceTurnCompletion(turn: [String: Any]?, threadID: String?) {
+        let title = threadTitle(threadID)
+        if let turnError = turn?["error"] as? [String: Any],
+           let message = turnError.string("message") {
+            notify(.turnFailed(threadTitle: title, message: message), threadID: threadID)
+        } else {
+            notify(.turnCompleted(threadTitle: title), threadID: threadID)
+        }
+    }
+
     func contextDescription(for request: DesktopPendingRequest) -> String? {
         guard let threadID = request.threadID else { return nil }
         let uiID = uiThreadID(forRuntimeThreadID: threadID)
@@ -692,6 +730,11 @@ final class DesktopCodexStore: ObservableObject {
     func refreshAccountResources() {
         guard runtimeState.isReady, !isLoadingAccountResources else { return }
         Task { await loadAccountResources() }
+    }
+
+    func refreshAccountOverview() {
+        guard runtimeState.isReady, !isLoadingAccountOverview else { return }
+        Task { await loadAccountOverview() }
     }
 
     func refreshRuntimeConfiguration() {
@@ -2622,6 +2665,22 @@ final class DesktopCodexStore: ObservableObject {
         case .newChat:
             beginNewChat()
             sendCommandArgumentsIfPresent(arguments)
+        case .temporaryChat:
+            guard let selectedThread else {
+                transientError = "Start a projectless chat before making it temporary."
+                return
+            }
+            guard selectedThread.workspaceKind == .projectless else {
+                transientError = selectedThread.workspaceKind == .temporary
+                    ? "This chat is already temporary."
+                    : "Temporary mode is only available for projectless chats."
+                return
+            }
+            guard canToggleTemporaryChat else {
+                transientError = "A chat can only become temporary before its first turn starts."
+                return
+            }
+            toggleSelectedChatTemporary()
         case .compact:
             guard let selectedThread else {
                 transientError = "Start a chat before compacting context."
@@ -3315,6 +3374,13 @@ final class DesktopCodexStore: ObservableObject {
         pendingRequestQueues[key] = queue
         pendingRequestOrder.append(request.id)
         updatePendingRequestProjection()
+        notify(
+            .attentionNeeded(
+                threadTitle: threadTitle(request.threadID),
+                detail: request.title
+            ),
+            threadID: request.threadID
+        )
         return true
     }
 
@@ -3547,7 +3613,9 @@ final class DesktopCodexStore: ObservableObject {
     }
 
     private func invalidateAccountResourceContext() {
+        accountOverviewLoadGeneration = UUID()
         accountResourcesLoadGeneration = UUID()
+        isLoadingAccountOverview = false
         isLoadingAccountResources = false
         resourceOverviews = []
         skillRecords = []
@@ -3557,6 +3625,7 @@ final class DesktopCodexStore: ObservableObject {
         workspaceMessages = []
         availableRateLimitResetCredits = 0
         availableRateLimitResetCreditID = nil
+        accountOverviewMessage = nil
         accountResourcesMessage = nil
     }
 
@@ -3706,6 +3775,125 @@ final class DesktopCodexStore: ObservableObject {
         return "Configured"
     }
 
+    private func fetchAccountOverview(capabilities capabilitySnapshot: CodexAppServerCapabilities) async -> DesktopAccountSnapshot {
+        var snapshot = DesktopAccountSnapshot()
+
+        if capabilitySnapshot.supports(.account) {
+            do {
+                let response = try await client.request(
+                    method: "account/read",
+                    params: ["refreshToken": false],
+                    requiring: .account
+                )
+                snapshot.overview.requiresOpenAIAuth = response.bool("requiresOpenaiAuth") ?? false
+                if let account = response["account"] as? [String: Any] {
+                    switch account.string("type") {
+                    case "apiKey":
+                        snapshot.overview.accountType = "API key"
+                    case "chatgpt":
+                        snapshot.overview.accountType = "ChatGPT"
+                        snapshot.overview.email = account.string("email")
+                        snapshot.overview.plan = account.string("planType").map(Self.displayProtocolName)
+                    case "amazonBedrock":
+                        snapshot.overview.accountType = "Amazon Bedrock"
+                    case let type?:
+                        snapshot.overview.accountType = Self.displayProtocolName(type)
+                    case nil:
+                        break
+                    }
+                }
+            } catch {
+                snapshot.failures.append("Account")
+            }
+
+            do {
+                let response = try await client.request(
+                    method: "account/rateLimits/read",
+                    requiring: .account
+                )
+                if let limits = response["rateLimits"] as? [String: Any] {
+                    let primary = limits["primary"] as? [String: Any]
+                    let secondary = limits["secondary"] as? [String: Any]
+                    snapshot.overview.primaryUsedPercent = primary?.number("usedPercent").map(Int.init)
+                    snapshot.overview.secondaryUsedPercent = secondary?.number("usedPercent").map(Int.init)
+                    snapshot.overview.primaryResetsAt = primary?.number("resetsAt").map(Date.init(timeIntervalSince1970:))
+                }
+                if let resetCredits = response["rateLimitResetCredits"] as? [String: Any] {
+                    snapshot.resetCreditCount = Int(resetCredits.number("availableCount") ?? 0)
+                    snapshot.resetCreditID = (resetCredits["credits"] as? [[String: Any]])?
+                        .first(where: { $0.string("status") == "available" })?
+                        .string("id")
+                }
+            } catch {
+                snapshot.failures.append("Rate limits")
+            }
+
+            do {
+                let response = try await client.request(
+                    method: "account/usage/read",
+                    requiring: .account
+                )
+                let summary = response["summary"] as? [String: Any]
+                snapshot.overview.lifetimeTokens = summary?.number("lifetimeTokens").map(Int.init)
+            } catch {
+                snapshot.failures.append("Usage")
+            }
+        }
+
+        if capabilitySnapshot.supports(method: "account/workspaceMessages/read") {
+            do {
+                let response = try await client.request(method: "account/workspaceMessages/read", params: [:])
+                if response.bool("featureEnabled") == true {
+                    snapshot.workspaceMessages = (response["messages"] as? [[String: Any]] ?? [])
+                        .compactMap(DesktopWorkspaceMessage.parse)
+                }
+            } catch {
+                snapshot.failures.append("Workspace messages")
+            }
+        }
+
+        return snapshot
+    }
+
+    private func applyAccountOverview(_ snapshot: DesktopAccountSnapshot) {
+        accountOverview = snapshot.overview
+        workspaceMessages = snapshot.workspaceMessages.sorted {
+            ($0.createdAt ?? .distantPast) > ($1.createdAt ?? .distantPast)
+        }
+        availableRateLimitResetCredits = snapshot.resetCreditCount
+        availableRateLimitResetCreditID = snapshot.resetCreditID
+        accountOverviewMessage = snapshot.failures.isEmpty
+            ? nil
+            : "Unavailable: " + snapshot.failures.joined(separator: ", ")
+    }
+
+    private func loadAccountOverview() async {
+        guard runtimeState.isReady else { return }
+        let loadGeneration = UUID()
+        let contextUIThreadID = selectedThreadID
+        let contextWorkspacePath = hasExplicitWorkspace
+            ? effectiveWorkspaceURL.standardizedFileURL.resolvingSymlinksInPath().path
+            : nil
+        accountOverviewLoadGeneration = loadGeneration
+        isLoadingAccountOverview = true
+        accountOverviewMessage = nil
+        defer {
+            if accountOverviewLoadGeneration == loadGeneration {
+                isLoadingAccountOverview = false
+                capabilities = client.capabilities
+            }
+        }
+
+        let snapshot = await fetchAccountOverview(capabilities: capabilities)
+        let currentWorkspacePath = hasExplicitWorkspace
+            ? effectiveWorkspaceURL.standardizedFileURL.resolvingSymlinksInPath().path
+            : nil
+        guard accountOverviewLoadGeneration == loadGeneration,
+              selectedThreadID == contextUIThreadID,
+              currentWorkspacePath == contextWorkspacePath else { return }
+        applyAccountOverview(snapshot)
+    }
+
     private func loadAccountResources() async {
         guard runtimeState.isReady else { return }
         let loadGeneration = UUID()
@@ -3725,89 +3913,21 @@ final class DesktopCodexStore: ObservableObject {
             }
         }
 
-        var overview = DesktopAccountOverview()
         var rows: [DesktopResourceOverview] = []
         var loadedSkills: [DesktopSkillRecord] = []
         var loadedPlugins: [DesktopPluginRecord] = []
         var loadedApps: [DesktopAppRecord] = []
         var loadedMCPServers: [DesktopMCPServerStatus] = []
-        var loadedWorkspaceMessages: [DesktopWorkspaceMessage] = []
-        var loadedResetCreditCount = 0
-        var loadedResetCreditID: String?
-        var failures: [String] = []
+        let accountSnapshot = await fetchAccountOverview(capabilities: capabilitySnapshot)
+        var failures = accountSnapshot.failures
 
-        if capabilitySnapshot.supports(.account) {
-            do {
-                let response = try await client.request(
-                    method: "account/read",
-                    params: ["refreshToken": false],
-                    requiring: .account
-                )
-                overview.requiresOpenAIAuth = response.bool("requiresOpenaiAuth") ?? false
-                if let account = response["account"] as? [String: Any] {
-                    switch account.string("type") {
-                    case "apiKey":
-                        overview.accountType = "API key"
-                    case "chatgpt":
-                        overview.accountType = "ChatGPT"
-                        overview.email = account.string("email")
-                        overview.plan = account.string("planType").map(Self.displayProtocolName)
-                    case "amazonBedrock":
-                        overview.accountType = "Amazon Bedrock"
-                    case let type?:
-                        overview.accountType = Self.displayProtocolName(type)
-                    case nil:
-                        break
-                    }
-                }
-            } catch {
-                failures.append("Account")
-            }
-
-            do {
-                let response = try await client.request(
-                    method: "account/rateLimits/read",
-                    requiring: .account
-                )
-                if let limits = response["rateLimits"] as? [String: Any] {
-                    let primary = limits["primary"] as? [String: Any]
-                    let secondary = limits["secondary"] as? [String: Any]
-                    overview.primaryUsedPercent = primary?.number("usedPercent").map(Int.init)
-                    overview.secondaryUsedPercent = secondary?.number("usedPercent").map(Int.init)
-                    overview.primaryResetsAt = primary?.number("resetsAt").map(Date.init(timeIntervalSince1970:))
-                }
-                if let resetCredits = response["rateLimitResetCredits"] as? [String: Any] {
-                    loadedResetCreditCount = Int(resetCredits.number("availableCount") ?? 0)
-                    loadedResetCreditID = (resetCredits["credits"] as? [[String: Any]])?
-                        .first(where: { $0.string("status") == "available" })?
-                        .string("id")
-                }
-            } catch {
-                failures.append("Rate limits")
-            }
-
-            do {
-                let response = try await client.request(
-                    method: "account/usage/read",
-                    requiring: .account
-                )
-                let summary = response["summary"] as? [String: Any]
-                overview.lifetimeTokens = summary?.number("lifetimeTokens").map(Int.init)
-            } catch {
-                failures.append("Usage")
-            }
-        }
-
-        if capabilitySnapshot.supports(method: "account/workspaceMessages/read") {
-            do {
-                let response = try await client.request(method: "account/workspaceMessages/read", params: [:])
-                if response.bool("featureEnabled") == true {
-                    loadedWorkspaceMessages = (response["messages"] as? [[String: Any]] ?? [])
-                        .compactMap(DesktopWorkspaceMessage.parse)
-                }
-            } catch {
-                failures.append("Workspace messages")
-            }
+        let accountWorkspacePath = hasExplicitWorkspace
+            ? effectiveWorkspaceURL.standardizedFileURL.resolvingSymlinksInPath().path
+            : nil
+        if accountResourcesLoadGeneration == loadGeneration,
+           selectedThreadID == contextUIThreadID,
+           accountWorkspacePath == contextWorkspacePath {
+            applyAccountOverview(accountSnapshot)
         }
         if capabilitySnapshot.supports(.skills), let contextWorkspacePath {
             do {
@@ -3965,7 +4085,6 @@ final class DesktopCodexStore: ObservableObject {
               currentWorkspacePath == contextWorkspacePath else { return }
 
         var seenRows = Set<String>()
-        accountOverview = overview
         skillRecords = Dictionary(grouping: loadedSkills, by: \.id)
             .compactMap { $0.value.last }
             .sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
@@ -3978,11 +4097,6 @@ final class DesktopCodexStore: ObservableObject {
         mcpServerStatuses = Dictionary(grouping: loadedMCPServers, by: \.id)
             .compactMap { $0.value.last }
             .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
-        workspaceMessages = loadedWorkspaceMessages.sorted {
-            ($0.createdAt ?? .distantPast) > ($1.createdAt ?? .distantPast)
-        }
-        availableRateLimitResetCredits = loadedResetCreditCount
-        availableRateLimitResetCreditID = loadedResetCreditID
         resourceOverviews = rows
             .filter { seenRows.insert($0.id).inserted }
             .sorted {
@@ -5301,12 +5415,16 @@ final class DesktopCodexStore: ObservableObject {
             || method == "guardianWarning"
             || method == "deprecationNotice"
             ? .warning : .info
+        let title = Self.displayProtocolName(method)
         recordRuntimeNotice(
             method: method,
             severity: severity,
-            title: Self.displayProtocolName(method),
+            title: title,
             detail: message
         )
+        if severity == .warning {
+            notifications?.showWarning(title: title, detail: message)
+        }
     }
 
     private func appendProtocolActivity(
@@ -5504,6 +5622,7 @@ final class DesktopCodexStore: ObservableObject {
                 if !(turn?["error"] is [String: Any]) {
                     Task { await flushNextQueuedDraft(threadID: eventThreadID) }
                 }
+                announceTurnCompletion(turn: turn, threadID: eventThreadID)
                 discardTemporaryChatIfNeeded(leaving: eventThreadID)
             case "thread/tokenUsage/updated":
                 if let usageObject = params["tokenUsage"] as? [String: Any],

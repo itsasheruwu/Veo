@@ -12,6 +12,7 @@ enum DesktopRootPage: Equatable {
 enum DesktopSettingsCategory: String, CaseIterable, Identifiable {
     case general
     case appearance
+    case notifications
     case terminal
     case runtime
     case updates
@@ -24,6 +25,7 @@ enum DesktopSettingsCategory: String, CaseIterable, Identifiable {
         switch self {
         case .general: return "General"
         case .appearance: return "Appearance"
+        case .notifications: return "Notifications"
         case .terminal: return "Terminal"
         case .runtime: return "Runtime"
         case .updates: return "Updates"
@@ -36,6 +38,7 @@ enum DesktopSettingsCategory: String, CaseIterable, Identifiable {
         switch self {
         case .general: return "Project, access, and utility model"
         case .appearance: return "Theme, accent, and materials"
+        case .notifications: return "Alerts, menu bar, and sounds"
         case .terminal: return "Docked terminal and agent CLIs"
         case .runtime: return "Local Codex connection"
         case .updates: return "Version checks and auto updates"
@@ -48,6 +51,7 @@ enum DesktopSettingsCategory: String, CaseIterable, Identifiable {
         switch self {
         case .general: return "gearshape"
         case .appearance: return "paintbrush"
+        case .notifications: return "bell"
         case .terminal: return "apple.terminal"
         case .runtime: return "bolt.horizontal.circle"
         case .updates: return "arrow.down.circle"

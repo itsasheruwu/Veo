@@ -11,8 +11,14 @@ struct VeoApp: App {
     @StateObject private var store = DesktopCodexStore()
     @StateObject private var navigation = DesktopNavigationState()
     @StateObject private var updateService = DesktopUpdateService()
+    @StateObject private var notifications = DesktopNotificationService()
+    @StateObject private var menuBarController = DesktopMenuBarController()
     @AppStorage(DesktopAppearancePreferences.appearanceModeKey) private var appearanceModeRaw =
         DesktopAppearanceMode.dark.rawValue
+
+    init() {
+        DesktopNotificationPreferences.registerDefaults()
+    }
 
     private var preferredColorScheme: ColorScheme? {
         (DesktopAppearanceMode(rawValue: appearanceModeRaw) ?? .dark).preferredColorScheme
@@ -22,6 +28,8 @@ struct VeoApp: App {
         WindowGroup("Veo", id: "workspace") {
             DesktopWorkspaceView(store: store, navigation: navigation)
                 .environmentObject(updateService)
+                .environmentObject(notifications)
+                .environmentObject(menuBarController)
                 .preferredColorScheme(preferredColorScheme)
         }
         .defaultSize(width: 1440, height: 900)
@@ -85,12 +93,5 @@ struct VeoApp: App {
                 .disabled(updateService.isBusy)
             }
         }
-
-        MenuBarExtra {
-            DesktopMenuBarView(store: store)
-        } label: {
-            Image(systemName: store.isRunningTurn ? "waveform" : "sparkles")
-        }
-        .menuBarExtraStyle(.window)
     }
 }

@@ -126,7 +126,7 @@ struct DesktopComposerAutocompletePanel: View {
         switch suggestion.kind {
         case .file: return "doc.text"
         case .skill: return "bolt.badge.checkmark"
-        case .command: return "command"
+        case .command: return DesktopComposerCommand.named(suggestion.source)?.systemImage ?? "command"
         case .model: return "cube"
         case .reasoning: return "brain"
         case .accessMode: return "shield"

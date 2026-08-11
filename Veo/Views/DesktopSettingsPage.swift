@@ -109,6 +109,7 @@ struct DesktopSettingsPage: View {
     @ObservedObject var store: DesktopCodexStore
     @ObservedObject var navigation: DesktopNavigationState
     @EnvironmentObject private var updateService: DesktopUpdateService
+    @EnvironmentObject private var notifications: DesktopNotificationService
     @AppStorage(DesktopTerminalPreferences.agentCLIsEnabledKey) private var agentCLIsEnabled = false
     @AppStorage(DesktopTerminalPreferences.yoloModeKey) private var agentCLIsYoloMode = false
     @AppStorage(DesktopTerminalPreferences.yoloClaudeKey) private var agentCLIsYoloClaude = true
@@ -123,6 +124,12 @@ struct DesktopSettingsPage: View {
         DesktopComposerMaterial.liquidGlass.rawValue
     @AppStorage(DesktopAppearancePreferences.windowMaterialKey) private var windowMaterialRaw =
         DesktopWindowMaterial.solid.rawValue
+    @AppStorage(DesktopNotificationPreferences.systemAlertsKey) private var notificationSystemAlerts = true
+    @AppStorage(DesktopNotificationPreferences.inAppWarningsKey) private var notificationInAppWarnings = true
+    @AppStorage(DesktopNotificationPreferences.menuBarIconKey) private var notificationMenuBarIcon = true
+    @AppStorage(DesktopNotificationPreferences.completionSoundKey) private var notificationCompletionSound = false
+    @AppStorage(DesktopNotificationPreferences.customSoundPathKey) private var notificationSoundPath = ""
+    @AppStorage(DesktopNotificationPreferences.customSoundNameKey) private var notificationSoundName = ""
     @AppStorage(DesktopAppearancePreferences.threadMinimapVisibleKey) private var showsThreadMinimap = true
     @AppStorage(DesktopAppearancePreferences.threadMinimapMaterialKey) private var threadMinimapMaterialRaw =
         DesktopMinimapMaterial.liquidGlass.rawValue
@@ -133,6 +140,7 @@ struct DesktopSettingsPage: View {
     @State private var confirmsLogout = false
     @State private var pluginInstallTarget: DesktopPluginRecord?
     @State private var pluginUninstallTarget: DesktopPluginRecord?
+    @State private var notificationSoundError: String?
 
     private var accentColor: Color {
         DesktopAppearancePreferences.color(fromHex: accentColorHex) ?? DesktopTheme.accent
@@ -215,6 +223,22 @@ struct DesktopSettingsPage: View {
         .navigationTitle("Settings")
         .tint(accentColor)
         .animation(.easeOut(duration: 0.16), value: navigation.settingsCategory)
+        .task(id: navigation.settingsCategory) {
+            notifications.refreshAuthorizationStatus()
+            if navigation.settingsCategory == .account {
+                store.refreshAccountOverview()
+            }
+        }
+        .onChange(of: notificationSystemAlerts) { _, enabled in
+            if enabled {
+                notifications.prepareIfNeeded()
+            } else {
+                notifications.refreshAuthorizationStatus()
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            notifications.refreshAuthorizationStatus()
+        }
         .confirmationDialog(
             "Sign out of the local Codex account?",
             isPresented: $confirmsLogout,
@@ -351,6 +375,9 @@ struct DesktopSettingsPage: View {
 
         case .appearance:
             appearanceSettings
+
+        case .notifications:
+            notificationSettings
 
         case .terminal:
             VStack(alignment: .leading, spacing: 10) {
@@ -727,7 +754,11 @@ struct DesktopSettingsPage: View {
 
         case .account:
             VStack(alignment: .leading, spacing: 22) {
-                settingsRefreshHeader("Account status")
+                settingsRefreshHeader(
+                    "Account status",
+                    isLoading: store.isLoadingAccountOverview,
+                    refresh: store.refreshAccountOverview
+                )
 
                 SettingsPanel {
                     SettingsRow(
@@ -808,12 +839,16 @@ struct DesktopSettingsPage: View {
                     }
                 }
 
-                accountResourcesNote
+                accountOverviewNote
             }
 
         case .integrations:
             VStack(alignment: .leading, spacing: 22) {
-                settingsRefreshHeader("Local integrations")
+                settingsRefreshHeader(
+                    "Local integrations",
+                    isLoading: store.isLoadingAccountResources,
+                    refresh: store.refreshAccountResources
+                )
 
                 skillsSection
                 pluginsSection
@@ -1082,18 +1117,22 @@ struct DesktopSettingsPage: View {
         }
     }
 
-    private func settingsRefreshHeader(_ title: String) -> some View {
+    private func settingsRefreshHeader(
+        _ title: String,
+        isLoading: Bool,
+        refresh: @escaping () -> Void
+    ) -> some View {
         HStack {
             sectionTitle(title)
             Spacer()
-            if store.isLoadingAccountResources {
+            if isLoading {
                 ProgressView()
                     .controlSize(.small)
             }
-            Button("Refresh") { store.refreshAccountResources() }
+            Button("Refresh", action: refresh)
                 .buttonStyle(.bordered)
                 .controlSize(.small)
-                .disabled(store.runtimeState != .ready || store.isLoadingAccountResources)
+                .disabled(store.runtimeState != .ready || isLoading)
         }
     }
 
@@ -1126,6 +1165,24 @@ struct DesktopSettingsPage: View {
                     }
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private var accountOverviewNote: some View {
+        if let message = store.accountOverviewMessage {
+            Label(message, systemImage: "exclamationmark.triangle")
+                .font(.system(size: 11.5))
+                .foregroundStyle(.secondary)
+                .labelStyle(SettingsNoteLabelStyle())
+        } else {
+            Label(
+                "Account details come straight from your local Codex session. Veo does not read or keep your credentials.",
+                systemImage: "lock.shield"
+            )
+            .font(.system(size: 11.5))
+            .foregroundStyle(.secondary)
+            .labelStyle(SettingsNoteLabelStyle())
         }
     }
 
@@ -1282,6 +1339,175 @@ struct DesktopSettingsPage: View {
 
     @ViewBuilder
     private var appearanceSettings: some View {
+        appearanceSettingsBody
+    }
+
+    @ViewBuilder
+    private var notificationSettings: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            VStack(alignment: .leading, spacing: 10) {
+                sectionTitle("While you're away")
+
+                SettingsPanel {
+                    SettingsRow(
+                        title: "Turn alerts",
+                        detail: notificationTurnAlertDetail,
+                        systemImage: "bell.badge"
+                    ) {
+                        Toggle("Turn alerts", isOn: $notificationSystemAlerts)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .controlSize(.small)
+                    }
+
+                    if notificationSystemAlerts,
+                       notifications.authorizationState == .denied {
+                        SettingsRow(
+                            title: "Allow notifications in macOS",
+                            detail: "Veo is enabled here, but system alerts are blocked.",
+                            systemImage: "bell.slash",
+                            iconColor: .orange,
+                            nestDepth: 1,
+                            nestStyle: .leaf
+                        ) {
+                            Button("Open System Settings") {
+                                notifications.openSystemNotificationSettings()
+                            }
+                            .controlSize(.small)
+                        }
+                    }
+
+                    SettingsPanelDivider()
+
+                    SettingsRow(
+                        title: "Warning banners",
+                        detail: "Show warning-level runtime notices briefly inside Veo.",
+                        systemImage: "exclamationmark.triangle"
+                    ) {
+                        Toggle("Warning banners", isOn: $notificationInAppWarnings)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .controlSize(.small)
+                    }
+
+                    SettingsPanelDivider()
+
+                    SettingsRow(
+                        title: "Menu bar item",
+                        detail: "Keep Veo in the menu bar for quick access and turn status.",
+                        systemImage: "menubar.arrow.up.rectangle"
+                    ) {
+                        Toggle("Menu bar item", isOn: $notificationMenuBarIcon)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .controlSize(.small)
+                    }
+                }
+
+                Label {
+                    Text("Alerts stay quiet for the chat you're already watching. macOS decides how they appear — change that in System Settings → Notifications.")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(.secondary)
+                } icon: {
+                    Image(systemName: "info.circle")
+                        .foregroundStyle(.secondary)
+                }
+                .labelStyle(SettingsNoteLabelStyle())
+                .padding(.horizontal, 4)
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                sectionTitle("Sound")
+
+                SettingsPanel {
+                    SettingsRow(
+                        title: "Play a sound",
+                        detail: "Sound off a finished turn or a waiting approval.",
+                        systemImage: "speaker.wave.2"
+                    ) {
+                        Toggle("Play a sound", isOn: $notificationCompletionSound)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .controlSize(.small)
+                    }
+
+                    if notificationCompletionSound {
+                        SettingsRow(
+                            title: "Sound",
+                            detail: notificationSoundDisplayName,
+                            systemImage: "waveform",
+                            nestDepth: 1,
+                            nestStyle: .leaf
+                        ) {
+                            HStack(spacing: 8) {
+                                Button("Preview") {
+                                    notifications.playSound()
+                                }
+                                Button("Choose…") {
+                                    chooseNotificationSound()
+                                }
+                                if DesktopNotificationPreferences.customSoundPath != nil {
+                                    Button("Reset") {
+                                        DesktopNotificationPreferences.clearCustomSound()
+                                        notificationSoundPath = ""
+                                        notificationSoundName = ""
+                                        notificationSoundError = nil
+                                    }
+                                }
+                            }
+                            .controlSize(.small)
+                        }
+                    }
+                }
+
+                if let notificationSoundError {
+                    Label(notificationSoundError, systemImage: "exclamationmark.triangle.fill")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(.red)
+                        .padding(.horizontal, 4)
+                }
+            }
+        }
+    }
+
+    private var notificationTurnAlertDetail: String {
+        if notificationSystemAlerts, notifications.authorizationState == .denied {
+            return "Enabled in Veo, blocked by macOS."
+        }
+        return "Notify when Codex finishes a turn or needs a decision."
+    }
+
+    private var notificationSoundDisplayName: String {
+        if !notificationSoundName.isEmpty { return notificationSoundName }
+        if !notificationSoundPath.isEmpty {
+            return URL(fileURLWithPath: notificationSoundPath).deletingPathExtension().lastPathComponent
+        }
+        return "Default sound"
+    }
+
+    private func chooseNotificationSound() {
+        let panel = NSOpenPanel()
+        panel.title = "Choose a notification sound"
+        panel.prompt = "Use Sound"
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [.audio]
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let importedURL = try DesktopNotificationPreferences.importCustomSound(from: url)
+            notificationSoundPath = importedURL.path
+            notificationSoundName = url.deletingPathExtension().lastPathComponent
+            notificationSoundError = nil
+            notifications.playSound()
+        } catch {
+            notificationSoundError = "Veo couldn't save that sound: \(error.localizedDescription)"
+        }
+    }
+
+    @ViewBuilder
+    private var appearanceSettingsBody: some View {
         VStack(alignment: .leading, spacing: 22) {
             VStack(alignment: .leading, spacing: 10) {
                 sectionTitle("Theme")

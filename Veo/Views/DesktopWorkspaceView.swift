@@ -196,6 +196,9 @@ struct DesktopWindowChromeBackground: View {
 
     @ViewBuilder
     private var liquidGlass: some View {
+        // glassEffect is an Xcode 26 SDK symbol. Older CI compilers fall back
+        // to Mica, matching the sidebar's pre-macOS 26 behavior.
+        #if compiler(>=6.2)
         if #available(macOS 26.0, *) {
             Color.clear
                 .glassEffect(.regular, in: Rectangle())
@@ -204,6 +207,10 @@ struct DesktopWindowChromeBackground: View {
             DesktopVisualEffectBackground(material: .underWindowBackground)
                 .ignoresSafeArea()
         }
+        #else
+        DesktopVisualEffectBackground(material: .underWindowBackground)
+            .ignoresSafeArea()
+        #endif
     }
 }
 

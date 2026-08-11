@@ -22,6 +22,8 @@ struct ComposerTextView: NSViewRepresentable {
     var onMoveAutocomplete: (Int) -> Bool = { _ in false }
     /// Accepts the active autocomplete row. Returns false when no palette is open.
     var onAcceptAutocomplete: () -> Bool = { false }
+    /// Closes autocomplete without changing the draft. Returns false when no palette is open.
+    var onDismissAutocomplete: () -> Bool = { false }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -118,7 +120,9 @@ struct ComposerTextView: NSViewRepresentable {
             case #selector(NSResponder.moveDown(_:)):
                 return parent.onMoveAutocomplete(1)
             case #selector(NSResponder.insertTab(_:)):
-                return parent.onAcceptAutocomplete()
+                return parent.onMoveAutocomplete(1)
+            case #selector(NSResponder.cancelOperation(_:)):
+                return parent.onDismissAutocomplete()
             case #selector(NSResponder.insertNewline(_:)):
                 break
             default:
@@ -128,6 +132,9 @@ struct ComposerTextView: NSViewRepresentable {
             // and otherwise falls through to a newline rather than doing nothing at all.
             if NSApp.currentEvent?.modifierFlags.contains(.shift) == true {
                 textView.insertNewlineIgnoringFieldEditor(nil)
+                return true
+            }
+            if parent.onAcceptAutocomplete() {
                 return true
             }
             return parent.onSubmit()

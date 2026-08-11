@@ -40,7 +40,9 @@ struct DesktopComposerAutocompletePanel: View {
 
             HStack(spacing: 13) {
                 shortcut("↑↓", label: "Select")
-                shortcut("Tab", label: "Run")
+                shortcut("Tab", label: "Next")
+                shortcut("↩", label: "Use")
+                shortcut("Esc", label: "Close")
                 Spacer(minLength: 0)
                 if let paletteTitle {
                     Text(paletteTitle)

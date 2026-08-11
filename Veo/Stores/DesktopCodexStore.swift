@@ -151,6 +151,7 @@ final class DesktopCodexStore: ObservableObject {
     private var threadSearchTask: Task<Void, Never>?
     private var searchOccurrencesTask: Task<Void, Never>?
     private var codexThreadsLoadGeneration = 0
+    private var codexCatalogRequestGeneration = 0
     private var pendingRequestQueues: [String: [DesktopPendingRequest]] = [:]
     private var pendingRequestOrder: [String] = []
     private weak var notifications: DesktopNotificationService?
@@ -208,6 +209,7 @@ final class DesktopCodexStore: ObservableObject {
         selectedRealtimeVoiceID = defaults.string(forKey: "VeoDesktop.realtimeVoice")
         searchesMessageContent = defaults.bool(forKey: "VeoDesktop.searchesMessageContent")
         showCodexThreads = defaults.bool(forKey: "VeoDesktop.showCodexThreads")
+        isLoadingCodexThreads = showCodexThreads
         planModeThreadIDs = Set(defaults.stringArray(forKey: "VeoDesktop.planModeThreadIDs") ?? [])
         if let rawBehavior = defaults.string(forKey: "VeoDesktop.followUpBehavior"),
            let behavior = DesktopFollowUpBehavior(rawValue: rawBehavior) {
@@ -2631,6 +2633,13 @@ final class DesktopCodexStore: ObservableObject {
         return true
     }
 
+    @discardableResult
+    func dismissComposerSuggestions() -> Bool {
+        guard !composerSuggestions.isEmpty else { return false }
+        closeComposerPalette()
+        return true
+    }
+
     /// Executes a recognized Veo slash command locally so it is never sent to the model as prose.
     @discardableResult
     func executeComposerCommandIfPresent() -> Bool {
@@ -3328,9 +3337,6 @@ final class DesktopCodexStore: ObservableObject {
             capabilities = client.capabilities
             runtimeState = .ready
             transientError = nil
-            await loadModels()
-            await loadCollaborationModes()
-            await loadRuntimeConfiguration()
             await loadVeoThreadsFromStore()
             if showCodexThreads {
                 let generation = codexThreadsLoadGeneration
@@ -3339,6 +3345,9 @@ final class DesktopCodexStore: ObservableObject {
                 // before the runtime finished connecting.
                 finishCodexThreadsLoading(generation: generation)
             }
+            await loadModels()
+            await loadCollaborationModes()
+            await loadRuntimeConfiguration()
             if let selectedThreadID, findThread(selectedThreadID) != nil {
                 await prepareAndResumeSelectedThread(selectedThreadID, loadGeneration: timelineLoadGeneration)
             }
@@ -4148,22 +4157,24 @@ final class DesktopCodexStore: ObservableObject {
         searchTerm: String? = nil,
         forceStableFallback: Bool = false
     ) async {
+        codexCatalogRequestGeneration += 1
+        let requestGeneration = codexCatalogRequestGeneration
         let usesContentSearch = !forceStableFallback
             && searchTerm != nil
             && searchesMessageContent
             && canSearchMessageContent
         do {
             try Task.checkCancellation()
-            var rows: [[String: Any]] = []
-            var snippets: [String: String] = [:]
+            var parsedByID: [String: DesktopThread] = [:]
+            var mappedSnippets: [String: String] = [:]
             var cursor: String?
             var seenCursors = Set<String>()
 
             while true {
                 try Task.checkCancellation()
                 var params: [String: Any] = [
-                    // Keep pages modest — full 100-row payloads can exceed 1 MiB.
-                    "limit": 40,
+                    // Larger pages reduce main-actor/SwiftUI churn while the catalog fills.
+                    "limit": 100,
                     "sortKey": "recency_at",
                     "sortDirection": "desc",
                     "archived": archived,
@@ -4185,6 +4196,9 @@ final class DesktopCodexStore: ObservableObject {
                         timeoutSeconds: 120
                     )
                 } else {
+                    // Avoid rescanning every JSONL rollout on each page. The app-server's
+                    // state database is already the authoritative thread catalog here.
+                    params["useStateDbOnly"] = true
                     response = try await client.request(
                         method: "thread/list",
                         params: params,
@@ -4193,19 +4207,47 @@ final class DesktopCodexStore: ObservableObject {
                 }
                 try Task.checkCancellation()
                 let data = Self.jsonObjectArray(response["data"])
+                var pageRows: [[String: Any]] = []
                 if usesContentSearch {
                     for hit in data {
                         guard let thread = hit["thread"] as? [String: Any],
                               let threadID = thread.string("id") else { continue }
-                        rows.append(thread)
+                        pageRows.append(thread)
                         if let snippet = hit.string("snippet") {
-                            snippets[threadID] = snippet
+                            mappedSnippets[DesktopThreadSelection.codex(threadID).storageKey] = snippet
                         }
                     }
                 } else {
-                    rows.append(contentsOf: data)
+                    pageRows = data
                 }
-                guard let nextCursor = response.string("nextCursor"), !nextCursor.isEmpty else { break }
+
+                let pageThreads = Self.threadsWithExistingWorkspaces(
+                    pageRows.compactMap { DesktopThread.parse($0, origin: .codex) }
+                )
+                for thread in pageThreads {
+                    parsedByID[thread.id] = thread
+                }
+                let parsed = parsedByID.values.sorted { $0.updatedAt > $1.updatedAt }
+
+                try Task.checkCancellation()
+                guard canPublishCodexCatalog(
+                    requestGeneration: requestGeneration,
+                    archived: archived,
+                    searchTerm: searchTerm,
+                    usesContentSearch: usesContentSearch,
+                    forceStableFallback: forceStableFallback
+                ) else { return }
+                publishCodexCatalog(
+                    parsed,
+                    snippets: mappedSnippets,
+                    archived: archived,
+                    searchTerm: searchTerm,
+                    isFinalPage: false
+                )
+
+                guard let nextCursor = response.string("nextCursor"), !nextCursor.isEmpty else {
+                    break
+                }
                 guard seenCursors.insert(nextCursor).inserted else {
                     throw CodexAppServerClientError.malformedResponse("thread/list pagination")
                 }
@@ -4213,43 +4255,21 @@ final class DesktopCodexStore: ObservableObject {
             }
 
             try Task.checkCancellation()
-            let currentQuery = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-            let currentSearchTerm = currentQuery.isEmpty ? nil : currentQuery
-            guard showCodexThreads,
-                  currentSearchTerm == searchTerm,
-                  isBrowsingArchivedThreads == archived else { return }
-            if !forceStableFallback {
-                guard usesContentSearch == (searchesMessageContent && searchTerm != nil && canSearchMessageContent) else { return }
-            }
-            let parsed = Self.threadsWithExistingWorkspaces(
-                rows.compactMap { DesktopThread.parse($0, origin: .codex) }
+            guard canPublishCodexCatalog(
+                requestGeneration: requestGeneration,
+                archived: archived,
+                searchTerm: searchTerm,
+                usesContentSearch: usesContentSearch,
+                forceStableFallback: forceStableFallback
+            ) else { return }
+            let parsed = parsedByID.values.sorted { $0.updatedAt > $1.updatedAt }
+            publishCodexCatalog(
+                parsed,
+                snippets: mappedSnippets,
+                archived: archived,
+                searchTerm: searchTerm,
+                isFinalPage: true
             )
-                .sorted { $0.updatedAt > $1.updatedAt }
-            var mappedSnippets: [String: String] = [:]
-            if usesContentSearch {
-                for (bareID, snippet) in snippets {
-                    mappedSnippets[DesktopThreadSelection.codex(bareID).storageKey] = snippet
-                }
-            }
-            if searchTerm != nil {
-                searchedThreads = parsed
-                searchSnippetByThreadID = mappedSnippets
-            } else if archived {
-                archivedCodexThreads = parsed
-                searchSnippetByThreadID = [:]
-            } else {
-                codexThreads = parsed
-                clearMissingSelectionIfNeeded(origin: .codex)
-                let currentThreadsByID = Dictionary(uniqueKeysWithValues: parsed.map { ($0.id, $0) })
-                agentStateByThreadID = agentStateByThreadID.filter { threadID, state in
-                    if DesktopThreadSelection.parse(threadID).origin == .veo {
-                        return findThread(threadID)?.isRunning == true || state.isActive
-                    }
-                    return currentThreadsByID[threadID]?.isRunning == true
-                }
-                searchSnippetByThreadID = [:]
-            }
-            transientError = nil
             if usesContentSearch,
                let selectedThreadID,
                DesktopThreadSelection.parse(selectedThreadID).origin == .codex,
@@ -4259,6 +4279,7 @@ final class DesktopCodexStore: ObservableObject {
             }
         } catch {
             if error is CancellationError { return }
+            guard requestGeneration == codexCatalogRequestGeneration else { return }
             capabilities = client.capabilities
             if usesContentSearch {
                 if !client.capabilities.supports(.threadSearch) {
@@ -4273,6 +4294,56 @@ final class DesktopCodexStore: ObservableObject {
                 return
             }
             transientError = error.localizedDescription
+        }
+    }
+
+    private func canPublishCodexCatalog(
+        requestGeneration: Int,
+        archived: Bool,
+        searchTerm: String?,
+        usesContentSearch: Bool,
+        forceStableFallback: Bool
+    ) -> Bool {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let currentSearchTerm = query.isEmpty ? nil : query
+        guard requestGeneration == codexCatalogRequestGeneration,
+              showCodexThreads,
+              currentSearchTerm == searchTerm,
+              isBrowsingArchivedThreads == archived else { return false }
+        if !forceStableFallback {
+            return usesContentSearch
+                == (searchesMessageContent && searchTerm != nil && canSearchMessageContent)
+        }
+        return true
+    }
+
+    private func publishCodexCatalog(
+        _ parsed: [DesktopThread],
+        snippets: [String: String],
+        archived: Bool,
+        searchTerm: String?,
+        isFinalPage: Bool
+    ) {
+        if searchTerm != nil {
+            searchedThreads = parsed
+            searchSnippetByThreadID = snippets
+        } else if archived {
+            archivedCodexThreads = parsed
+            searchSnippetByThreadID = [:]
+        } else {
+            codexThreads = parsed
+            searchSnippetByThreadID = [:]
+        }
+        transientError = nil
+
+        guard isFinalPage, searchTerm == nil, !archived else { return }
+        clearMissingSelectionIfNeeded(origin: .codex)
+        let currentThreadsByID = Dictionary(uniqueKeysWithValues: parsed.map { ($0.id, $0) })
+        agentStateByThreadID = agentStateByThreadID.filter { threadID, state in
+            if DesktopThreadSelection.parse(threadID).origin == .veo {
+                return findThread(threadID)?.isRunning == true || state.isActive
+            }
+            return currentThreadsByID[threadID]?.isRunning == true
         }
     }
 

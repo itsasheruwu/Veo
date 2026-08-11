@@ -108,6 +108,7 @@ struct DesktopSettingsSidebarView: View {
 struct DesktopSettingsPage: View {
     @ObservedObject var store: DesktopCodexStore
     @ObservedObject var navigation: DesktopNavigationState
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @EnvironmentObject private var updateService: DesktopUpdateService
     @EnvironmentObject private var notifications: DesktopNotificationService
     @AppStorage(DesktopTerminalPreferences.agentCLIsEnabledKey) private var agentCLIsEnabled = false
@@ -122,6 +123,8 @@ struct DesktopSettingsPage: View {
         DesktopSidebarMaterial.solid.rawValue
     @AppStorage(DesktopAppearancePreferences.composerMaterialKey) private var composerMaterialRaw =
         DesktopComposerMaterial.liquidGlass.rawValue
+    @AppStorage(DesktopAppearancePreferences.notificationMaterialKey) private var notificationMaterialRaw =
+        DesktopNotificationMaterial.mica.rawValue
     @AppStorage(DesktopAppearancePreferences.windowMaterialKey) private var windowMaterialRaw =
         DesktopWindowMaterial.solid.rawValue
     @AppStorage(DesktopNotificationPreferences.systemAlertsKey) private var notificationSystemAlerts = true
@@ -141,6 +144,7 @@ struct DesktopSettingsPage: View {
     @State private var pluginInstallTarget: DesktopPluginRecord?
     @State private var pluginUninstallTarget: DesktopPluginRecord?
     @State private var notificationSoundError: String?
+    @State private var highlightedSettingsAnchor: DesktopSettingsAnchor?
 
     private var accentColor: Color {
         DesktopAppearancePreferences.color(fromHex: accentColorHex) ?? DesktopTheme.accent
@@ -174,6 +178,13 @@ struct DesktopSettingsPage: View {
         )
     }
 
+    private var notificationMaterialBinding: Binding<DesktopNotificationMaterial> {
+        Binding(
+            get: { DesktopNotificationMaterial(rawValue: notificationMaterialRaw) ?? .mica },
+            set: { notificationMaterialRaw = $0.rawValue }
+        )
+    }
+
     private var windowMaterialBinding: Binding<DesktopWindowMaterial> {
         Binding(
             get: { DesktopWindowMaterial(rawValue: windowMaterialRaw) ?? .solid },
@@ -201,23 +212,35 @@ struct DesktopSettingsPage: View {
                 material: DesktopWindowMaterial(rawValue: windowMaterialRaw) ?? .solid
             )
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 30) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(navigation.settingsCategory.title)
-                            .font(.system(size: 27, weight: .semibold, design: .rounded))
-                        Text(navigation.settingsCategory.detail)
-                            .font(.system(size: 13))
-                            .foregroundStyle(.secondary)
-                    }
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 30) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(navigation.settingsCategory.title)
+                                .font(.system(size: 27, weight: .semibold, design: .rounded))
+                            Text(navigation.settingsCategory.detail)
+                                .font(.system(size: 13))
+                                .foregroundStyle(.secondary)
+                        }
 
-                    settingsContent
+                        settingsContent
+                    }
+                    .padding(.horizontal, 38)
+                    .padding(.top, 48)
+                    .padding(.bottom, 40)
+                    .frame(maxWidth: 700, alignment: .leading)
+                    .frame(maxWidth: .infinity)
                 }
-                .padding(.horizontal, 38)
-                .padding(.top, 48)
-                .padding(.bottom, 40)
-                .frame(maxWidth: 700, alignment: .leading)
-                .frame(maxWidth: .infinity)
+                .onAppear {
+                    if let anchor = navigation.settingsAnchor {
+                        revealSettingsAnchor(anchor, with: proxy)
+                    }
+                }
+                .onChange(of: navigation.settingsAnchor) { _, anchor in
+                    if let anchor {
+                        revealSettingsAnchor(anchor, with: proxy)
+                    }
+                }
             }
         }
         .navigationTitle("Settings")
@@ -1417,6 +1440,21 @@ struct DesktopSettingsPage: View {
             }
 
             VStack(alignment: .leading, spacing: 10) {
+                sectionTitle("Appearance")
+
+                SettingsPanel {
+                    NotificationMaterialPortalRow(
+                        material: notificationMaterialBinding.wrappedValue
+                    ) {
+                        navigation.showSettings(
+                            .appearance,
+                            anchor: .notificationMaterial
+                        )
+                    }
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
                 sectionTitle("Sound")
 
                 SettingsPanel {
@@ -1642,6 +1680,41 @@ struct DesktopSettingsPage: View {
             }
 
             VStack(alignment: .leading, spacing: 10) {
+                sectionTitle("Notifications")
+
+                SettingsPanel {
+                    SettingsRow(
+                        title: "Notification material",
+                        detail: notificationMaterialBinding.wrappedValue.title,
+                        systemImage: "bell.badge"
+                    ) {
+                        Picker("Notification material", selection: notificationMaterialBinding) {
+                            ForEach(DesktopNotificationMaterial.allCases) { material in
+                                Text(material.title).tag(material)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.segmented)
+                        .frame(maxWidth: 280)
+                    }
+                }
+                .id(DesktopSettingsAnchor.notificationMaterial)
+                .overlay {
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(
+                            accentColor.opacity(highlightedSettingsAnchor == .notificationMaterial ? 0.9 : 0),
+                            lineWidth: 2
+                        )
+                        .padding(-3)
+                }
+                .shadow(
+                    color: accentColor.opacity(highlightedSettingsAnchor == .notificationMaterial ? 0.28 : 0),
+                    radius: 14
+                )
+                .animation(.easeOut(duration: 0.22), value: highlightedSettingsAnchor)
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
                 sectionTitle("Thread minimap")
 
                 SettingsPanel {
@@ -1677,6 +1750,25 @@ struct DesktopSettingsPage: View {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    private func revealSettingsAnchor(
+        _ anchor: DesktopSettingsAnchor,
+        with proxy: ScrollViewProxy
+    ) {
+        guard navigation.settingsCategory == .appearance else { return }
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(90))
+            withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.42)) {
+                proxy.scrollTo(anchor, anchor: .center)
+            }
+            highlightedSettingsAnchor = anchor
+            navigation.settingsAnchor = nil
+            try? await Task.sleep(for: .seconds(1.15))
+            if highlightedSettingsAnchor == anchor {
+                highlightedSettingsAnchor = nil
             }
         }
     }
@@ -1962,6 +2054,155 @@ private struct SettingsPanel<Content: View>: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(Color.primary.opacity(0.08), lineWidth: 1)
         )
+    }
+}
+
+private struct NotificationMaterialPortalRow: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.veoAccent) private var veoAccent
+    let material: DesktopNotificationMaterial
+    let action: () -> Void
+
+    @State private var isHovered = false
+    @State private var isActivating = false
+
+    var body: some View {
+        TimelineView(.animation(
+            minimumInterval: 1.0 / 30.0,
+            paused: reduceMotion || (!isHovered && !isActivating)
+        )) { context in
+            let angle = context.date.timeIntervalSinceReferenceDate * 105
+            Button(action: activate) {
+                HStack(spacing: 14) {
+                    PortalGlyph(
+                        angle: angle,
+                        isActive: isHovered || isActivating,
+                        color: veoAccent
+                    )
+                    .frame(width: 22, height: 22)
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Notification material")
+                            .font(.system(size: 13, weight: .semibold))
+                        Text(isHovered
+                            ? "Open the exact material control in Appearance"
+                            : "Bring me to notification material options")
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+
+                    Spacer(minLength: 18)
+
+                    HStack(spacing: 7) {
+                        Text(material.title)
+                            .font(.system(size: 11.5, weight: .medium))
+                            .foregroundStyle(isHovered ? veoAccent : Color.secondary)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(isHovered ? veoAccent : Color.secondary.opacity(0.65))
+                            .offset(x: isHovered && !reduceMotion ? 2 : 0)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .frame(minHeight: 68)
+                .contentShape(Rectangle())
+                .background {
+                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        .fill(veoAccent.opacity(isHovered ? 0.07 : 0))
+                }
+                .overlay {
+                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        .stroke(veoAccent.opacity(isHovered ? 0.24 : 0), lineWidth: 1)
+                }
+                .overlay(alignment: .leading) {
+                    Circle()
+                        .fill(
+                            RadialGradient(
+                                colors: [Color.white.opacity(0.72), veoAccent.opacity(0.5), .clear],
+                                center: .center,
+                                startRadius: 0,
+                                endRadius: 28
+                            )
+                        )
+                        .frame(width: 34, height: 34)
+                        .scaleEffect(isActivating && !reduceMotion ? 18 : 0.15)
+                        .opacity(isActivating ? 0.72 : 0)
+                        .padding(.leading, 10)
+                        .blendMode(.plusLighter)
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+                .scaleEffect(isActivating && !reduceMotion ? 0.985 : 1)
+            }
+            .buttonStyle(.plain)
+            .disabled(isActivating)
+            .onHover { hovering in
+                withAnimation(reduceMotion ? nil : .easeOut(duration: 0.18)) {
+                    isHovered = hovering
+                }
+            }
+            .animation(.easeOut(duration: 0.18), value: isHovered)
+            .animation(.easeInOut(duration: 0.28), value: isActivating)
+            .help("Open Appearance → Notification material")
+            .accessibilityLabel("Notification material")
+            .accessibilityValue(material.title)
+            .accessibilityHint("Open notification material options in Appearance")
+        }
+    }
+
+    private func activate() {
+        guard !isActivating else { return }
+        if reduceMotion {
+            action()
+            return
+        }
+        isActivating = true
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(280))
+            action()
+            isActivating = false
+        }
+    }
+}
+
+private struct PortalGlyph: View {
+    let angle: Double
+    let isActive: Bool
+    let color: Color
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(color.opacity(isActive ? 0.14 : 0.08))
+
+            if isActive {
+                Circle()
+                    .trim(from: 0.08, to: 0.82)
+                    .stroke(
+                        AngularGradient(
+                            colors: [color.opacity(0.15), color, .white, color.opacity(0.15)],
+                            center: .center
+                        ),
+                        style: StrokeStyle(lineWidth: 2, lineCap: .round)
+                    )
+                    .rotationEffect(.degrees(angle))
+
+                Circle()
+                    .trim(from: 0.12, to: 0.68)
+                    .stroke(color.opacity(0.65), style: StrokeStyle(lineWidth: 1, dash: [2, 2]))
+                    .padding(4)
+                    .rotationEffect(.degrees(-angle * 1.35))
+
+                Image(systemName: "sparkle")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(.white)
+                    .shadow(color: color, radius: 3)
+            } else {
+                Image(systemName: "bell.badge")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(color)
+            }
+        }
     }
 }
 

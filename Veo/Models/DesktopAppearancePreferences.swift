@@ -50,6 +50,7 @@ typealias DesktopSidebarMaterial = DesktopChromeMaterial
 typealias DesktopComposerMaterial = DesktopChromeMaterial
 typealias DesktopMinimapMaterial = DesktopChromeMaterial
 typealias DesktopWindowMaterial = DesktopChromeMaterial
+typealias DesktopNotificationMaterial = DesktopChromeMaterial
 
 private struct VeoAccentKey: EnvironmentKey {
     static let defaultValue = Color(red: 0.18, green: 0.55, blue: 0.98)
@@ -68,6 +69,7 @@ enum DesktopAppearancePreferences {
     static let accentColorKey = "VeoDesktop.accentColor"
     static let sidebarMaterialKey = "VeoDesktop.sidebarMaterial"
     static let composerMaterialKey = "VeoDesktop.composerMaterial"
+    static let notificationMaterialKey = "VeoDesktop.notificationMaterial"
     static let windowMaterialKey = "VeoDesktop.windowMaterial"
     static let threadMinimapVisibleKey = "VeoDesktop.threadMinimapVisible"
     static let threadMinimapMaterialKey = "VeoDesktop.threadMinimapMaterial"
@@ -96,6 +98,11 @@ enum DesktopAppearancePreferences {
     static var composerMaterial: DesktopComposerMaterial {
         let raw = defaults.string(forKey: composerMaterialKey) ?? DesktopComposerMaterial.liquidGlass.rawValue
         return DesktopComposerMaterial(rawValue: raw) ?? .liquidGlass
+    }
+
+    static var notificationMaterial: DesktopNotificationMaterial {
+        let raw = defaults.string(forKey: notificationMaterialKey) ?? DesktopNotificationMaterial.mica.rawValue
+        return DesktopNotificationMaterial(rawValue: raw) ?? .mica
     }
 
     static var isThreadMinimapVisible: Bool {

@@ -216,6 +216,7 @@ struct DesktopWindowChromeBackground: View {
 
 private struct DesktopNotificationToast: View {
     let toast: DesktopNotificationService.Toast
+    let material: DesktopNotificationMaterial
     let dismiss: () -> Void
 
     var body: some View {
@@ -246,13 +247,50 @@ private struct DesktopNotificationToast: View {
         }
         .padding(12)
         .frame(width: 360)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 11, style: .continuous)
-                .stroke(DesktopTheme.hairline, lineWidth: 1)
-        )
-        .shadow(color: .black.opacity(0.18), radius: 16, y: 8)
+        .modifier(DesktopNotificationToastSurface(material: material))
         .accessibilityElement(children: .combine)
+    }
+}
+
+private struct DesktopNotificationToastSurface: ViewModifier {
+    let material: DesktopNotificationMaterial
+    private let shape = RoundedRectangle(cornerRadius: 11, style: .continuous)
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        switch material {
+        case .solid:
+            content
+                .background(shape.fill(Color(nsColor: .controlBackgroundColor)))
+                .overlay(shape.stroke(DesktopTheme.hairline, lineWidth: 1))
+                .shadow(color: .black.opacity(0.18), radius: 16, y: 8)
+        case .mica:
+            micaSurface(content)
+        case .liquidGlass:
+            liquidGlassSurface(content)
+        }
+    }
+
+    private func micaSurface(_ content: Content) -> some View {
+        content
+            .background(.regularMaterial, in: shape)
+            .overlay(shape.stroke(DesktopTheme.hairline, lineWidth: 1))
+            .shadow(color: .black.opacity(0.18), radius: 16, y: 8)
+    }
+
+    @ViewBuilder
+    private func liquidGlassSurface(_ content: Content) -> some View {
+        #if compiler(>=6.2)
+        if #available(macOS 26.0, *) {
+            content
+                .glassEffect(.regular.interactive(), in: shape)
+                .shadow(color: .black.opacity(0.16), radius: 16, y: 8)
+        } else {
+            micaSurface(content)
+        }
+        #else
+        micaSurface(content)
+        #endif
     }
 }
 
@@ -267,6 +305,8 @@ struct DesktopWorkspaceView: View {
     @AppStorage(DesktopAppearancePreferences.accentColorKey) private var accentColorHex =
         DesktopAppearancePreferences.defaultAccentHex
     @AppStorage(DesktopNotificationPreferences.menuBarIconKey) private var showsMenuBarIcon = true
+    @AppStorage(DesktopAppearancePreferences.notificationMaterialKey) private var notificationMaterialRaw =
+        DesktopNotificationMaterial.mica.rawValue
     @StateObject private var terminalHub = DesktopLocalTerminalHub()
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var showsChanges = false
@@ -317,7 +357,10 @@ struct DesktopWorkspaceView: View {
         .environment(\.veoAccent, accentColor)
         .overlay(alignment: .topTrailing) {
             if let toast = notifications.toast {
-                DesktopNotificationToast(toast: toast) {
+                DesktopNotificationToast(
+                    toast: toast,
+                    material: DesktopNotificationMaterial(rawValue: notificationMaterialRaw) ?? .mica
+                ) {
                     notifications.dismissToast()
                 }
                 .padding(.top, 46)
@@ -1513,26 +1556,15 @@ private struct DesktopSidebarView: View {
 
             Divider()
 
-            Button {
-                store.setShowCodexThreads(!store.showCodexThreads)
-            } label: {
-                HStack {
-                    Text("Show Codex threads")
-                    Spacer(minLength: 16)
-                    if store.showCodexThreads {
-                        Image(systemName: "checkmark")
-                    }
-                }
-            }
+            Toggle("Show Codex threads", isOn: Binding(
+                get: { store.showCodexThreads },
+                set: { store.setShowCodexThreads($0) }
+            ))
 
-            Button {
-                store.setBrowsingArchivedThreads(!store.isBrowsingArchivedThreads)
-            } label: {
-                Label(
-                    store.isBrowsingArchivedThreads ? "Show Active Chats" : "Browse Archived Chats",
-                    systemImage: store.isBrowsingArchivedThreads ? "text.bubble" : "archivebox"
-                )
-            }
+            Toggle("Browse Archived Chats", isOn: Binding(
+                get: { store.isBrowsingArchivedThreads },
+                set: { store.setBrowsingArchivedThreads($0) }
+            ))
 
             Divider()
 
@@ -3332,7 +3364,8 @@ private struct DesktopComposerView: View {
                     return true
                 },
                 onMoveAutocomplete: store.moveComposerSuggestionSelection,
-                onAcceptAutocomplete: store.acceptSelectedComposerSuggestion
+                onAcceptAutocomplete: store.acceptSelectedComposerSuggestion,
+                onDismissAutocomplete: store.dismissComposerSuggestions
             )
             .accessibilityLabel("Message Codex")
 

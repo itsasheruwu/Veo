@@ -9,6 +9,10 @@ enum DesktopRootPage: Equatable {
     case settings
 }
 
+enum DesktopSettingsAnchor: Hashable {
+    case notificationMaterial
+}
+
 enum DesktopSettingsCategory: String, CaseIterable, Identifiable {
     case general
     case appearance
@@ -65,9 +69,14 @@ enum DesktopSettingsCategory: String, CaseIterable, Identifiable {
 final class DesktopNavigationState: ObservableObject {
     @Published var page: DesktopRootPage = .workspace
     @Published var settingsCategory: DesktopSettingsCategory = .general
+    @Published var settingsAnchor: DesktopSettingsAnchor?
 
-    func showSettings(_ category: DesktopSettingsCategory = .general) {
+    func showSettings(
+        _ category: DesktopSettingsCategory = .general,
+        anchor: DesktopSettingsAnchor? = nil
+    ) {
         settingsCategory = category
+        settingsAnchor = anchor
         page = .settings
     }
 

@@ -276,11 +276,52 @@ final class DesktopUpdateService: ObservableObject {
             .appendingPathComponent(".Veo-update-\(UUID().uuidString.prefix(8)).app")
         _ = try Self.run("/usr/bin/ditto", [sourceURL.path, stagedURL.path])
         do {
-            _ = try FileManager.default.replaceItemAt(bundleURL, withItemAt: stagedURL)
+            try Self.swapInPlace(stagedURL: stagedURL, bundleURL: bundleURL)
         } catch {
             try? FileManager.default.removeItem(at: stagedURL)
             throw error
         }
+    }
+
+    /// Installs the staged bundle by renaming rather than `replaceItemAt`.
+    ///
+    /// A bundle installed from the PKG is owned by `root:wheel`, and
+    /// `replaceItemAt` fails against it with POSIX 13 even though `/Applications`
+    /// itself is group-writable by admins. Directory-level renames only need write
+    /// permission on the enclosing folder, so they succeed where replacing the item
+    /// in place does not. The previous bundle is moved aside first so a failure can
+    /// still restore it, and is only deleted once the new bundle is in position.
+    private static func swapInPlace(stagedURL: URL, bundleURL: URL) throws {
+        let manager = FileManager.default
+        // A fixed name keeps an undeletable leftover from accumulating one copy
+        // per update; each install reuses the same slot.
+        var parkedURL = bundleURL
+            .deletingLastPathComponent()
+            .appendingPathComponent(".Veo-previous.app")
+        try? manager.removeItem(at: parkedURL)
+        if manager.fileExists(atPath: parkedURL.path) {
+            // The slot is held by an undeletable root-owned leftover, so this
+            // install needs its own.
+            parkedURL = bundleURL
+                .deletingLastPathComponent()
+                .appendingPathComponent(".Veo-previous-\(UUID().uuidString.prefix(8)).app")
+        }
+
+        try manager.moveItem(at: bundleURL, to: parkedURL)
+        do {
+            try manager.moveItem(at: stagedURL, to: bundleURL)
+        } catch {
+            // Put the working install back before surfacing the failure.
+            try? manager.moveItem(at: parkedURL, to: bundleURL)
+            throw error
+        }
+
+        // A root-owned previous bundle (installed from the PKG) cannot be deleted,
+        // chmod'd, or moved by an unprivileged process. The update itself already
+        // succeeded, so the leftover is hidden and left in place rather than
+        // failing an otherwise complete install; the next PKG install or a manual
+        // delete clears it.
+        try? manager.removeItem(at: parkedURL)
     }
 
     @discardableResult

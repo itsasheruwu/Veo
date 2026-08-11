@@ -2,6 +2,7 @@
 // Purpose: Presents the live Codex model, reasoning, and service-tier catalog.
 // Layer: Desktop app view
 
+import AppKit
 import SwiftUI
 
 struct DesktopModelMenu: View {
@@ -80,6 +81,13 @@ struct DesktopModelMenu: View {
 private struct DesktopModelStudioPicker: View {
     @ObservedObject var store: DesktopCodexStore
     let catalog: DesktopModelCatalogPresentation
+    @Environment(\.veoAccent) private var veoAccent
+    @State private var page: Page = .details
+
+    private enum Page {
+        case details
+        case modelList
+    }
 
     private var isGPT56Selected: Bool {
         store.selectedModel.map(catalog.isGPT56) == true
@@ -91,40 +99,94 @@ private struct DesktopModelStudioPicker: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                modelSection
+            Group {
+                switch page {
+                case .details:
+                    VStack(alignment: .leading, spacing: 0) {
+                        selectedModelSection
 
-                if isGPT56Selected, !catalog.variantModels.isEmpty {
-                    sectionDivider
-                    variantSection
-                }
+                        if isGPT56Selected, !catalog.variantModels.isEmpty {
+                            sectionDivider
+                            variantSection
+                        }
 
-                if let model = store.selectedModel {
-                    sectionDivider
-                    reasoningSection(for: model)
+                        if let model = store.selectedModel {
+                            sectionDivider
+                            reasoningSection(for: model)
 
-                    if let fastTier = fastTier(for: model) {
-                        sectionDivider
-                        fastModeSection(tier: fastTier)
+                            if let fastTier = fastTier(for: model) {
+                                sectionDivider
+                                fastModeSection(tier: fastTier)
+                            }
+                        }
                     }
-                }
+                    .transition(.move(edge: .leading).combined(with: .opacity))
 
-                if catalog.preferredGPT56Model != nil, !catalog.otherModels.isEmpty {
-                    sectionDivider
-                    otherModelsSection
+                case .modelList:
+                    VStack(alignment: .leading, spacing: 0) {
+                        modelListSection
+                    }
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
                 }
             }
+            .id(page)
             .padding(11)
         }
         .frame(width: 332, height: 430)
         .background(.regularMaterial)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Model studio")
+        .onAppear { page = .details }
     }
 
-    private var modelSection: some View {
+    private var selectedModelSection: some View {
         VStack(alignment: .leading, spacing: 2) {
-            sectionTitle("Model")
+            HStack(spacing: 8) {
+                sectionTitle("Model")
+                Spacer()
+
+                if !catalog.otherModels.isEmpty {
+                    pageButton(systemName: "arrow.right", label: "Show all models") {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            page = .modelList
+                        }
+                    }
+                }
+            }
+
+            if isGPT56Selected, let familyModel = catalog.preferredGPT56Model {
+                StudioSelectionRow(
+                    title: "GPT-5.6",
+                    description: familyDescription(fallback: familyModel),
+                    isSelected: true,
+                    action: {}
+                )
+                .accessibilityHint("Choose a GPT-5.6 variant below")
+            } else if let model = store.selectedModel {
+                StudioSelectionRow(
+                    title: model.displayName,
+                    description: model.description,
+                    isSelected: true,
+                    action: {}
+                )
+            } else {
+                unavailableLabel("No model selected")
+            }
+        }
+    }
+
+    private var modelListSection: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 8) {
+                pageButton(systemName: "arrow.left", label: "Back to model options") {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        page = .details
+                    }
+                }
+
+                sectionTitle("Models")
+                Spacer()
+            }
 
             if let familyModel = catalog.preferredGPT56Model {
                 StudioSelectionRow(
@@ -132,26 +194,73 @@ private struct DesktopModelStudioPicker: View {
                     description: familyDescription(fallback: familyModel),
                     isSelected: isGPT56Selected
                 ) {
-                    guard !isGPT56Selected else { return }
-                    store.selectModel(familyModel.id)
-                }
-                .accessibilityHint("Choose a GPT-5.6 variant below")
-            } else {
-                ForEach(catalog.otherModels) { model in
-                    modelRow(model)
+                    selectModelAndShowDetails(familyModel.id)
                 }
             }
-        }
-    }
-
-    private var otherModelsSection: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            sectionTitle("Other models")
 
             ForEach(catalog.otherModels) { model in
                 modelRow(model)
             }
         }
+    }
+
+    @ViewBuilder
+    private func pageButton(
+        systemName: String,
+        label: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        let button = Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 11, weight: .semibold))
+                .frame(width: 25, height: 25)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(pageButtonForeground)
+        .shadow(color: pageButtonShadow, radius: 0.5, y: 0.5)
+        .accessibilityLabel(label)
+        .help(label)
+
+        #if compiler(>=6.2)
+        if #available(macOS 26.0, *) {
+            button
+                .glassEffect(.regular.tint(veoAccent).interactive(), in: Circle())
+        } else {
+            pageButtonFallback(button)
+        }
+        #else
+        pageButtonFallback(button)
+        #endif
+    }
+
+    private func pageButtonFallback<Content: View>(_ content: Content) -> some View {
+        content
+            .background(veoAccent.opacity(0.82), in: Circle())
+            .background(.regularMaterial, in: Circle())
+            .overlay(Circle().stroke(Color.primary.opacity(0.12), lineWidth: 1))
+    }
+
+    private var pageButtonForeground: Color {
+        isLightAccent ? .black.opacity(0.82) : .white
+    }
+
+    private var pageButtonShadow: Color {
+        isLightAccent ? .white.opacity(0.2) : .black.opacity(0.28)
+    }
+
+    private var isLightAccent: Bool {
+        guard let color = NSColor(veoAccent).usingColorSpace(.sRGB) else { return false }
+        let luminance = 0.2126 * linearized(color.redComponent)
+            + 0.7152 * linearized(color.greenComponent)
+            + 0.0722 * linearized(color.blueComponent)
+        return luminance > 0.42
+    }
+
+    private func linearized(_ component: CGFloat) -> CGFloat {
+        component <= 0.04045
+            ? component / 12.92
+            : pow((component + 0.055) / 1.055, 2.4)
     }
 
     private var variantSection: some View {
@@ -266,7 +375,16 @@ private struct DesktopModelStudioPicker: View {
             description: model.description,
             isSelected: store.selectedModelID == model.id
         ) {
-            store.selectModel(model.id)
+            selectModelAndShowDetails(model.id)
+        }
+    }
+
+    private func selectModelAndShowDetails(_ modelID: String) {
+        if store.selectedModelID != modelID {
+            store.selectModel(modelID)
+        }
+        withAnimation(.easeInOut(duration: 0.2)) {
+            page = .details
         }
     }
 

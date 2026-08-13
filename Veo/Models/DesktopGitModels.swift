@@ -188,6 +188,83 @@ enum DesktopGitDiscardMode: String, Sendable, Codable, Hashable {
     case allChanges
 }
 
+enum DesktopGitDiffSide: String, Sendable, Codable, Hashable, Identifiable {
+    case staged
+    case unstaged
+
+    var id: Self { self }
+    var title: String { self == .staged ? "Staged" : "Unstaged" }
+}
+
+enum DesktopGitDiffLineKind: String, Sendable, Codable, Hashable {
+    case context
+    case addition
+    case deletion
+    case metadata
+}
+
+struct DesktopGitDiffLine: Sendable, Codable, Hashable, Identifiable {
+    let id: String
+    let oldLineNumber: Int?
+    let newLineNumber: Int?
+    let kind: DesktopGitDiffLineKind
+    let text: String
+}
+
+struct DesktopGitDiffHunk: Sendable, Codable, Hashable, Identifiable {
+    let id: String
+    let header: String
+    let patch: String
+    let lines: [DesktopGitDiffLine]
+    let additions: Int
+    let deletions: Int
+
+    var isWhitespaceOnly: Bool {
+        let removed = lines.filter { $0.kind == .deletion }.map(\.text)
+        let added = lines.filter { $0.kind == .addition }.map(\.text)
+        guard !removed.isEmpty || !added.isEmpty else { return false }
+        return removed.map(Self.withoutWhitespace) == added.map(Self.withoutWhitespace)
+    }
+
+    private static func withoutWhitespace(_ value: String) -> String {
+        value.filter { !$0.isWhitespace }
+    }
+}
+
+struct DesktopGitFileDiffID: Sendable, Codable, Hashable, Identifiable {
+    let fileID: DesktopGitFileID
+    let side: DesktopGitDiffSide
+
+    var id: String { "\(side.rawValue):\(fileID.id)" }
+}
+
+struct DesktopGitFileDiff: Sendable, Codable, Hashable, Identifiable {
+    let id: DesktopGitFileDiffID
+    let path: String
+    let originalPath: String?
+    let status: String
+    let rawPatch: String
+    let headerLines: [String]
+    let hunks: [DesktopGitDiffHunk]
+    let additions: Int
+    let deletions: Int
+    let isBinary: Bool
+    let unavailableReason: String?
+
+    var side: DesktopGitDiffSide { id.side }
+}
+
+struct DesktopGitReviewSnapshot: Sendable, Codable, Hashable {
+    let repositoryID: DesktopGitSnapshotID
+    let files: [DesktopGitFileDiff]
+    let capturedAt: Date
+}
+
+struct DesktopGitHunkSelection: Sendable, Codable, Hashable {
+    let fileDiffID: DesktopGitFileDiffID
+    let hunkID: String
+}
+
 struct DesktopGitRecoveryReceipt: Sendable, Codable, Hashable, Identifiable {
     let id: String
     let bundlePath: String
@@ -237,6 +314,8 @@ enum DesktopGitError: LocalizedError, Sendable {
     case postconditionFailed(String)
     case recoveryFailed(String)
     case trashFailed(String)
+    case diffUnavailable(String)
+    case hunkUnavailable(String)
 
     var errorDescription: String? {
         switch self {
@@ -290,6 +369,10 @@ enum DesktopGitError: LocalizedError, Sendable {
             return "A recovery copy could not be created: \(message)"
         case .trashFailed(let message):
             return message
+        case .diffUnavailable(let path):
+            return "The diff for \(path) is unavailable or too large to review safely."
+        case .hunkUnavailable(let path):
+            return "That hunk in \(path) is no longer available. Refresh Review and try again."
         }
     }
 }

@@ -8,7 +8,7 @@
   A native macOS workspace for Codex, built around your local projects and your local CLI.
 </p>
 
-Veo turns the locally installed Codex CLI into a focused Mac app. Open any project, move between chats without losing their working directories, follow live reasoning and tool activity, review changes, answer approval requests, and keep a real terminal beside the conversation.
+Veo turns the locally installed Codex CLI into a focused Mac app. Open any project, move between chats without losing their working directories, follow live reasoning and tool activity, review and edit files, browse locally or on the web, answer approval requests, and keep a real terminal beside the conversation.
 
 There is no Veo cloud service between the app and Codex. Veo launches `codex app-server` directly and communicates with it over newline-delimited JSON-RPC on standard input and output.
 
@@ -44,6 +44,13 @@ Veo has no hosted backend, subscription, relay, phone companion, or bundled cred
 - Use the thread minimap to navigate long tasks by topic.
 - Show context-window usage as a percentage or token count when you want it.
 
+### Review, browse, and edit beside the conversation
+
+- Open Review, Browser, and Files in a resizable right utility panel with Safari-style tabs.
+- Inspect unified or split diffs, filter whitespace, stage files or safe hunks, discard with recovery, commit staged work, and start AI reviews inline.
+- Browse with workspace-scoped tab sets, shared website data, downloads, viewport presets, console capture, and JavaScript evaluation.
+- Search and preview the workspace tree, edit existing text files with native undo/find support, and preserve encoding, newlines, permissions, and external-change safety.
+
 ### A composer that knows the workspace
 
 - Choose the model, reasoning effort, service tier, and access mode reported by the connected Codex runtime.
@@ -61,7 +68,7 @@ Claude and Codex commands are gated separately from ordinary shell commands. Whe
 
 - Follow the system appearance or choose Light or Dark.
 - Pick a Veo accent color.
-- Choose Solid, Mica, or Liquid Glass treatments for workspace surfaces.
+- Choose Solid, Mica, or Liquid Glass treatments independently for the left sidebar, right utility panel, composer, notifications, and main canvas.
 - Use the normal macOS toolbar, menus, keyboard shortcuts, Finder integration, and menu bar extra.
 - Respect Reduce Motion for animated status treatments.
 

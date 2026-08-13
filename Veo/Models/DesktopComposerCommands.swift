@@ -40,7 +40,7 @@ enum DesktopComposerCommandAction: Hashable {
 }
 
 enum DesktopComposerCommandDestination: Hashable {
-    case inspector
+    case review
     case settings(DesktopSettingsCategory)
     case changes
     case terminal
@@ -83,7 +83,7 @@ struct DesktopComposerCommand: Identifiable, Hashable {
         .init(name: "copy", description: "Copy the last response as Markdown", action: .copyLastResponse, systemImage: "doc.on.doc"),
         .init(name: "diff", description: "Open Veo's Changes view", action: .changes, systemImage: "arrow.left.arrow.right"),
         .init(name: "mention", description: "Mention a project file", action: .mention, systemImage: "at"),
-        .init(name: "status", description: "Open Veo's task inspector", action: .status, systemImage: "sidebar.trailing"),
+        .init(name: "status", description: "Open Veo's runtime settings", action: .status, systemImage: "bolt.horizontal.circle"),
         .init(name: "usage", description: "Open Veo's account usage and limits", action: .usage, systemImage: "gauge.with.dots.needle.50percent"),
         .init(name: "skills", description: "Open Veo's skills and integrations", action: .integrations, systemImage: "bolt.badge.checkmark"),
         .init(name: "mcp", description: "Open Veo's MCP integrations", action: .integrations, systemImage: "server.rack"),

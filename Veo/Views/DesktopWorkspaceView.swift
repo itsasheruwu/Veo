@@ -175,6 +175,45 @@ extension View {
     func desktopSidebarChrome(_ material: DesktopSidebarMaterial) -> some View {
         modifier(DesktopSidebarChromeBackground(material: material))
     }
+
+    func desktopRightSidebarChrome(_ material: DesktopSidebarMaterial) -> some View {
+        modifier(DesktopRightSidebarChromeBackground(material: material))
+    }
+}
+
+/// Applies the independently configurable material behind the utility panel.
+/// Unlike the leading NavigationSplitView sidebar, this pane owns its surface.
+private struct DesktopRightSidebarChromeBackground: ViewModifier {
+    let material: DesktopSidebarMaterial
+
+    func body(content: Content) -> some View {
+        content.background {
+            switch material {
+            case .solid:
+                DesktopTheme.sidebar
+                    .ignoresSafeArea(.container, edges: .top)
+            case .mica:
+                DesktopVisualEffectBackground(material: .sidebar)
+                    .ignoresSafeArea(.container, edges: .top)
+            case .liquidGlass:
+                liquidGlassBackground
+                    .ignoresSafeArea(.container, edges: .top)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var liquidGlassBackground: some View {
+        #if compiler(>=6.2)
+        if #available(macOS 26.0, *) {
+            Color.clear.glassEffect(.regular, in: Rectangle())
+        } else {
+            DesktopVisualEffectBackground(material: .sidebar)
+        }
+        #else
+        DesktopVisualEffectBackground(material: .sidebar)
+        #endif
+    }
 }
 
 /// Solid / Mica / Liquid Glass canvas behind the main window content.
@@ -301,15 +340,18 @@ struct DesktopWorkspaceView: View {
     @Environment(\.openWindow) private var openWindow
     @ObservedObject var store: DesktopCodexStore
     @ObservedObject var navigation: DesktopNavigationState
-    @AppStorage("VeoDesktop.inspectorVisible") private var inspectorVisible = false
+    @State private var inspectorVisible = false
+    @State private var utilityPanelExpanded = false
+    @SceneStorage("VeoDesktop.utilityPanel.width") private var utilityPanelWidth = 560.0
+    @State private var utilityPanelResizeStartWidth: Double?
     @AppStorage(DesktopAppearancePreferences.accentColorKey) private var accentColorHex =
         DesktopAppearancePreferences.defaultAccentHex
     @AppStorage(DesktopNotificationPreferences.menuBarIconKey) private var showsMenuBarIcon = true
     @AppStorage(DesktopAppearancePreferences.notificationMaterialKey) private var notificationMaterialRaw =
         DesktopNotificationMaterial.mica.rawValue
     @StateObject private var terminalHub = DesktopLocalTerminalHub()
+    @StateObject private var utilityPanel = DesktopUtilityPanelModel()
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
-    @State private var showsChanges = false
     @State private var showsInteractiveTerminal = false
     @State private var commandRenameTarget: DesktopThread?
     @State private var commandForkTarget: DesktopThread?
@@ -321,33 +363,33 @@ struct DesktopWorkspaceView: View {
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
-            Group {
-                if navigation.page == .settings {
-                    DesktopSettingsSidebarView(navigation: navigation)
-                } else {
-                    DesktopSidebarView(store: store) {
-                        navigation.showSettings()
-                    } openUpdates: {
-                        navigation.showSettings(.updates)
-                    }
+            ZStack {
+                DesktopSidebarView(store: store) {
+                    navigation.showSettings()
+                } openUpdates: {
+                    navigation.showSettings(.updates)
                 }
+                .opacity(navigation.page == .workspace ? 1 : 0)
+                .allowsHitTesting(navigation.page == .workspace)
+                .accessibilityHidden(navigation.page != .workspace)
+
+                DesktopSettingsSidebarView(navigation: navigation)
+                    .opacity(navigation.page == .settings ? 1 : 0)
+                    .allowsHitTesting(navigation.page == .settings)
+                    .accessibilityHidden(navigation.page != .settings)
             }
-                .navigationSplitViewColumnWidth(min: 236, ideal: DesktopTheme.sidebarWidth, max: 360)
+            .navigationSplitViewColumnWidth(min: 236, ideal: DesktopTheme.sidebarWidth, max: 360)
         } detail: {
-            Group {
-                if navigation.page == .settings {
-                    DesktopSettingsPage(store: store, navigation: navigation)
-                } else {
-                    DesktopConversationView(
-                        store: store,
-                        terminalHub: terminalHub,
-                        showsInteractiveTerminal: $showsInteractiveTerminal
-                    )
-                        .inspector(isPresented: $inspectorVisible) {
-                            DesktopInspectorView(store: store)
-                                .inspectorColumnWidth(min: 250, ideal: 286, max: 380)
-                        }
-                }
+            ZStack {
+                workspaceDetail
+                    .opacity(navigation.page == .workspace ? 1 : 0)
+                    .allowsHitTesting(navigation.page == .workspace)
+                    .accessibilityHidden(navigation.page != .workspace)
+
+                DesktopSettingsPage(store: store, navigation: navigation)
+                    .opacity(navigation.page == .settings ? 1 : 0)
+                    .allowsHitTesting(navigation.page == .settings)
+                    .accessibilityHidden(navigation.page != .settings)
             }
             .toolbar(id: "workspace") { workspaceToolbar }
         }
@@ -383,12 +425,14 @@ struct DesktopWorkspaceView: View {
         .onChange(of: store.composerCommandDestinationRequest) { _, destination in
             guard let destination else { return }
             switch destination {
-            case .inspector:
-                inspectorVisible = true
+            case .review:
+                utilityPanel.show(.review, aiReview: true)
+                if !utilityPanelExpanded { inspectorVisible = true }
             case .settings(let category):
                 navigation.showSettings(category)
             case .changes:
-                showsChanges = true
+                utilityPanel.show(.review)
+                if !utilityPanelExpanded { inspectorVisible = true }
             case .terminal:
                 showsInteractiveTerminal = true
             case .rename:
@@ -403,9 +447,6 @@ struct DesktopWorkspaceView: View {
         .sheet(item: $store.pendingRequest) { request in
             DesktopPendingRequestView(request: request, store: store)
                 .interactiveDismissDisabled()
-        }
-        .sheet(isPresented: $showsChanges) {
-            DesktopDiffView(store: store)
         }
         .sheet(item: $commandRenameTarget) { thread in
             DesktopRenameThreadView(thread: thread, store: store)
@@ -441,6 +482,13 @@ struct DesktopWorkspaceView: View {
                 showsInteractiveTerminal = false
                 terminalHub.terminateAll()
             }
+        }
+        .onAppear {
+            store.prepareForWorkspaceChange = utilityPanel.prepareForWorkspaceChange
+            utilityPanel.switchWorkspace(to: store.hasExplicitWorkspace ? store.effectiveWorkspaceURL : nil)
+        }
+        .onChange(of: store.effectiveWorkspaceURL.path) { _, _ in
+            utilityPanel.switchWorkspace(to: store.hasExplicitWorkspace ? store.effectiveWorkspaceURL : nil)
         }
         .background {
             if navigation.page == .workspace {
@@ -495,16 +543,6 @@ struct DesktopWorkspaceView: View {
                 .disabled(!store.hasExplicitWorkspace)
             }
 
-            ToolbarItem(id: "changes", placement: .primaryAction) {
-                Button {
-                    showsChanges = true
-                } label: {
-                    Label("Changes", systemImage: "doc.text.magnifyingglass")
-                }
-                .help("Review repository and live turn changes")
-                .disabled(!store.canUseProjectChanges)
-            }
-
             ToolbarItem(id: "terminal", placement: .primaryAction) {
                 Button {
                     showsInteractiveTerminal.toggle()
@@ -516,16 +554,132 @@ struct DesktopWorkspaceView: View {
                 .disabled(!store.hasExplicitWorkspace)
             }
 
-            ToolbarItem(id: "inspector", placement: .primaryAction) {
-                Button {
-                    inspectorVisible.toggle()
-                } label: {
-                    Label("Inspector", systemImage: "sidebar.trailing")
+            if inspectorVisible || utilityPanelExpanded {
+                ToolbarItem(id: "utility-panel-full-screen", placement: .primaryAction) {
+                    Button {
+                        if utilityPanelExpanded {
+                            utilityPanelExpanded = false
+                            inspectorVisible = true
+                        } else {
+                            inspectorVisible = false
+                            utilityPanelExpanded = true
+                        }
+                    } label: {
+                        Label(
+                            utilityPanelExpanded ? "Restore Utility Panel" : "Full Screen Utility Panel",
+                            systemImage: utilityPanelExpanded
+                                ? "arrow.down.right.and.arrow.up.left"
+                                : "arrow.up.left.and.arrow.down.right"
+                        )
+                    }
+                    .help(utilityPanelExpanded ? "Restore utility panel to the sidebar" : "Show utility panel full screen")
                 }
-                .help("Toggle inspector (⌘⌥I)")
+            }
+
+            ToolbarItem(id: "utility-panel", placement: .primaryAction) {
+                Button {
+                    if utilityPanelExpanded {
+                        utilityPanelExpanded = false
+                        inspectorVisible = false
+                    } else {
+                        inspectorVisible.toggle()
+                    }
+                } label: {
+                    Label("Utility Panel", systemImage: "sidebar.trailing")
+                }
+                .help("Toggle Review, Browser, and Files (⌘⌥I)")
                 .keyboardShortcut("i", modifiers: [.command, .option])
             }
         }
+    }
+
+    private var workspaceDetail: some View {
+        GeometryReader { geometry in
+            let panelIsVisible = inspectorVisible || utilityPanelExpanded
+            let panelWidth = utilityPanelExpanded
+                ? geometry.size.width
+                : resolvedUtilityPanelWidth(availableWidth: geometry.size.width)
+
+            ZStack(alignment: .trailing) {
+                DesktopConversationView(
+                    store: store,
+                    terminalHub: terminalHub,
+                    showsInteractiveTerminal: $showsInteractiveTerminal
+                )
+                .padding(.trailing, panelIsVisible && !utilityPanelExpanded ? panelWidth : 0)
+                .opacity(utilityPanelExpanded ? 0 : 1)
+                .allowsHitTesting(!utilityPanelExpanded)
+                .accessibilityHidden(utilityPanelExpanded)
+
+                if panelIsVisible {
+                    HStack(spacing: 0) {
+                        DesktopUtilityPanelResizeHandle(
+                            onChanged: resizeUtilityPanel,
+                            onEnded: finishUtilityPanelResize
+                        )
+                        .frame(width: utilityPanelExpanded ? 0 : 7)
+                        .opacity(utilityPanelExpanded ? 0 : 1)
+                        .allowsHitTesting(!utilityPanelExpanded)
+
+                        DesktopUtilityPanelView(store: store, model: utilityPanel)
+                    }
+                    .frame(width: panelWidth)
+                    .frame(maxHeight: .infinity)
+                }
+            }
+            .transaction { transaction in
+                // Expanding only changes geometry. Avoid animating the large
+                // diff/editor/WebKit subtree or rebuilding it in a new parent.
+                transaction.animation = nil
+            }
+        }
+    }
+
+    private func resolvedUtilityPanelWidth(availableWidth: CGFloat) -> CGFloat {
+        let available = max(0, availableWidth)
+        let upperBound = min(900, available, max(420, available - 320))
+        let lowerBound = min(420, upperBound)
+        return min(max(CGFloat(utilityPanelWidth), lowerBound), upperBound)
+    }
+
+    private func resizeUtilityPanel(translation: CGFloat) {
+        if utilityPanelResizeStartWidth == nil {
+            utilityPanelResizeStartWidth = utilityPanelWidth
+        }
+        guard let start = utilityPanelResizeStartWidth else { return }
+        utilityPanelWidth = min(max(start - Double(translation), 420), 900)
+    }
+
+    private func finishUtilityPanelResize() {
+        utilityPanelResizeStartWidth = nil
+    }
+}
+
+private struct DesktopUtilityPanelResizeHandle: View {
+    let onChanged: (CGFloat) -> Void
+    let onEnded: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        ZStack {
+            Rectangle().fill(DesktopTheme.hairline)
+                .frame(width: 1)
+            Rectangle().fill(Color.primary.opacity(isHovered ? 0.08 : 0.001))
+                .frame(width: 7)
+        }
+        .frame(width: 7)
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            isHovered = hovering
+            if hovering { NSCursor.resizeLeftRight.set() } else { NSCursor.arrow.set() }
+        }
+        .onDisappear { NSCursor.arrow.set() }
+        .gesture(
+            DragGesture(minimumDistance: 1)
+                .onChanged { value in onChanged(value.translation.width) }
+                .onEnded { _ in onEnded() }
+        )
+        .accessibilityHidden(true)
     }
 }
 
@@ -1064,7 +1218,7 @@ private struct DesktopSidebarView: View {
     @AppStorage("VeoDesktop.sidebarSortMode") private var sidebarSortModeRaw = DesktopSidebarSortMode.priority.rawValue
     @AppStorage("VeoDesktop.manualThreadOrder") private var manualThreadOrderJSON = "[]"
     @AppStorage("VeoDesktop.projectDisplayNames") private var projectDisplayNamesJSON = "{}"
-    @AppStorage(DesktopAppearancePreferences.sidebarMaterialKey) private var sidebarMaterialRaw =
+    @AppStorage(DesktopAppearancePreferences.leftSidebarMaterialKey) private var sidebarMaterialRaw =
         DesktopSidebarMaterial.solid.rawValue
     @State private var showsSearch = false
     @State private var renameTarget: DesktopThread?
@@ -3983,335 +4137,5 @@ struct DesktopFloatingMaterialSurface: ViewModifier {
             }
             .overlay(shape.stroke(Color.primary.opacity(0.11), lineWidth: 1))
             .shadow(color: .black.opacity(colorScheme == .dark ? 0.18 : 0.09), radius: 14, y: 7)
-    }
-}
-
-private struct DesktopDiffView: View {
-    private enum Presentation: String, CaseIterable, Identifiable {
-        case repository = "Repository"
-        case unified = "Unified"
-        case files = "By File"
-        var id: String { rawValue }
-    }
-
-    @ObservedObject var store: DesktopCodexStore
-    @Environment(\.dismiss) private var dismiss
-    @State private var presentation: Presentation = .repository
-    @State private var presentsReview = false
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                Label("Changes", systemImage: "doc.text.magnifyingglass")
-                    .font(.system(size: 17, weight: .semibold))
-                Picker("Presentation", selection: $presentation) {
-                    ForEach(Presentation.allCases) { option in
-                        Text(option.rawValue).tag(option)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 310)
-                Spacer()
-                if presentation != .repository {
-                    Button("Review Changes") {
-                        presentsReview = true
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(store.isBusyTurn)
-                }
-                Button("Done") { dismiss() }
-            }
-            .padding(14)
-
-            Divider()
-
-            Group {
-                switch presentation {
-                case .repository:
-                    DesktopGitChangesView(
-                        repository: store.gitRepository,
-                        isRefreshing: store.isRefreshingGit,
-                        isMutating: store.isMutatingGit,
-                        message: store.gitMessage,
-                        actions: DesktopGitChangesActions(
-                            refresh: store.refreshGitRepository,
-                            stage: store.stageGitFiles,
-                            unstage: store.unstageGitFiles,
-                            discard: store.discardGitFile,
-                            commit: store.commitGitFiles,
-                            createBranch: store.createGitBranch
-                        )
-                    )
-                case .unified:
-                    if let diff = store.selectedTurnDiff, !diff.isEmpty {
-                        diffText(diff.unifiedDiff.isEmpty
-                            ? diff.files.map { "### \($0.path)\n\($0.diff)" }.joined(separator: "\n\n")
-                            : diff.unifiedDiff)
-                    } else {
-                        noLiveChanges
-                    }
-                case .files:
-                    if let diff = store.selectedTurnDiff, !diff.isEmpty {
-                        perFileDiff(diff)
-                    } else {
-                        noLiveChanges
-                    }
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .frame(minWidth: 820, minHeight: 560)
-        .sheet(isPresented: $presentsReview) {
-            DesktopReviewSheet(store: store)
-        }
-    }
-
-    private var noLiveChanges: some View {
-        ContentUnavailableView(
-            "No live changes",
-            systemImage: "doc",
-            description: Text("File patches from the current turn will appear here as Codex updates them.")
-        )
-    }
-
-    private func perFileDiff(_ diff: DesktopTurnDiff) -> some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 12) {
-                ForEach(diff.files) { file in
-                    DisclosureGroup {
-                        Text(file.diff)
-                            .font(.system(size: 11.5, design: .monospaced))
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.top, 8)
-                    } label: {
-                        HStack {
-                            Image(systemName: "doc.text")
-                            Text(file.path)
-                                .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                            Spacer()
-                            Text(file.kind.capitalized)
-                                .font(.system(size: 9.5, weight: .bold))
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .padding(12)
-                    .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-                }
-            }
-            .padding(16)
-        }
-    }
-
-    private func diffText(_ text: String) -> some View {
-        ScrollView([.horizontal, .vertical]) {
-            Text(text)
-                .font(.system(size: 11.5, design: .monospaced))
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(18)
-        }
-    }
-}
-
-private struct DesktopInspectorView: View {
-    @Environment(\.veoAccent) private var veoAccent
-    @ObservedObject var store: DesktopCodexStore
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
-                inspectorSection("Runtime") {
-                    statusRow("Codex", store.runtimeState.title, color: store.runtimeState.isReady ? .green : .orange)
-                    statusRow("Turn", store.isRunningTurn ? "Running" : "Idle", color: store.isRunningTurn ? veoAccent : .secondary)
-                }
-
-                if let thread = store.selectedThread, thread.isSubagent {
-                    inspectorSection("Subagent") {
-                        statusRow(
-                            thread.agentNickname ?? "Agent",
-                            store.agentState(for: thread.id)?.displayStatus ?? thread.agentStatus,
-                            color: (store.agentState(for: thread.id)?.isActive == true || thread.isRunning)
-                                ? veoAccent
-                                : .secondary
-                        )
-                        if let role = thread.agentRole {
-                            Label(role, systemImage: "person.text.rectangle")
-                                .font(.system(size: 11.5, weight: .medium))
-                        }
-                        if let parentID = thread.parentThreadID,
-                           let parent = (store.threads + store.archivedThreads + store.codexThreads + store.archivedCodexThreads)
-                            .first(where: { $0.id == parentID }) {
-                            Button {
-                                store.selectThread(parent.id)
-                            } label: {
-                                Label("Open parent: \(parent.title)", systemImage: "arrow.turn.up.left")
-                            }
-                            .buttonStyle(.link)
-                        }
-                        if thread.canAcceptDirectInput == false {
-                            Label("This child thread is read-only.", systemImage: "lock")
-                                .font(.system(size: 10.5))
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-
-                if store.searchesMessageContent, !store.selectedSearchOccurrences.isEmpty {
-                    inspectorSection("Search matches") {
-                        ForEach(store.selectedSearchOccurrences.prefix(12)) { occurrence in
-                            Button {
-                                store.navigateToSearchOccurrence(occurrence)
-                            } label: {
-                                VStack(alignment: .leading, spacing: 3) {
-                                    highlightedSearchSnippet(occurrence)
-                                    .font(.system(size: 11.5))
-                                    .lineLimit(3)
-                                    Text("Turn \(occurrence.turnID.prefix(8))")
-                                        .font(.system(size: 9.5, design: .monospaced))
-                                        .foregroundStyle(.tertiary)
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .padding(.vertical, 3)
-                        }
-                    }
-                }
-
-                if let usage = store.selectedTokenUsage {
-                    inspectorSection("Context") {
-                        if let fraction = usage.fractionUsed {
-                            ProgressView(value: fraction)
-                                .tint(usage.warningLevel == 2 ? .red : (usage.warningLevel == 1 ? .orange : veoAccent))
-                            Text("\(formatTokens(usage.currentContextTokens)) of \(formatTokens(usage.contextWindow ?? 0)) tokens used")
-                                .font(.system(size: 11.5, weight: .medium))
-                        } else {
-                            Text("\(formatTokens(usage.currentContextTokens)) tokens used")
-                                .font(.system(size: 11.5, weight: .medium))
-                        }
-                        Text("Thread total: \(formatTokens(usage.cumulativeTokens)) tokens")
-                            .font(.system(size: 10.5))
-                            .foregroundStyle(.secondary)
-                        if usage.warningLevel > 0 {
-                            Label(
-                                usage.warningLevel == 2
-                                    ? "Context is nearly full. Compact before a long follow-up."
-                                    : "Context is filling up.",
-                                systemImage: "exclamationmark.triangle.fill"
-                            )
-                            .font(.system(size: 10.5, weight: .medium))
-                            .foregroundStyle(usage.warningLevel == 2 ? .red : .orange)
-                        }
-                        if let thread = store.selectedThread {
-                            Button {
-                                store.compactThread(thread)
-                            } label: {
-                                Label("Compact context", systemImage: "arrow.down.right.and.arrow.up.left")
-                            }
-                            .buttonStyle(.link)
-                            .disabled(thread.isRunning)
-                        }
-                    }
-                }
-
-                inspectorSection("Workspace") {
-                    Label(
-                        store.selectedThread?.workspaceName
-                            ?? (store.workspaceURL?.lastPathComponent ?? "No workspace selected"),
-                        systemImage: store.isProjectlessWorkspace ? "bubble.left.and.bubble.right" : "folder"
-                    )
-                        .font(.system(size: 12, weight: .semibold))
-                    Text(store.hasExplicitWorkspace ? store.effectiveWorkspaceURL.path : "Start a new chat or open a project.")
-                        .font(.system(size: 10.5, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                    HStack {
-                        Button("Choose Project…") { store.chooseWorkspace() }
-                        Button("Reveal") { store.revealWorkspace() }
-                            .disabled(!store.hasExplicitWorkspace)
-                    }
-                    .controlSize(.small)
-                }
-
-                inspectorSection("Access") {
-                    Picker("Access", selection: Binding(
-                        get: { store.accessMode },
-                        set: { store.updateAccessMode($0) }
-                    )) {
-                        ForEach(DesktopAccessMode.allCases) { mode in
-                            Text(mode.title).tag(mode)
-                        }
-                    }
-                    .labelsHidden()
-
-                    Text(store.accessMode.detail)
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                inspectorSection("Local tools") {
-                    Button {
-                        store.openTerminal()
-                    } label: {
-                        Label("Open Terminal here", systemImage: "terminal")
-                    }
-                    .buttonStyle(.link)
-
-                    Button {
-                        store.refreshThreads()
-                    } label: {
-                        Label("Refresh chats", systemImage: "arrow.clockwise")
-                    }
-                    .buttonStyle(.link)
-                }
-            }
-            .padding(18)
-        }
-    }
-
-    private func highlightedSearchSnippet(_ occurrence: DesktopThreadSearchOccurrence) -> Text {
-        let source = occurrence.snippet as NSString
-        let before = source.substring(to: occurrence.matchStart)
-        let match = source.substring(with: NSRange(
-            location: occurrence.matchStart,
-            length: occurrence.matchEnd - occurrence.matchStart
-        ))
-        let after = source.substring(from: occurrence.matchEnd)
-        return Text(before) + Text(match).bold().foregroundColor(veoAccent) + Text(after)
-    }
-
-    private func inspectorSection<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(title)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.secondary)
-            content()
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func statusRow(_ label: String, _ value: String, color: Color) -> some View {
-        HStack {
-            Text(label).foregroundStyle(.secondary)
-            Spacer()
-            Circle().fill(color).frame(width: 6, height: 6)
-            Text(value)
-        }
-        .font(.system(size: 11.5, weight: .medium))
-    }
-
-    private func formatTokens(_ value: Int) -> String {
-        if value >= 1_000_000 {
-            return String(format: "%.1fM", Double(value) / 1_000_000)
-        }
-        if value >= 1_000 {
-            return String(format: "%.1fK", Double(value) / 1_000)
-        }
-        return "\(value)"
     }
 }

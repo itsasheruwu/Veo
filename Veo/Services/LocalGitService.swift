@@ -7,6 +7,8 @@
 import CryptoKit
 
 actor LocalGitService {
+    private static let maximumReviewPatchBytes = 8 * 1_024 * 1_024
+
     private struct GitProcessResult {
         let status: Int32
         let stdout: Data
@@ -98,15 +100,89 @@ actor LocalGitService {
         guard isTrustedLocation,
               fileManager.isExecutableFile(atPath: path),
               let attributes = try? fileManager.attributesOfItem(atPath: path),
-              attributes[.type] as? FileAttributeType == .typeRegular,
-              (attributes[.ownerAccountID] as? NSNumber)?.intValue == 0 else {
+              attributes[.type] as? FileAttributeType == .typeRegular else {
             return nil
         }
+        // Xcode betas installed through Apple's downloader can be owned by the
+        // installing user rather than root. xcode-select is the system source
+        // of truth, and the candidate is still constrained to an Xcode or CLT
+        // developer directory before it is admitted to the exec sandbox.
         return candidate
     }
 
     func repositorySnapshot(for workspaceURL: URL) async throws -> DesktopGitRepositorySnapshot {
         try loadContext(for: workspaceURL).snapshot
+    }
+
+    func reviewSnapshot(
+        for expectedRepository: DesktopGitRepositorySnapshot
+    ) async throws -> DesktopGitReviewSnapshot {
+        let current = try loadContext(
+            for: URL(fileURLWithPath: expectedRepository.workspacePath, isDirectory: true)
+        )
+        guard current.snapshot.id == expectedRepository.id,
+              current.snapshot.rootPath == expectedRepository.rootPath else {
+            throw DesktopGitError.staleSnapshot
+        }
+
+        var diffs: [DesktopGitFileDiff] = []
+        for change in current.snapshot.files where change.isInWorkspace {
+            if change.hasStagedChanges {
+                diffs.append(try fileDiff(for: change, side: .staged, repository: current.snapshot))
+            }
+            if change.hasUnstagedChanges {
+                diffs.append(try fileDiff(for: change, side: .unstaged, repository: current.snapshot))
+            }
+        }
+        return DesktopGitReviewSnapshot(
+            repositoryID: current.snapshot.id,
+            files: diffs,
+            capturedAt: Date()
+        )
+    }
+
+    func applyHunk(
+        _ selection: DesktopGitHunkSelection,
+        in expectedRepository: DesktopGitRepositorySnapshot
+    ) async throws -> DesktopGitMutationResult {
+        let before = try validatedContext(expectedRepository)
+        let change = try selectedChanges([selection.fileDiffID.fileID], in: before.snapshot)[0]
+        guard !change.isUnmerged,
+              !change.isSubmodule,
+              change.originalPath == nil else {
+            throw DesktopGitError.hunkUnavailable(change.path)
+        }
+        let file = try fileDiff(for: change, side: selection.fileDiffID.side, repository: before.snapshot)
+        guard !file.isBinary,
+              file.unavailableReason == nil,
+              let hunk = file.hunks.first(where: { $0.id == selection.hunkID }) else {
+            throw DesktopGitError.hunkUnavailable(change.path)
+        }
+        let patch = (file.headerLines + [hunk.patch]).joined(separator: "\n") + "\n"
+        guard let patchData = patch.data(using: .utf8),
+              patchData.count <= Self.maximumReviewPatchBytes else {
+            throw DesktopGitError.diffUnavailable(change.path)
+        }
+
+        var arguments = [
+            "--literal-pathspecs", "-C", before.snapshot.rootPath,
+            "apply", "--cached", "--recount", "--whitespace=nowarn",
+        ]
+        if selection.fileDiffID.side == .staged {
+            arguments.append("--reverse")
+        }
+        arguments.append("-")
+        try runRequired(arguments, operation: selection.fileDiffID.side == .staged
+            ? "unstaging the selected hunk"
+            : "staging the selected hunk", stdin: patchData)
+
+        let affectedPaths = Set(try validatedMutationPaths(for: [change], repository: before.snapshot))
+        let after = try loadContext(
+            for: URL(fileURLWithPath: before.snapshot.workspacePath, isDirectory: true)
+        )
+        try verifyUnrelatedState(before: before, after: after, affectedPaths: affectedPaths)
+        try verifySelectedWorktreeWasNotModified(before: before, affectedPaths: affectedPaths)
+        return DesktopGitMutationResult(repository: after.snapshot, recovery: nil)
     }
 
     func stage(
@@ -382,6 +458,199 @@ actor LocalGitService {
             )
         }
         return DesktopGitBranchResult(branchName: name, repository: after.snapshot)
+    }
+
+    // MARK: - Review diffs
+
+    private func fileDiff(
+        for change: DesktopGitFileChange,
+        side: DesktopGitDiffSide,
+        repository: DesktopGitRepositorySnapshot
+    ) throws -> DesktopGitFileDiff {
+        if change.isSubmodule {
+            return unavailableDiff(change: change, side: side, reason: "Submodule diffs are not edited in Veo.")
+        }
+        if change.isUnmerged {
+            return unavailableDiff(change: change, side: side, reason: "Resolve this conflict before staging hunks.")
+        }
+        if change.originalPath != nil {
+            return unavailableDiff(change: change, side: side, reason: "Rename and copy changes use whole-file actions.")
+        }
+
+        let result: GitProcessResult
+        if change.isUntracked && side == .unstaged {
+            let fileURL = URL(fileURLWithPath: repository.rootPath, isDirectory: true)
+                .appendingPathComponent(change.path, isDirectory: false)
+            let data = try Data(contentsOf: fileURL, options: [.mappedIfSafe])
+            guard !data.isEmpty,
+                  data.count <= Self.maximumReviewPatchBytes,
+                  let text = String(data: data, encoding: .utf8),
+                  text.hasSuffix("\n") else {
+                return unavailableDiff(change: change, side: side, reason: "This untracked file is empty, binary, unreadable, or larger than 8 MiB. Use Stage File.")
+            }
+            var lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+            if lines.last?.isEmpty == true { lines.removeLast() }
+            let body = lines.map { "+" + $0 }.joined(separator: "\n")
+            let mode = fileManager.isExecutableFile(atPath: fileURL.path) ? "100755" : "100644"
+            let patch = """
+            diff --git a/\(change.path) b/\(change.path)
+            new file mode \(mode)
+            --- /dev/null
+            +++ b/\(change.path)
+            @@ -0,0 +1,\(lines.count) @@
+            \(body)
+            """
+            return parseFileDiff(patch, change: change, side: side)
+        } else {
+            var arguments = [
+                "--literal-pathspecs", "-C", repository.rootPath,
+                "diff", "--no-ext-diff", "--no-textconv", "--unified=3",
+                "--src-prefix=a/", "--dst-prefix=b/",
+            ]
+            if side == .staged { arguments.append("--cached") }
+            arguments.append(contentsOf: ["--", change.path])
+            result = try runRequired(arguments, operation: "reading the \(side.rawValue) diff")
+        }
+
+        guard result.stdout.count <= Self.maximumReviewPatchBytes,
+              let rawPatch = String(data: result.stdout, encoding: .utf8) else {
+            return unavailableDiff(change: change, side: side, reason: "This patch is binary, unreadable, or larger than 8 MiB.")
+        }
+        if rawPatch.contains("Binary files ") || rawPatch.contains("GIT binary patch") {
+            return DesktopGitFileDiff(
+                id: .init(fileID: change.id, side: side),
+                path: change.path,
+                originalPath: change.originalPath,
+                status: change.displayStatus,
+                rawPatch: rawPatch,
+                headerLines: [],
+                hunks: [],
+                additions: 0,
+                deletions: 0,
+                isBinary: true,
+                unavailableReason: "Binary files use whole-file actions."
+            )
+        }
+        return parseFileDiff(rawPatch, change: change, side: side)
+    }
+
+    private func unavailableDiff(
+        change: DesktopGitFileChange,
+        side: DesktopGitDiffSide,
+        reason: String
+    ) -> DesktopGitFileDiff {
+        DesktopGitFileDiff(
+            id: .init(fileID: change.id, side: side),
+            path: change.path,
+            originalPath: change.originalPath,
+            status: change.displayStatus,
+            rawPatch: "",
+            headerLines: [],
+            hunks: [],
+            additions: 0,
+            deletions: 0,
+            isBinary: false,
+            unavailableReason: reason
+        )
+    }
+
+    private func parseFileDiff(
+        _ rawPatch: String,
+        change: DesktopGitFileChange,
+        side: DesktopGitDiffSide
+    ) -> DesktopGitFileDiff {
+        var sourceLines = rawPatch.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        if sourceLines.last?.isEmpty == true { sourceLines.removeLast() }
+        let firstHunkIndex = sourceLines.firstIndex(where: { $0.hasPrefix("@@ ") || $0.hasPrefix("@@-") })
+            ?? sourceLines.count
+        let headerLines = Array(sourceLines[..<firstHunkIndex])
+        var hunks: [DesktopGitDiffHunk] = []
+        var index = firstHunkIndex
+        while index < sourceLines.count {
+            guard sourceLines[index].hasPrefix("@@") else { index += 1; continue }
+            let start = index
+            index += 1
+            while index < sourceLines.count, !sourceLines[index].hasPrefix("@@") { index += 1 }
+            let patchLines = Array(sourceLines[start..<index])
+            hunks.append(parseHunk(patchLines, ordinal: hunks.count))
+        }
+        return DesktopGitFileDiff(
+            id: .init(fileID: change.id, side: side),
+            path: change.path,
+            originalPath: change.originalPath,
+            status: change.displayStatus,
+            rawPatch: rawPatch,
+            headerLines: headerLines,
+            hunks: hunks,
+            additions: hunks.reduce(0) { $0 + $1.additions },
+            deletions: hunks.reduce(0) { $0 + $1.deletions },
+            isBinary: false,
+            unavailableReason: rawPatch.isEmpty ? "No textual diff is available." : nil
+        )
+    }
+
+    private func parseHunk(_ patchLines: [String], ordinal: Int) -> DesktopGitDiffHunk {
+        let header = patchLines.first ?? "@@"
+        let ranges = parseHunkRanges(header)
+        var oldLine = ranges.old
+        var newLine = ranges.new
+        var lines: [DesktopGitDiffLine] = []
+        var additions = 0
+        var deletions = 0
+        for (lineIndex, source) in patchLines.dropFirst().enumerated() {
+            let kind: DesktopGitDiffLineKind
+            let oldNumber: Int?
+            let newNumber: Int?
+            if source.hasPrefix("+") {
+                kind = .addition
+                oldNumber = nil
+                newNumber = newLine
+                newLine += 1
+                additions += 1
+            } else if source.hasPrefix("-") {
+                kind = .deletion
+                oldNumber = oldLine
+                newNumber = nil
+                oldLine += 1
+                deletions += 1
+            } else if source.hasPrefix("\\") {
+                kind = .metadata
+                oldNumber = nil
+                newNumber = nil
+            } else {
+                kind = .context
+                oldNumber = oldLine
+                newNumber = newLine
+                oldLine += 1
+                newLine += 1
+            }
+            lines.append(DesktopGitDiffLine(
+                id: "\(ordinal):\(lineIndex)",
+                oldLineNumber: oldNumber,
+                newLineNumber: newNumber,
+                kind: kind,
+                text: source
+            ))
+        }
+        let patch = patchLines.joined(separator: "\n")
+        let id = SHA256.hash(data: Data(patch.utf8)).map { String(format: "%02x", $0) }.joined()
+        return DesktopGitDiffHunk(
+            id: id,
+            header: header,
+            patch: patch,
+            lines: lines,
+            additions: additions,
+            deletions: deletions
+        )
+    }
+
+    private func parseHunkRanges(_ header: String) -> (old: Int, new: Int) {
+        let parts = header.split(separator: " ")
+        func start(_ token: Substring?, marker: Character) -> Int {
+            guard let token, token.first == marker else { return 0 }
+            return Int(token.dropFirst().split(separator: ",").first ?? "0") ?? 0
+        }
+        return (start(parts[safe: 1], marker: "-"), start(parts[safe: 2], marker: "+"))
     }
 
     // MARK: - Snapshot loading
@@ -1082,6 +1351,12 @@ actor LocalGitService {
 private extension Array where Element == String {
     func uniquedAndSorted() -> [String] {
         Array(Set(self)).sorted()
+    }
+}
+
+private extension Array {
+    subscript(safe index: Index) -> Element? {
+        indices.contains(index) ? self[index] : nil
     }
 }
 

@@ -90,7 +90,9 @@ final class DesktopCodexStore: ObservableObject {
     @Published private(set) var accountLoginSession: DesktopAccountLoginSession?
     @Published private(set) var interactiveTerminal: DesktopInteractiveTerminalState?
     @Published private(set) var gitRepository: DesktopGitRepositorySnapshot?
+    @Published private(set) var gitReviewSnapshot: DesktopGitReviewSnapshot?
     @Published private(set) var isRefreshingGit = false
+    @Published private(set) var isRefreshingGitReview = false
     @Published private(set) var isMutatingGit = false
     @Published private(set) var gitMessage: String?
     @Published var realtimeVoiceEnabled = false {
@@ -167,6 +169,7 @@ final class DesktopCodexStore: ObservableObject {
     private var interactiveTerminalPendingProcessID: String?
     private var gitContextGeneration = UUID()
     private var gitRefreshRequested = false
+    var prepareForWorkspaceChange: (() -> Bool)?
     private var timelineLoadGeneration = UUID()
     /// Runtime (Codex) thread id → Veo UI storage key.
     private var veoIDByCodexThreadID: [String: String] = [:]
@@ -1062,6 +1065,7 @@ final class DesktopCodexStore: ObservableObject {
         guard hasExplicitWorkspace else {
             gitRefreshRequested = false
             gitRepository = nil
+            gitReviewSnapshot = nil
             gitMessage = "Open a project inside a Git repository."
             return
         }
@@ -1072,6 +1076,7 @@ final class DesktopCodexStore: ObservableObject {
         guard let workspace = currentCanonicalGitWorkspaceURL else {
             gitRefreshRequested = false
             gitRepository = nil
+            gitReviewSnapshot = nil
             gitMessage = "Open a project inside a Git repository."
             return
         }
@@ -1092,6 +1097,7 @@ final class DesktopCodexStore: ObservableObject {
                 }
                 gitRepository = snapshot
                 gitMessage = snapshot.mutationBlocker
+                await refreshGitReviewSnapshot(for: snapshot, generation: generation)
             } catch {
                 guard gitContextGeneration == generation,
                       currentCanonicalGitWorkspaceURL?.path == workspace.path else {
@@ -1099,8 +1105,27 @@ final class DesktopCodexStore: ObservableObject {
                     return
                 }
                 gitRepository = nil
+                gitReviewSnapshot = nil
                 gitMessage = error.localizedDescription
             }
+        }
+    }
+
+    private func refreshGitReviewSnapshot(
+        for snapshot: DesktopGitRepositorySnapshot,
+        generation: UUID
+    ) async {
+        isRefreshingGitReview = true
+        defer { isRefreshingGitReview = false }
+        do {
+            let review = try await gitService.reviewSnapshot(for: snapshot)
+            guard generation == gitContextGeneration,
+                  gitRepository?.id == snapshot.id else { return }
+            gitReviewSnapshot = review
+        } catch {
+            guard generation == gitContextGeneration else { return }
+            gitReviewSnapshot = nil
+            if gitMessage == nil { gitMessage = error.localizedDescription }
         }
     }
 
@@ -1117,6 +1142,7 @@ final class DesktopCodexStore: ObservableObject {
         let shouldRefresh = gitRepository != nil || isRefreshingGit || isMutatingGit
         gitContextGeneration = UUID()
         gitRepository = nil
+        gitReviewSnapshot = nil
         gitMessage = nil
         gitRefreshRequested = gitRefreshRequested || shouldRefresh
     }
@@ -1133,6 +1159,18 @@ final class DesktopCodexStore: ObservableObject {
         performGitMutation(snapshot: snapshot) {
             let result = try await self.gitService.stage(fileIDs, in: snapshot)
             return (result.repository, nil)
+        }
+    }
+
+    func applyGitHunk(_ selection: DesktopGitHunkSelection) {
+        guard let snapshot = gitRepository,
+              gitSnapshotMatchesCurrentContext(snapshot) else { return }
+        performGitMutation(snapshot: snapshot) {
+            let result = try await self.gitService.applyHunk(selection, in: snapshot)
+            return (
+                result.repository,
+                selection.fileDiffID.side == .staged ? "Hunk unstaged." : "Hunk staged."
+            )
         }
     }
 
@@ -1213,6 +1251,7 @@ final class DesktopCodexStore: ObservableObject {
                 }
                 gitRepository = result.repository
                 gitMessage = result.message ?? "Repository updated safely."
+                await refreshGitReviewSnapshot(for: result.repository, generation: generation)
             } catch {
                 guard generation == gitContextGeneration,
                       currentCanonicalGitWorkspaceURL?.path == workspacePath else {
@@ -2231,10 +2270,12 @@ final class DesktopCodexStore: ObservableObject {
     }
 
     func beginNewChat() {
+        guard prepareForWorkspaceChange?() != false else { return }
         createNewChat(workspaceKind: .projectless, projectURL: nil)
     }
 
     func beginProjectChat(at url: URL) {
+        guard prepareForWorkspaceChange?() != false else { return }
         setWorkspace(url)
         createNewChat(workspaceKind: .project, projectURL: url)
     }
@@ -2351,6 +2392,7 @@ final class DesktopCodexStore: ObservableObject {
 
     func selectThread(_ id: String?) {
         guard selectedThreadID != id else { return }
+        guard prepareForWorkspaceChange?() != false else { return }
         if let id {
             guard let thread = findThread(id), Self.workspaceExists(for: thread) else {
                 discardThreadFromLoadedCatalog(id)
@@ -2697,7 +2739,7 @@ final class DesktopCodexStore: ObservableObject {
             }
             compactThread(selectedThread)
         case .review:
-            reviewChanges()
+            composerCommandDestinationRequest = .review
         case .rename:
             guard let selectedThread else {
                 transientError = "Select a chat before renaming it."
@@ -2729,7 +2771,7 @@ final class DesktopCodexStore: ObservableObject {
         case .mention:
             chooseFileMention()
         case .status:
-            composerCommandDestinationRequest = .inspector
+            composerCommandDestinationRequest = .settings(.runtime)
         case .usage:
             composerCommandDestinationRequest = .settings(.account)
         case .integrations:
@@ -2855,6 +2897,7 @@ final class DesktopCodexStore: ObservableObject {
     }
 
     func setWorkspace(_ url: URL) {
+        guard prepareForWorkspaceChange?() != false else { return }
         stopInteractiveTerminalForContextChange()
         invalidateAccountResourceContext()
         invalidateGitContext()

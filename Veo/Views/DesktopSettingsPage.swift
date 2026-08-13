@@ -8,7 +8,7 @@ import SwiftUI
 struct DesktopSettingsSidebarView: View {
     @Environment(\.veoAccent) private var veoAccent
     @ObservedObject var navigation: DesktopNavigationState
-    @AppStorage(DesktopAppearancePreferences.sidebarMaterialKey) private var sidebarMaterialRaw =
+    @AppStorage(DesktopAppearancePreferences.leftSidebarMaterialKey) private var sidebarMaterialRaw =
         DesktopSidebarMaterial.solid.rawValue
     @State private var isBackHovered = false
 
@@ -119,8 +119,10 @@ struct DesktopSettingsPage: View {
         DesktopAppearanceMode.dark.rawValue
     @AppStorage(DesktopAppearancePreferences.accentColorKey) private var accentColorHex =
         DesktopAppearancePreferences.defaultAccentHex
-    @AppStorage(DesktopAppearancePreferences.sidebarMaterialKey) private var sidebarMaterialRaw =
+    @AppStorage(DesktopAppearancePreferences.leftSidebarMaterialKey) private var leftSidebarMaterialRaw =
         DesktopSidebarMaterial.solid.rawValue
+    @AppStorage(DesktopAppearancePreferences.rightSidebarMaterialKey) private var rightSidebarMaterialRaw =
+        DesktopSidebarMaterial.mica.rawValue
     @AppStorage(DesktopAppearancePreferences.composerMaterialKey) private var composerMaterialRaw =
         DesktopComposerMaterial.liquidGlass.rawValue
     @AppStorage(DesktopAppearancePreferences.notificationMaterialKey) private var notificationMaterialRaw =
@@ -139,6 +141,7 @@ struct DesktopSettingsPage: View {
     @AppStorage(DesktopComposerPreferences.showsContextWindowUsageKey) private var showsContextWindowUsage = false
     @AppStorage(DesktopComposerPreferences.contextWindowUsageStyleKey) private var contextWindowUsageStyleRaw =
         DesktopContextWindowUsageStyle.percent.rawValue
+    @AppStorage(DesktopUtilityPreferences.restoreBrowserTabsKey) private var restoresBrowserTabs = false
     @State private var apiKey = ""
     @State private var confirmsLogout = false
     @State private var pluginInstallTarget: DesktopPluginRecord?
@@ -164,10 +167,17 @@ struct DesktopSettingsPage: View {
         )
     }
 
-    private var sidebarMaterialBinding: Binding<DesktopSidebarMaterial> {
+    private var leftSidebarMaterialBinding: Binding<DesktopSidebarMaterial> {
         Binding(
-            get: { DesktopSidebarMaterial(rawValue: sidebarMaterialRaw) ?? .solid },
-            set: { sidebarMaterialRaw = $0.rawValue }
+            get: { DesktopSidebarMaterial(rawValue: leftSidebarMaterialRaw) ?? .solid },
+            set: { leftSidebarMaterialRaw = $0.rawValue }
+        )
+    }
+
+    private var rightSidebarMaterialBinding: Binding<DesktopSidebarMaterial> {
+        Binding(
+            get: { DesktopSidebarMaterial(rawValue: rightSidebarMaterialRaw) ?? .mica },
+            set: { rightSidebarMaterialRaw = $0.rawValue }
         )
     }
 
@@ -246,7 +256,8 @@ struct DesktopSettingsPage: View {
         .navigationTitle("Settings")
         .tint(accentColor)
         .animation(.easeOut(duration: 0.16), value: navigation.settingsCategory)
-        .task(id: navigation.settingsCategory) {
+        .task(id: settingsRefreshID) {
+            guard navigation.page == .settings else { return }
             notifications.refreshAuthorizationStatus()
             if navigation.settingsCategory == .account {
                 store.refreshAccountOverview()
@@ -308,6 +319,10 @@ struct DesktopSettingsPage: View {
         }
     }
 
+    private var settingsRefreshID: String {
+        "\(navigation.page)-\(navigation.settingsCategory.rawValue)"
+    }
+
     @ViewBuilder
     private var settingsContent: some View {
         switch navigation.settingsCategory {
@@ -364,6 +379,19 @@ struct DesktopSettingsPage: View {
                         .labelsHidden()
                         .toggleStyle(.switch)
                         .controlSize(.small)
+                    }
+
+                    SettingsPanelDivider()
+
+                    SettingsRow(
+                        title: "Restore browser tabs",
+                        detail: "Remember each project's Browser tab URLs and restore them after Veo relaunches.",
+                        systemImage: "globe"
+                    ) {
+                        Toggle("Restore browser tabs", isOn: $restoresBrowserTabs)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .controlSize(.small)
                     }
                 }
 
@@ -1599,11 +1627,28 @@ struct DesktopSettingsPage: View {
 
                 SettingsPanel {
                     SettingsRow(
-                        title: "Sidebar material",
-                        detail: sidebarMaterialBinding.wrappedValue.title,
+                        title: "Left sidebar material",
+                        detail: leftSidebarMaterialBinding.wrappedValue.title,
                         systemImage: "sidebar.leading"
                     ) {
-                        Picker("Sidebar material", selection: sidebarMaterialBinding) {
+                        Picker("Left sidebar material", selection: leftSidebarMaterialBinding) {
+                            ForEach(DesktopSidebarMaterial.allCases) { material in
+                                Text(material.title).tag(material)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.segmented)
+                        .frame(maxWidth: 280)
+                    }
+
+                    SettingsPanelDivider()
+
+                    SettingsRow(
+                        title: "Right sidebar material",
+                        detail: rightSidebarMaterialBinding.wrappedValue.title,
+                        systemImage: "sidebar.trailing"
+                    ) {
+                        Picker("Right sidebar material", selection: rightSidebarMaterialBinding) {
                             ForEach(DesktopSidebarMaterial.allCases) { material in
                                 Text(material.title).tag(material)
                             }

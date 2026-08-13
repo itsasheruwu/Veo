@@ -67,7 +67,10 @@ extension EnvironmentValues {
 enum DesktopAppearancePreferences {
     static let appearanceModeKey = "VeoDesktop.appearanceMode"
     static let accentColorKey = "VeoDesktop.accentColor"
-    static let sidebarMaterialKey = "VeoDesktop.sidebarMaterial"
+    // Preserve the original preference key so existing sidebar choices migrate
+    // naturally now that left and right chrome are configured independently.
+    static let leftSidebarMaterialKey = "VeoDesktop.sidebarMaterial"
+    static let rightSidebarMaterialKey = "VeoDesktop.rightSidebarMaterial"
     static let composerMaterialKey = "VeoDesktop.composerMaterial"
     static let notificationMaterialKey = "VeoDesktop.notificationMaterial"
     static let windowMaterialKey = "VeoDesktop.windowMaterial"
@@ -84,9 +87,14 @@ enum DesktopAppearancePreferences {
         return DesktopAppearanceMode(rawValue: raw) ?? .dark
     }
 
-    static var sidebarMaterial: DesktopSidebarMaterial {
-        let raw = defaults.string(forKey: sidebarMaterialKey) ?? DesktopSidebarMaterial.solid.rawValue
+    static var leftSidebarMaterial: DesktopSidebarMaterial {
+        let raw = defaults.string(forKey: leftSidebarMaterialKey) ?? DesktopSidebarMaterial.solid.rawValue
         return DesktopSidebarMaterial(rawValue: raw) ?? .solid
+    }
+
+    static var rightSidebarMaterial: DesktopSidebarMaterial {
+        let raw = defaults.string(forKey: rightSidebarMaterialKey) ?? DesktopSidebarMaterial.mica.rawValue
+        return DesktopSidebarMaterial(rawValue: raw) ?? .mica
     }
 
     /// Material behind the main window canvas (conversation and settings panes).

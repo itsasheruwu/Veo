@@ -90,6 +90,7 @@ struct DesktopComposerCommand: Identifiable, Hashable {
         .init(name: "apps", description: "Open Veo's connected apps", action: .integrations, systemImage: "square.grid.2x2"),
         .init(name: "plugins", description: "Open Veo's plugin manager", action: .integrations, systemImage: "puzzlepiece.extension"),
         .init(name: "appearance", description: "Open Veo's appearance settings", action: .settings(.appearance), systemImage: "paintbrush"),
+        .init(name: "browser", description: "Open Veo's browser settings", action: .settings(.browser), systemImage: "globe"),
         .init(name: "terminal", description: "Open Veo's docked terminal", action: .terminal, systemImage: "apple.terminal"),
         .init(name: "runtime", description: "Open Veo's local runtime settings", action: .settings(.runtime), systemImage: "bolt.horizontal.circle"),
         .init(name: "reconnect", description: "Reconnect Veo to the local Codex runtime", action: .reconnect, systemImage: "arrow.clockwise"),

@@ -18,6 +18,7 @@ struct VeoApp: App {
 
     init() {
         DesktopNotificationPreferences.registerDefaults()
+        DesktopBrowserPreferences.registerDefaults()
     }
 
     private var preferredColorScheme: ColorScheme? {

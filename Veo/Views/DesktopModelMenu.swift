@@ -30,41 +30,17 @@ struct DesktopModelMenu: View {
         return store.selectedServiceTier == fastTier.id
     }
 
-    var body: some View {
+        var body: some View {
         Button {
             isPresented.toggle()
         } label: {
-            HStack(spacing: 6) {
-                if isFastModeEnabled {
-                    Image(systemName: "bolt.fill")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.yellow)
-                        .accessibilityHidden(true)
-                }
-
-                Image(systemName: "cube")
-                    .font(.system(size: 11, weight: .medium))
-                    .accessibilityHidden(true)
-
-                Text(collapsedModelTitle)
-                    .fontWeight(.medium)
-                    .lineLimit(1)
-
-                Text("·")
-                    .foregroundStyle(.tertiary)
-
-                Text(store.reasoningDisplayName)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .semibold))
-                    .foregroundStyle(.tertiary)
+            ViewThatFits(in: .horizontal) {
+                modelLabel(showsReasoning: true)
+                modelLabel(showsReasoning: false)
             }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .fixedSize()
         .disabled(store.models.isEmpty)
         .help(store.selectedModel?.description ?? "Codex model")
         .accessibilityLabel("Model settings")
@@ -75,6 +51,39 @@ struct DesktopModelMenu: View {
         .popover(isPresented: $isPresented, arrowEdge: .top) {
             DesktopModelStudioPicker(store: store, catalog: catalog)
         }
+    }
+
+    private func modelLabel(showsReasoning: Bool) -> some View {
+        HStack(spacing: 6) {
+            if isFastModeEnabled {
+                Image(systemName: "bolt.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.yellow)
+                    .accessibilityHidden(true)
+            }
+
+            Image(systemName: "cube")
+                .font(.system(size: 11, weight: .medium))
+                .accessibilityHidden(true)
+
+            Text(collapsedModelTitle)
+                .fontWeight(.medium)
+                .lineLimit(1)
+
+            if showsReasoning {
+                Text("·")
+                    .foregroundStyle(.tertiary)
+
+                Text(store.reasoningDisplayName)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Image(systemName: "chevron.down")
+                .font(.system(size: 8, weight: .semibold))
+                .foregroundStyle(.tertiary)
+        }
+        .fixedSize()
     }
 }
 

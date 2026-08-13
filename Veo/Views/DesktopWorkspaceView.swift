@@ -12,6 +12,7 @@ enum DesktopTheme {
     static let sidebarWidth: CGFloat = 318
     static let sidebarTitlebarClearance: CGFloat = 34
     static let conversationWidth: CGFloat = 820
+    static let conversationMinWidth: CGFloat = 560
     static let welcomeWidth: CGFloat = 680
     static let canvas = Color(nsColor: NSColor(name: nil) { appearance in
         Self.isDark(appearance)
@@ -485,7 +486,25 @@ struct DesktopWorkspaceView: View {
         }
         .onAppear {
             store.prepareForWorkspaceChange = utilityPanel.prepareForWorkspaceChange
+            utilityPanel.didCloseLastTab = {
+                inspectorVisible = false
+                utilityPanelExpanded = false
+            }
+            store.openInEmbeddedBrowser = { url, accountLogin in
+                navigation.showWorkspace()
+                inspectorVisible = true
+                utilityPanel.openBrowser(url: url, accountLogin: accountLogin)
+            }
+            if let pending = store.takePendingEmbeddedBrowserURL() {
+                store.openInEmbeddedBrowser?(pending.url, pending.accountLogin)
+            }
             utilityPanel.switchWorkspace(to: store.hasExplicitWorkspace ? store.effectiveWorkspaceURL : nil)
+        }
+        .onOpenURL { url in
+            guard let scheme = url.scheme?.lowercased(), ["http", "https"].contains(scheme) else { return }
+            navigation.showWorkspace()
+            inspectorVisible = true
+            utilityPanel.openBrowser(url: url)
         }
         .onChange(of: store.effectiveWorkspaceURL.path) { _, _ in
             utilityPanel.switchWorkspace(to: store.hasExplicitWorkspace ? store.effectiveWorkspaceURL : nil)
@@ -582,6 +601,9 @@ struct DesktopWorkspaceView: View {
                         utilityPanelExpanded = false
                         inspectorVisible = false
                     } else {
+                        if !inspectorVisible {
+                            utilityPanel.ensureOpenTab()
+                        }
                         inspectorVisible.toggle()
                     }
                 } label: {
@@ -637,7 +659,7 @@ struct DesktopWorkspaceView: View {
 
     private func resolvedUtilityPanelWidth(availableWidth: CGFloat) -> CGFloat {
         let available = max(0, availableWidth)
-        let upperBound = min(900, available, max(420, available - 320))
+        let upperBound = min(900, available, max(420, available - DesktopTheme.conversationMinWidth))
         let lowerBound = min(420, upperBound)
         return min(max(CGFloat(utilityPanelWidth), lowerBound), upperBound)
     }
@@ -3452,7 +3474,7 @@ private struct DesktopComposerView: View {
                 composerCard
             } else {
                 composerCard
-                    .padding(.horizontal, 24)
+                    .padding(.horizontal, 16)
                     .padding(.bottom, 18)
                     .frame(maxWidth: .infinity)
             }
@@ -3523,7 +3545,7 @@ private struct DesktopComposerView: View {
             )
             .accessibilityLabel("Message Codex")
 
-            HStack(spacing: 10) {
+            HStack(spacing: 8) {
                 Button {
                     isOptionsPresented.toggle()
                 } label: {
@@ -3543,25 +3565,22 @@ private struct DesktopComposerView: View {
                         }
                     }
                 }
+                .layoutPriority(1)
 
                 DesktopModelMenu(store: store)
+                    .layoutPriority(1)
 
                 accessModeMenu
+                    .layoutPriority(1)
 
                 if store.isBusyTurn {
                     followUpMenu
+                        .layoutPriority(1)
                 }
 
-                Spacer()
+                Spacer(minLength: 0)
 
-                if store.hasExplicitWorkspace,
-                   !store.isRunningTurn,
-                   !store.isPlanModeEnabled,
-                   !store.isGoalModeEnabled {
-                    Text("↩ send · ⇧↩ newline")
-                        .font(.system(size: 10.5, weight: .medium))
-                        .foregroundStyle(.secondary)
-                }
+                sendNewlineHint
 
                 DesktopComposerModePills(store: store)
 
@@ -3583,6 +3602,7 @@ private struct DesktopComposerView: View {
                     .disabled(store.selectedThread?.canAcceptDirectInput == false)
                     .help(store.isRealtimeVoiceActive ? "Stop realtime voice" : "Start realtime voice")
                     .accessibilityLabel(store.isRealtimeVoiceActive ? "Stop realtime voice" : "Start realtime voice")
+                    .layoutPriority(1)
 
                     if !store.realtimeVoices.isEmpty, !store.isRealtimeVoiceActive {
                         Menu {
@@ -3601,6 +3621,7 @@ private struct DesktopComposerView: View {
                         } label: {
                             Text(store.realtimeVoices.first(where: { $0.id == store.selectedRealtimeVoiceID })?.displayName ?? "Voice")
                                 .font(.system(size: 10.5, weight: .medium))
+                                .lineLimit(1)
                         }
                         .menuStyle(.borderlessButton)
                         .help("Realtime voice")
@@ -3613,6 +3634,7 @@ private struct DesktopComposerView: View {
                     } label: {
                         Label("Queued \(store.selectedQueuedDrafts.count)", systemImage: "text.line.last.and.arrowtriangle.forward")
                             .font(.system(size: 10.5, weight: .semibold))
+                            .lineLimit(1)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
                             .background(.orange.opacity(0.14), in: Capsule())
@@ -3624,6 +3646,7 @@ private struct DesktopComposerView: View {
                         DesktopQueuedDraftsPopover(store: store)
                     }
                     .help("Review queued follow-ups")
+                    .layoutPriority(1)
                 }
 
                 if showsContextWindowUsage,
@@ -3636,6 +3659,7 @@ private struct DesktopComposerView: View {
                         modelName: store.modelDisplayName,
                         isCompacting: store.isSelectedThreadCompacting
                     )
+                    .layoutPriority(1)
                 }
 
                 Button {
@@ -3652,6 +3676,7 @@ private struct DesktopComposerView: View {
                 .opacity(store.canSend ? 1 : 0.42)
                 .help(sendButtonHelp)
                 .accessibilityLabel(sendButtonHelp)
+                .layoutPriority(1)
 
                 if store.isRunningTurn {
                     Button {
@@ -3667,9 +3692,12 @@ private struct DesktopComposerView: View {
                     .keyboardShortcut(".", modifiers: .command)
                     .help("Stop")
                     .accessibilityLabel("Stop turn")
+                    .layoutPriority(1)
                 }
             }
             .font(.system(size: 11.5, weight: .medium))
+            .lineLimit(1)
+            .frame(minWidth: 0, maxWidth: .infinity)
 
             if store.realtimeSession != nil, !store.realtimeTranscript.isEmpty {
                 Label(store.realtimeTranscript, systemImage: "waveform")
@@ -3704,6 +3732,7 @@ private struct DesktopComposerView: View {
         ))
         .animation(commandPaletteAnimation, value: store.composerSuggestions.isEmpty)
         .frame(maxWidth: isWelcome ? DesktopTheme.welcomeWidth : DesktopTheme.conversationWidth)
+        .frame(maxWidth: .infinity)
         .dropDestination(for: URL.self) { urls, _ in
             store.addDroppedFiles(urls)
         }
@@ -3891,6 +3920,7 @@ private struct DesktopComposerView: View {
                 .foregroundStyle(store.accessMode == .fullAccess ? .orange : .secondary)
         }
         .menuStyle(.borderlessButton)
+        .lineLimit(1)
         .help(store.accessMode.detail)
         .accessibilityLabel("Access mode")
         .accessibilityValue(store.accessMode.title)
@@ -3913,6 +3943,23 @@ private struct DesktopComposerView: View {
         }
         .menuStyle(.borderlessButton)
         .help("Choose how messages sent during an active turn are handled")
+    }
+
+    @ViewBuilder
+    private var sendNewlineHint: some View {
+        if store.hasExplicitWorkspace,
+           !store.isRunningTurn,
+           !store.isPlanModeEnabled,
+           !store.isGoalModeEnabled {
+            ViewThatFits(in: .horizontal) {
+                Text("↩ send · ⇧↩ newline")
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .fixedSize()
+                EmptyView()
+            }
+        }
     }
 
     private var sendButtonHelp: String {

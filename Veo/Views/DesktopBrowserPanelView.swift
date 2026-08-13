@@ -8,31 +8,24 @@ import WebKit
 
 struct DesktopBrowserPanelView: View {
     @ObservedObject var model: DesktopBrowserModel
+    var accountLoginSession: DesktopAccountLoginSession?
+    var onCancelAccountLogin: () -> Void = {}
     @State private var addressDraft = ""
     @State private var javascriptDraft = ""
+    @AppStorage(DesktopBrowserPreferences.searchEngineKey) private var searchEngineRaw =
+        DesktopBrowserSearchEngine.google.rawValue
 
     var body: some View {
         VStack(spacing: 0) {
             navigationBar
-            if let tab = model.selectedTab, tab.isLoading {
-                ProgressView(value: tab.estimatedProgress).progressViewStyle(.linear)
+            if let prompt = accountLoginPrompt {
+                accountLoginBanner(prompt)
             }
-            Divider()
-
             if let tab = model.selectedTab {
-                if let width = model.viewport.width {
-                    ScrollView(.horizontal) {
-                        DesktopWebViewContainer(tab: tab)
-                            .frame(width: width)
-                            .frame(maxHeight: .infinity)
-                            .background(Color(nsColor: .textBackgroundColor))
-                    }
-                    .background(Color.black.opacity(0.08))
-                } else {
-                    DesktopWebViewContainer(tab: tab)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
+                DesktopBrowserSelectedContent(model: model, tab: tab)
+                    .id(tab.id)
             } else {
+                Divider()
                 ContentUnavailableView("No browser tab", systemImage: "globe")
             }
 
@@ -47,9 +40,15 @@ struct DesktopBrowserPanelView: View {
                 downloadsBar
             }
         }
-        .onChange(of: model.selectedTabID) { _, _ in syncAddress() }
-        .onChange(of: model.selectedTab?.address) { _, _ in syncAddress() }
-        .onAppear(perform: syncAddress)
+        .onChange(of: model.selectedTabID) { _, _ in syncAddress(resetStartPage: true) }
+        .onChange(of: model.selectedTab?.address) { _, newAddress in
+            guard model.selectedTab?.isStartPage != true else { return }
+            addressDraft = newAddress ?? ""
+        }
+        .onAppear {
+            syncAddress(resetStartPage: true)
+            DesktopBrowserKeychain.requestPasskeyAccessIfNeeded()
+        }
     }
 
     private var navigationBar: some View {
@@ -68,9 +67,29 @@ struct DesktopBrowserPanelView: View {
                 Image(systemName: model.selectedTab?.isLoading == true ? "xmark" : "arrow.clockwise")
             }
 
-            TextField("Search or enter address", text: $addressDraft)
-                .textFieldStyle(.roundedBorder)
-                .onSubmit { model.navigate(address: addressDraft) }
+            DesktopBrowserAddressField(
+                text: $addressDraft,
+                placeholder: searchEngine.addressPlaceholder,
+                onSubmit: { model.navigate(address: addressDraft) }
+            )
+            .padding(.horizontal, 8)
+            .frame(height: 26)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(Color.primary.opacity(0.06))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .stroke(Color.primary.opacity(0.12), lineWidth: 1)
+            )
+
+            Button {
+                model.autofillSelectedTab()
+            } label: {
+                Image(systemName: "key.fill")
+            }
+            .disabled(model.selectedTab?.isStartPage != false)
+            .help("AutoFill from Keychain")
 
             Menu {
                 Picker("Viewport", selection: $model.viewport) {
@@ -78,6 +97,8 @@ struct DesktopBrowserPanelView: View {
                 }
                 Divider()
                 Button("Open in Safari") { model.openSelectedInSafari() }
+                Button("AutoFill from Keychain") { model.autofillSelectedTab() }
+                    .disabled(model.selectedTab?.isStartPage != false)
                 Button(model.showsDeveloperTools ? "Hide Developer Tools" : "Show Developer Tools") {
                     model.showsDeveloperTools.toggle()
                 }
@@ -165,8 +186,43 @@ struct DesktopBrowserPanelView: View {
         .scrollIndicators(.hidden)
     }
 
-    private func syncAddress() {
-        addressDraft = model.selectedTab?.address ?? ""
+    private var accountLoginPrompt: String? {
+        guard let session = accountLoginSession, case .awaitingUser = session.state else { return nil }
+        if let code = session.userCode, !code.isEmpty {
+            return "Enter \(code) to finish ChatGPT sign-in."
+        }
+        return "Finish ChatGPT sign-in in this tab to stay signed in here."
+    }
+
+    @ViewBuilder
+    private func accountLoginBanner(_ prompt: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "person.badge.key")
+                .foregroundStyle(.secondary)
+            Text(prompt)
+                .font(.system(size: 11.5, weight: .medium))
+                .lineLimit(2)
+            Spacer(minLength: 8)
+            Button("Cancel", action: onCancelAccountLogin)
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(Color.primary.opacity(0.05))
+        Divider()
+    }
+
+    private var searchEngine: DesktopBrowserSearchEngine {
+        DesktopBrowserSearchEngine(rawValue: searchEngineRaw) ?? .google
+    }
+
+    private func syncAddress(resetStartPage: Bool) {
+        if model.selectedTab?.isStartPage == true {
+            if resetStartPage { addressDraft = "" }
+        } else {
+            addressDraft = model.selectedTab?.address ?? ""
+        }
     }
 
     private func evaluateJavaScript() {
@@ -183,6 +239,225 @@ struct DesktopBrowserPanelView: View {
         case "result": return .green
         default: return .secondary
         }
+    }
+}
+
+private struct DesktopBrowserSelectedContent: View {
+    @ObservedObject var model: DesktopBrowserModel
+    @ObservedObject var tab: DesktopBrowserTab
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if tab.isLoading {
+                ProgressView(value: tab.estimatedProgress).progressViewStyle(.linear)
+            }
+            if let offer = tab.passwordSaveOffer {
+                passwordBanner(
+                    title: "Save password for \(offer.server)?",
+                    detail: offer.account,
+                    confirmTitle: "Save",
+                    confirm: tab.savePasswordOffer,
+                    dismiss: tab.dismissPasswordOffer
+                )
+            } else if let account = tab.autofillAccount {
+                passwordBanner(
+                    title: "Keychain has a password for \(account)",
+                    detail: nil,
+                    confirmTitle: "Fill",
+                    confirm: tab.autofillFromKeychain,
+                    dismiss: { tab.autofillAccount = nil }
+                )
+            }
+            Divider()
+            page
+        }
+    }
+
+    @ViewBuilder
+    private var page: some View {
+        if tab.isStartPage {
+            DesktopBrowserStartPage { query in
+                model.navigate(address: query)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if let width = model.viewport.width {
+            ScrollView(.horizontal) {
+                DesktopWebViewContainer(tab: tab)
+                    .frame(width: width)
+                    .frame(maxHeight: .infinity)
+                    .background(Color(nsColor: .textBackgroundColor))
+            }
+            .background(Color.black.opacity(0.08))
+        } else {
+            DesktopWebViewContainer(tab: tab)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private func passwordBanner(
+        title: String,
+        detail: String?,
+        confirmTitle: String,
+        confirm: @escaping () -> Void,
+        dismiss: @escaping () -> Void
+    ) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "key.fill")
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(.system(size: 11.5, weight: .medium))
+                    .lineLimit(1)
+                if let detail {
+                    Text(detail)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            Spacer(minLength: 8)
+            Button("Not Now", action: dismiss)
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+            Button(confirmTitle, action: confirm)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(Color.primary.opacity(0.05))
+    }
+}
+
+private struct DesktopBrowserStartPage: View {
+    var onSubmit: (String) -> Void
+    @State private var query = ""
+    @AppStorage(DesktopAppearancePreferences.composerMaterialKey) private var composerMaterialRaw =
+        DesktopComposerMaterial.liquidGlass.rawValue
+    @AppStorage(DesktopBrowserPreferences.searchEngineKey) private var searchEngineRaw =
+        DesktopBrowserSearchEngine.google.rawValue
+    @FocusState private var isFieldFocused: Bool
+
+    var body: some View {
+        ZStack {
+            VStack(spacing: 14) {
+                Text("What should we look up?")
+                    .font(.system(size: 20, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.primary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
+
+                HStack(alignment: .center, spacing: 10) {
+                    TextField(searchEngine.addressPlaceholder, text: $query)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 14))
+                        .focused($isFieldFocused)
+                        .focusEffectDisabled()
+                        .onSubmit(submitIfNeeded)
+
+                    Button(action: submitIfNeeded) {
+                        Image(systemName: "arrow.up")
+                            .font(.system(size: 12, weight: .bold))
+                            .frame(width: 28, height: 28)
+                            .background(.white, in: Circle())
+                            .foregroundStyle(.black)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!canSubmit)
+                    .opacity(canSubmit ? 1 : 0.42)
+                    .help("Go")
+                    .accessibilityLabel("Go")
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .modifier(DesktopFloatingMaterialSurface(material: composerMaterial))
+            }
+            .padding(.horizontal, 22)
+            .frame(maxWidth: 400)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.clear)
+        .onAppear { isFieldFocused = true }
+    }
+
+    private var searchEngine: DesktopBrowserSearchEngine {
+        DesktopBrowserSearchEngine(rawValue: searchEngineRaw) ?? .google
+    }
+
+    private var composerMaterial: DesktopComposerMaterial {
+        DesktopComposerMaterial(rawValue: composerMaterialRaw) ?? .liquidGlass
+    }
+
+    private var canSubmit: Bool {
+        !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func submitIfNeeded() {
+        guard canSubmit else { return }
+        onSubmit(query)
+    }
+}
+
+private struct DesktopBrowserAddressField: NSViewRepresentable {
+    @Binding var text: String
+    var placeholder: String
+    var onSubmit: () -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeNSView(context: Context) -> NSTextField {
+        let field = AddressNSTextField(string: text)
+        field.placeholderString = placeholder
+        field.delegate = context.coordinator
+        field.isBordered = false
+        field.isBezeled = false
+        field.drawsBackground = false
+        field.focusRingType = .none
+        field.cell?.focusRingType = .none
+        field.font = .systemFont(ofSize: 12.5)
+        field.lineBreakMode = .byTruncatingTail
+        field.target = context.coordinator
+        field.action = #selector(Coordinator.submit)
+        return field
+    }
+
+    func updateNSView(_ field: NSTextField, context: Context) {
+        context.coordinator.parent = self
+        if field.stringValue != text, field.currentEditor() == nil {
+            field.stringValue = text
+        }
+        if field.placeholderString != placeholder {
+            field.placeholderString = placeholder
+        }
+        field.focusRingType = .none
+        field.cell?.focusRingType = .none
+    }
+
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        var parent: DesktopBrowserAddressField
+        init(_ parent: DesktopBrowserAddressField) { self.parent = parent }
+
+        func controlTextDidChange(_ notification: Notification) {
+            guard let field = notification.object as? NSTextField else { return }
+            parent.text = field.stringValue
+        }
+
+        @objc func submit() {
+            parent.onSubmit()
+        }
+    }
+}
+
+private final class AddressNSTextField: NSTextField {
+    override var focusRingType: NSFocusRingType {
+        get { .none }
+        set {}
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        let accepted = super.becomeFirstResponder()
+        currentEditor()?.focusRingType = .none
+        return accepted
     }
 }
 

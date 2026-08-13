@@ -48,14 +48,14 @@ Veo has no hosted backend, subscription, relay, phone companion, or bundled cred
 
 - Open Review, Browser, and Files in a resizable right utility panel with Safari-style tabs.
 - Inspect unified or split diffs, filter whitespace, stage files or safe hunks, discard with recovery, commit staged work, and start AI reviews inline.
-- Browse with workspace-scoped tab sets, shared website data, downloads, viewport presets, console capture, and JavaScript evaluation.
+- Browse with a native start page, Safari-like desktop layout, shared website data, downloads, Keychain AutoFill, passkeys, and ChatGPT sign-in that stays in Veo’s browser.
 - Search and preview the workspace tree, edit existing text files with native undo/find support, and preserve encoding, newlines, permissions, and external-change safety.
 
 ### A composer that knows the workspace
 
 - Choose the model, reasoning effort, service tier, and access mode reported by the connected Codex runtime.
 - Attach files and structured context, mention project files, and queue or steer follow-up messages.
-- Type `/` for native commands such as `/model`, `/permissions`, `/review`, `/compact`, `/fork`, `/diff`, `/terminal`, and `/usage`.
+- Type `/` for native commands such as `/model`, `/permissions`, `/review`, `/browser`, `/compact`, `/fork`, `/diff`, `/terminal`, and `/usage`.
 - Keep drafts tied to their chats and copy the last response as Markdown.
 
 ### A real docked terminal

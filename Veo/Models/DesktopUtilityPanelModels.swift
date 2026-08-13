@@ -95,6 +95,8 @@ final class DesktopUtilityPanelModel: ObservableObject {
         }
     }
 
+    var didCloseLastTab: (() -> Void)?
+
     func show(_ tab: DesktopUtilityPanelTab, aiReview: Bool = false) {
         if let item = tabs.first(where: { $0.content.kind == tab }) {
             selectTab(item.id)
@@ -118,6 +120,11 @@ final class DesktopUtilityPanelModel: ObservableObject {
             selectTab(item.id)
         }
         cacheCurrentWorkspace()
+    }
+
+    func ensureOpenTab() {
+        guard tabs.isEmpty else { return }
+        addTab(preferredKind)
     }
 
     func selectTab(_ id: UUID) {
@@ -177,7 +184,6 @@ final class DesktopUtilityPanelModel: ObservableObject {
             tabs.append(DesktopUtilityPanelItem(content: .files))
         }
 
-        if tabs.isEmpty { tabs = [DesktopUtilityPanelItem(content: .review)] }
         if let savedSelection = selectionByWorkspace[workspaceKey],
            tabs.contains(where: { $0.id == savedSelection }) {
             selectTab(savedSelection)
@@ -190,6 +196,13 @@ final class DesktopUtilityPanelModel: ObservableObject {
 
     func openWorkspaceFile(_ fileURL: URL, workspaceURL: URL) {
         browser.openWorkspaceFile(fileURL, workspaceURL: workspaceURL)
+    }
+
+    func openBrowser(url: URL, accountLogin: Bool = false) {
+        browser.open(url, accountLogin: accountLogin)
+        if let id = browser.selectedTabID {
+            insertBrowserTab(id, selecting: true)
+        }
     }
 
     func prepareForWorkspaceChange() -> Bool {
@@ -232,7 +245,10 @@ final class DesktopUtilityPanelModel: ObservableObject {
         guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
         tabs.remove(at: index)
         if tabs.isEmpty {
-            tabs = [DesktopUtilityPanelItem(content: .review)]
+            selectedTabID = nil
+            cacheCurrentWorkspace()
+            didCloseLastTab?()
+            return
         }
         if selectedTabID == id {
             selectTab(tabs[min(index, tabs.count - 1)].id)

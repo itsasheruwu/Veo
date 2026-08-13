@@ -170,6 +170,10 @@ final class DesktopCodexStore: ObservableObject {
     private var gitContextGeneration = UUID()
     private var gitRefreshRequested = false
     var prepareForWorkspaceChange: (() -> Bool)?
+    /// Opens an HTTPS (or loopback) URL in Veo's embedded browser, sharing ChatGPT cookies.
+    var openInEmbeddedBrowser: ((URL, Bool) -> Void)?
+    private var pendingEmbeddedBrowserURL: URL?
+    private var pendingEmbeddedBrowserIsAccountLogin = false
     private var timelineLoadGeneration = UUID()
     /// Runtime (Codex) thread id → Veo UI storage key.
     private var veoIDByCodexThreadID: [String: String] = [:]
@@ -1272,25 +1276,10 @@ final class DesktopCodexStore: ObservableObject {
         Task {
             defer { integrationMutationID = nil }
             do {
-                let response = try await client.request(
-                    method: "account/login/start",
-                    params: [
-                        "type": "chatgpt",
-                        "appBrand": "codex",
-                        "codexStreamlinedLogin": true,
-                        "useHostedLoginSuccessPage": true,
-                    ],
-                    requiring: .accountLogin
-                )
-                guard let session = DesktopAccountLoginSession.parse(response) else {
-                    throw CodexAppServerClientError.malformedResponse("account/login/start")
-                }
+                let session = try await startChatGPTBrowserLogin()
                 accountLoginSession = session
                 if let url = session.authorizationURL {
-                    guard url.scheme?.lowercased() == "https" else {
-                        throw CodexAppServerClientError.malformedResponse("insecure account login URL")
-                    }
-                    NSWorkspace.shared.open(url)
+                    presentAccountLoginURL(url)
                 }
             } catch {
                 transientError = "Sign in could not start: \(error.localizedDescription)"
@@ -1314,15 +1303,55 @@ final class DesktopCodexStore: ObservableObject {
                 }
                 accountLoginSession = session
                 if let url = session.authorizationURL {
-                    guard url.scheme?.lowercased() == "https" else {
-                        throw CodexAppServerClientError.malformedResponse("insecure device login URL")
-                    }
-                    NSWorkspace.shared.open(url)
+                    presentAccountLoginURL(url)
                 }
             } catch {
                 transientError = "Device sign in could not start: \(error.localizedDescription)"
             }
         }
+    }
+
+    private func startChatGPTBrowserLogin() async throws -> DesktopAccountLoginSession {
+        try await startAccountLogin(params: [
+            "type": "chatgpt",
+            "codexStreamlinedLogin": true,
+        ])
+    }
+
+    private func startAccountLogin(params: [String: Any]) async throws -> DesktopAccountLoginSession {
+        let response = try await client.request(
+            method: "account/login/start",
+            params: params,
+            requiring: .accountLogin
+        )
+        guard let session = DesktopAccountLoginSession.parse(response) else {
+            throw CodexAppServerClientError.malformedResponse("account/login/start")
+        }
+        return session
+    }
+
+    private func presentAccountLoginURL(_ url: URL, accountLogin: Bool = true) {
+        let scheme = url.scheme?.lowercased() ?? ""
+        let host = url.host?.lowercased() ?? ""
+        let isLoopbackHTTP = scheme == "http" && ["127.0.0.1", "localhost", "[::1]"].contains(host)
+        guard scheme == "https" || isLoopbackHTTP else {
+            transientError = "Sign in returned an address Veo could not open securely."
+            return
+        }
+        if let openInEmbeddedBrowser {
+            openInEmbeddedBrowser(url, accountLogin)
+        } else {
+            pendingEmbeddedBrowserURL = url
+            pendingEmbeddedBrowserIsAccountLogin = accountLogin
+        }
+    }
+
+    func takePendingEmbeddedBrowserURL() -> (url: URL, accountLogin: Bool)? {
+        guard let url = pendingEmbeddedBrowserURL else { return nil }
+        let accountLogin = pendingEmbeddedBrowserIsAccountLogin
+        pendingEmbeddedBrowserURL = nil
+        pendingEmbeddedBrowserIsAccountLogin = false
+        return (url, accountLogin)
     }
 
     func consumeRateLimitResetCredit() {
@@ -3827,14 +3856,17 @@ final class DesktopCodexStore: ObservableObject {
         return "Configured"
     }
 
-    private func fetchAccountOverview(capabilities capabilitySnapshot: CodexAppServerCapabilities) async -> DesktopAccountSnapshot {
+    private func fetchAccountOverview(
+        capabilities capabilitySnapshot: CodexAppServerCapabilities,
+        refreshToken: Bool = false
+    ) async -> DesktopAccountSnapshot {
         var snapshot = DesktopAccountSnapshot()
 
         if capabilitySnapshot.supports(.account) {
             do {
                 let response = try await client.request(
                     method: "account/read",
-                    params: ["refreshToken": false],
+                    params: ["refreshToken": refreshToken],
                     requiring: .account
                 )
                 snapshot.overview.requiresOpenAIAuth = response.bool("requiresOpenaiAuth") ?? false
@@ -3919,7 +3951,7 @@ final class DesktopCodexStore: ObservableObject {
             : "Unavailable: " + snapshot.failures.joined(separator: ", ")
     }
 
-    private func loadAccountOverview() async {
+    private func loadAccountOverview(refreshToken: Bool = false) async {
         guard runtimeState.isReady else { return }
         let loadGeneration = UUID()
         let contextUIThreadID = selectedThreadID
@@ -3936,7 +3968,7 @@ final class DesktopCodexStore: ObservableObject {
             }
         }
 
-        let snapshot = await fetchAccountOverview(capabilities: capabilities)
+        let snapshot = await fetchAccountOverview(capabilities: capabilities, refreshToken: refreshToken)
         let currentWorkspacePath = hasExplicitWorkspace
             ? effectiveWorkspaceURL.standardizedFileURL.resolvingSymlinksInPath().path
             : nil
@@ -3944,6 +3976,26 @@ final class DesktopCodexStore: ObservableObject {
               selectedThreadID == contextUIThreadID,
               currentWorkspacePath == contextWorkspacePath else { return }
         applyAccountOverview(snapshot)
+    }
+
+    private func noteOptimisticChatGPTLogin() {
+        guard accountOverview.accountType == "Signed out" else { return }
+        var overview = accountOverview
+        overview.accountType = "ChatGPT"
+        overview.requiresOpenAIAuth = false
+        accountOverview = overview
+    }
+
+    private func refreshAccountAfterLogin() async {
+        for _ in 0..<4 {
+            await loadAccountOverview(refreshToken: true)
+            if accountOverview.accountType != "Signed out" {
+                await loadAccountResources()
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(400))
+        }
+        await loadAccountResources()
     }
 
     private func loadAccountResources() async {
@@ -5636,10 +5688,13 @@ final class DesktopCodexStore: ObservableObject {
         if method == "account/login/completed" {
             if params.bool("success") == true {
                 accountLoginSession = nil
+                noteOptimisticChatGPTLogin()
+                presentAccountLoginURL(DesktopBrowserChatGPT.loginURL, accountLogin: false)
+                Task { await refreshAccountAfterLogin() }
             } else if let session = accountLoginSession {
                 accountLoginSession = session.applyingCompletion(params)
+                Task { await loadAccountResources() }
             }
-            Task { await loadAccountResources() }
             return
         }
         if method == "account/updated" {

@@ -104,6 +104,7 @@ open /tmp/veo-derived/Build/Products/Debug/Veo.app
 - Prefer a text shimmer on in-progress Thinking labels and on thread titles while a turn is active (respect Reduce Motion).
 - Prefer custom Veo accent on folder icons and the selected chat-row highlight; keep project folder names neutral/secondary without accent tint.
 - Prefer Terminal settings for Agent CLIs (optional yolo/full-access for Claude and Codex); when Agent CLIs is off, gate `claude`/`codex` in the docked terminal behind an allow prompt rather than running them silently.
+- Prefer the in-app browser start page to sit on the real right-sidebar material (Solid/Mica/Liquid Glass) rather than an opaque main-canvas fill; keep the address bar and start-page search as separate drafts; avoid the system blue focus ring on the address bar (use Veo’s own quiet chrome).
 
 ## Learned Workspace Facts
 
@@ -114,3 +115,5 @@ open /tmp/veo-derived/Build/Products/Debug/Veo.app
 - The docked terminal uses SwiftTerm plus a local PTY (`DesktopLocalTerminalSession`); keep PTY winsize synced to the SwiftUI viewport so TUI CLIs like `codex` and `claude` render correctly.
 - Appearance (Sync/Light/Dark, accent color, sidebar Solid/Mica/Liquid Glass) is driven by `DesktopAppearancePreferences`; apply custom accent via the `veoAccent` environment because `Color.accentColor` alone does not reliably carry Veo's tint on macOS.
 - Terminal Agent CLI / yolo preferences live in `DesktopTerminalPreferences` and Settings → Terminal.
+- The in-app browser lives in `DesktopBrowserPanelView` / `DesktopBrowserModel`, with Keychain save/fill and passkeys in `DesktopBrowserKeychain`. Settings → Browser (`DesktopBrowserPreferences`) holds search engine (Google default), restore tabs, desktop site, JavaScript, fraud warning, AutoFill, and passkeys. WKWebView should identify as current Safari and request desktop layout so sites don’t look dated.
+- ChatGPT Account sign-in must open in Veo’s WKWebView (shared cookie store), not Safari. ChatGPT as a search engine uses `chatgpt.com` with temporary chat and web search (`temporary-chat=true`, `hints=search`).

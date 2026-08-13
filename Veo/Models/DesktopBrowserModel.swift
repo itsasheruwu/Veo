@@ -7,6 +7,133 @@ import CryptoKit
 import Foundation
 import WebKit
 
+enum DesktopBrowserSearchEngine: String, CaseIterable, Identifiable {
+    case google
+    case chatgpt
+    case duckduckgo
+    case bing
+    case kagi
+    case brave
+    case ecosia
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .google: return "Google"
+        case .chatgpt: return "ChatGPT"
+        case .duckduckgo: return "DuckDuckGo"
+        case .bing: return "Bing"
+        case .kagi: return "Kagi"
+        case .brave: return "Brave"
+        case .ecosia: return "Ecosia"
+        }
+    }
+
+    var addressPlaceholder: String {
+        "Search \(title) or enter address"
+    }
+
+    func searchURL(for query: String) -> URL? {
+        var components = URLComponents(string: searchEndpoint)
+        components?.queryItems = queryItems(for: query)
+        return components?.url
+    }
+
+    private func queryItems(for query: String) -> [URLQueryItem] {
+        switch self {
+        case .chatgpt:
+            return [
+                URLQueryItem(name: "q", value: query),
+                URLQueryItem(name: "hints", value: "search"),
+                URLQueryItem(name: "temporary-chat", value: "true"),
+            ]
+        default:
+            return [URLQueryItem(name: "q", value: query)]
+        }
+    }
+
+    private var searchEndpoint: String {
+        switch self {
+        case .google: return "https://www.google.com/search"
+        case .chatgpt: return "https://chatgpt.com/"
+        case .duckduckgo: return "https://duckduckgo.com/"
+        case .bing: return "https://www.bing.com/search"
+        case .kagi: return "https://kagi.com/search"
+        case .brave: return "https://search.brave.com/search"
+        case .ecosia: return "https://www.ecosia.org/search"
+        }
+    }
+}
+
+enum DesktopBrowserChatGPT {
+    static let webAppURL = URL(string: "https://chatgpt.com/")!
+    static let loginURL = URL(string: "https://chatgpt.com/auth/login")!
+
+    static func isWebApp(_ url: URL) -> Bool {
+        guard let host = url.host?.lowercased() else { return false }
+        return ["chatgpt.com", "www.chatgpt.com", "chat.openai.com"].contains(host)
+            && !isOpenAppLanding(url)
+    }
+
+    static func isOpenAppLanding(_ url: URL) -> Bool {
+        url.path.lowercased().contains("/codex/open-app")
+    }
+
+    static func isPostLoginLanding(_ url: URL) -> Bool {
+        if isOpenAppLanding(url) { return true }
+        let host = url.host?.lowercased() ?? ""
+        return ["127.0.0.1", "localhost", "[::1]"].contains(host)
+    }
+}
+
+enum DesktopBrowserPreferences {
+    static let searchEngineKey = "VeoDesktop.browser.searchEngine"
+    static let requestDesktopSiteKey = "VeoDesktop.browser.requestDesktopSite"
+    static let javaScriptEnabledKey = "VeoDesktop.browser.javaScriptEnabled"
+    static let fraudulentWebsiteWarningKey = "VeoDesktop.browser.fraudulentWebsiteWarning"
+    static let autoFillPasswordsKey = "VeoDesktop.browser.autoFillPasswords"
+
+    static func registerDefaults(_ store: UserDefaults = .standard) {
+        store.register(defaults: [
+            searchEngineKey: DesktopBrowserSearchEngine.google.rawValue,
+            requestDesktopSiteKey: true,
+            javaScriptEnabledKey: true,
+            fraudulentWebsiteWarningKey: true,
+            autoFillPasswordsKey: true,
+        ])
+    }
+
+    static var searchEngine: DesktopBrowserSearchEngine {
+        let raw = UserDefaults.standard.string(forKey: searchEngineKey) ?? DesktopBrowserSearchEngine.google.rawValue
+        return DesktopBrowserSearchEngine(rawValue: raw) ?? .google
+    }
+
+    static var requestDesktopSite: Bool {
+        UserDefaults.standard.object(forKey: requestDesktopSiteKey) as? Bool ?? true
+    }
+
+    static var javaScriptEnabled: Bool {
+        UserDefaults.standard.object(forKey: javaScriptEnabledKey) as? Bool ?? true
+    }
+
+    static var fraudulentWebsiteWarning: Bool {
+        UserDefaults.standard.object(forKey: fraudulentWebsiteWarningKey) as? Bool ?? true
+    }
+
+    static var autoFillPasswords: Bool {
+        UserDefaults.standard.object(forKey: autoFillPasswordsKey) as? Bool ?? true
+    }
+
+    static func clearWebsiteData() {
+        let store = WKWebsiteDataStore.default()
+        let types = WKWebsiteDataStore.allWebsiteDataTypes()
+        store.fetchDataRecords(ofTypes: types) { records in
+            store.removeData(ofTypes: types, for: records, completionHandler: {})
+        }
+    }
+}
+
 enum DesktopBrowserViewport: String, CaseIterable, Identifiable {
     case responsive
     case desktop
@@ -97,8 +224,9 @@ final class DesktopBrowserModel: ObservableObject {
     }
 
     @discardableResult
-    func addTab(address: String = "about:blank", select: Bool = true) -> UUID {
+    func addTab(address: String = "about:blank", select: Bool = true, accountLogin: Bool = false) -> UUID {
         let tab = makeTab(address: address)
+        tab.isAccountLoginTab = accountLogin
         tabs.append(tab)
         if select { selectedTabID = tab.id }
         cacheCurrentTabs()
@@ -138,16 +266,33 @@ final class DesktopBrowserModel: ObservableObject {
         cacheCurrentTabs()
     }
 
+    func open(_ url: URL, accountLogin: Bool = false) {
+        if accountLogin, let tab = selectedTab {
+            tab.isAccountLoginTab = true
+            selectedTabID = tab.id
+            tab.load(url)
+            cacheCurrentTabs()
+            return
+        }
+        if !accountLogin,
+           DesktopBrowserChatGPT.isWebApp(url),
+           let tab = tabs.first(where: \.isAccountLoginTab) {
+            selectedTabID = tab.id
+            tab.load(url)
+            cacheCurrentTabs()
+            return
+        }
+        addTab(address: url.absoluteString, accountLogin: accountLogin)
+    }
+
     func navigate(address rawAddress: String) {
         guard let tab = selectedTab else { return }
         let trimmed = rawAddress.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         if let url = normalizedWebURL(trimmed) {
             tab.load(url)
-        } else {
-            var components = URLComponents(string: "https://duckduckgo.com/")!
-            components.queryItems = [URLQueryItem(name: "q", value: trimmed)]
-            if let url = components.url { tab.load(url) }
+        } else if let url = DesktopBrowserPreferences.searchEngine.searchURL(for: trimmed) {
+            tab.load(url)
         }
         persistCurrentWorkspaceIfNeeded()
     }
@@ -185,7 +330,16 @@ final class DesktopBrowserModel: ObservableObject {
         guard let url = selectedTab?.webView.url, ["http", "https"].contains(url.scheme?.lowercased() ?? "") else {
             return
         }
-        NSWorkspace.shared.open(url)
+        let safari = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Safari")
+        if let safari {
+            NSWorkspace.shared.open([url], withApplicationAt: safari, configuration: NSWorkspace.OpenConfiguration())
+        } else {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    func autofillSelectedTab() {
+        selectedTab?.autofillFromKeychain()
     }
 
     func revealDownload(_ download: DesktopBrowserDownload) {
@@ -297,6 +451,9 @@ final class DesktopBrowserTab: NSObject, ObservableObject, Identifiable, WKNavig
     @Published var canGoBack = false
     @Published var canGoForward = false
     @Published var consoleMessages: [DesktopBrowserConsoleMessage] = []
+    @Published var passwordSaveOffer: DesktopBrowserStoredPassword?
+    @Published var autofillAccount: String?
+    var isAccountLoginTab = false
 
     private(set) var webView: WKWebView!
     var openPopup: ((WKWebViewConfiguration, URLRequest?) -> WKWebView?)?
@@ -306,21 +463,53 @@ final class DesktopBrowserTab: NSObject, ObservableObject, Identifiable, WKNavig
     var allowedFileRoot: URL?
     private var observations: [NSKeyValueObservation] = []
 
+    var isStartPage: Bool {
+        guard !isLoading else { return false }
+        let value = (webView.url?.absoluteString ?? address)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        return value.isEmpty || value == "about:blank" || value == "about:blank/"
+    }
+
     init(configuration suppliedConfiguration: WKWebViewConfiguration? = nil) {
         super.init()
-        let configuration = suppliedConfiguration ?? WKWebViewConfiguration()
-        configuration.websiteDataStore = .default()
+        let configuration: WKWebViewConfiguration
+        if let suppliedConfiguration {
+            configuration = suppliedConfiguration
+        } else {
+            configuration = WKWebViewConfiguration()
+            configuration.websiteDataStore = .default()
+        }
         configuration.userContentController.removeScriptMessageHandler(forName: "veoConsole")
+        configuration.userContentController.removeScriptMessageHandler(forName: "veoKeychain")
         configuration.userContentController.add(self, name: "veoConsole")
+        configuration.userContentController.add(self, name: "veoKeychain")
         configuration.userContentController.addUserScript(WKUserScript(
             source: Self.consoleCaptureScript,
             injectionTime: .atDocumentStart,
             forMainFrameOnly: false
         ))
+        configuration.userContentController.addUserScript(WKUserScript(
+            source: DesktopBrowserKeychain.captureScript,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: false
+        ))
+        configuration.applicationNameForUserAgent = Self.safariApplicationName
+        configuration.defaultWebpagePreferences.preferredContentMode =
+            DesktopBrowserPreferences.requestDesktopSite ? .desktop : .recommended
+        configuration.defaultWebpagePreferences.allowsContentJavaScript = DesktopBrowserPreferences.javaScriptEnabled
+        configuration.preferences.javaScriptCanOpenWindowsAutomatically = true
+        configuration.preferences.isFraudulentWebsiteWarningEnabled = DesktopBrowserPreferences.fraudulentWebsiteWarning
+        configuration.mediaTypesRequiringUserActionForPlayback = []
+        if #available(macOS 12.3, *) {
+            configuration.preferences.isElementFullscreenEnabled = true
+        }
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = self
         webView.uiDelegate = self
         webView.allowsMagnification = true
+        webView.allowsBackForwardNavigationGestures = true
+        webView.customUserAgent = Self.safariCompatibleUserAgent
         if #available(macOS 13.3, *) { webView.isInspectable = true }
         self.webView = webView
         observations = [
@@ -348,11 +537,55 @@ final class DesktopBrowserTab: NSObject, ObservableObject, Identifiable, WKNavig
     func invalidate() {
         webView.stopLoading()
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "veoConsole")
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: "veoKeychain")
         observations = []
+    }
+
+    func autofillFromKeychain() {
+        guard let url = webView.url else { return }
+        let stored = DesktopBrowserKeychain.passwords(for: url)
+        if stored.count == 1 {
+            applyStoredPassword(stored[0])
+            return
+        }
+        if stored.count > 1 {
+            pickStoredPassword(stored)
+            return
+        }
+        DesktopBrowserKeychain.requestSystemPassword(window: webView.window) { [weak self] credential in
+            Task { @MainActor in
+                guard let self, let credential else { return }
+                let password = DesktopBrowserStoredPassword(
+                    server: url.host?.lowercased() ?? "",
+                    account: credential.user,
+                    password: credential.password,
+                    port: url.port,
+                    usesTLS: url.scheme?.lowercased() != "http"
+                )
+                DesktopBrowserKeychain.save(password)
+                self.applyStoredPassword(password)
+            }
+        }
+    }
+
+    func savePasswordOffer() {
+        guard let offer = passwordSaveOffer else { return }
+        DesktopBrowserKeychain.save(offer)
+        passwordSaveOffer = nil
+        autofillAccount = offer.account
+    }
+
+    func dismissPasswordOffer() {
+        passwordSaveOffer = nil
     }
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         isLoading = true
+        autofillAccount = nil
+        if let host = webView.url?.host?.lowercased(),
+           host != passwordSaveOffer?.server {
+            passwordSaveOffer = nil
+        }
         refreshNavigationState()
     }
 
@@ -360,6 +593,7 @@ final class DesktopBrowserTab: NSObject, ObservableObject, Identifiable, WKNavig
         isLoading = false
         refreshNavigationState()
         stateChanged?()
+        continueAccountLoginIfNeeded(at: webView.url)
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
@@ -375,20 +609,40 @@ final class DesktopBrowserTab: NSObject, ObservableObject, Identifiable, WKNavig
     func webView(
         _ webView: WKWebView,
         decidePolicyFor navigationAction: WKNavigationAction,
-        decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+        preferences: WKWebpagePreferences,
+        decisionHandler: @escaping (WKNavigationActionPolicy, WKWebpagePreferences) -> Void
     ) {
-        guard let url = navigationAction.request.url else { decisionHandler(.cancel); return }
+        preferences.preferredContentMode = DesktopBrowserPreferences.requestDesktopSite ? .desktop : .recommended
+        preferences.allowsContentJavaScript = DesktopBrowserPreferences.javaScriptEnabled
+        guard let url = navigationAction.request.url else {
+            decisionHandler(.cancel, preferences)
+            return
+        }
         let scheme = url.scheme?.lowercased() ?? ""
-        if ["http", "https", "about"].contains(scheme) {
-            decisionHandler(.allow)
+        if ["http", "https"].contains(scheme) {
+            decisionHandler(Self.allowWithoutOpeningApps, preferences)
+        } else if scheme == "about" {
+            decisionHandler(.allow, preferences)
         } else if scheme == "file",
                   let root = allowedFileRoot,
                   url.standardizedFileURL.resolvingSymlinksInPath().path.hasPrefix(root.path + "/") {
-            decisionHandler(.allow)
-        } else {
-            decisionHandler(.cancel)
+            decisionHandler(.allow, preferences)
+        } else if Self.externalSchemes.contains(scheme) {
+            decisionHandler(.cancel, preferences)
             NSWorkspace.shared.open(url)
+        } else {
+            decisionHandler(.cancel, preferences)
+            appendConsole(level: "log", text: "Kept this page in Veo instead of opening the \(scheme) app.")
         }
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        didReceive challenge: URLAuthenticationChallenge,
+        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+    ) {
+        let response = DesktopBrowserKeychain.respond(to: challenge, window: webView.window)
+        completionHandler(response.0, response.1)
     }
 
     func webView(
@@ -479,11 +733,80 @@ final class DesktopBrowserTab: NSObject, ObservableObject, Identifiable, WKNavig
     }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        if message.name == "veoKeychain" {
+            handleKeychainMessage(message)
+            return
+        }
         guard message.name == "veoConsole", let object = message.body as? [String: Any] else { return }
         appendConsole(
             level: object["level"] as? String ?? "log",
             text: object["text"] as? String ?? String(describing: message.body)
         )
+    }
+
+    private func handleKeychainMessage(_ message: WKScriptMessage) {
+        guard message.frameInfo.isMainFrame,
+              DesktopBrowserPreferences.autoFillPasswords,
+              let object = message.body as? [String: Any],
+              let type = object["type"] as? String else { return }
+        let host = (object["host"] as? String)?.lowercased()
+            ?? webView.url?.host?.lowercased()
+        guard let host, !host.isEmpty else { return }
+        if type == "focus" {
+            autofillAccount = DesktopBrowserKeychain.passwords(for: webView.url ?? URL(string: "https://\(host)")!).first?.account
+            return
+        }
+        guard type == "submit",
+              let account = object["account"] as? String,
+              let password = object["password"] as? String,
+              !account.isEmpty, !password.isEmpty else { return }
+        let url = webView.url ?? URL(string: "https://\(host)")!
+        let existing = DesktopBrowserKeychain.passwords(for: url).first {
+            $0.account.caseInsensitiveCompare(account) == .orderedSame && $0.password == password
+        }
+        guard existing == nil else { return }
+        passwordSaveOffer = DesktopBrowserStoredPassword(
+            server: host,
+            account: account,
+            password: password,
+            port: url.port,
+            usesTLS: url.scheme?.lowercased() != "http"
+        )
+    }
+
+    private func applyStoredPassword(_ password: DesktopBrowserStoredPassword) {
+        guard let data = try? JSONSerialization.data(withJSONObject: [
+            "username": password.account,
+            "password": password.password,
+        ]),
+        let json = String(data: data, encoding: .utf8) else { return }
+        webView.evaluateJavaScript("window.__veoFillCredentials && window.__veoFillCredentials(\(json))")
+        autofillAccount = nil
+    }
+
+    private func pickStoredPassword(_ passwords: [DesktopBrowserStoredPassword]) {
+        let alert = NSAlert()
+        alert.messageText = "Choose a saved password"
+        alert.informativeText = "Keychain has multiple logins for this site."
+        alert.addButton(withTitle: "Fill")
+        alert.addButton(withTitle: "Cancel")
+        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 320, height: 24), pullsDown: false)
+        passwords.forEach { popup.addItem(withTitle: $0.account) }
+        alert.accessoryView = popup
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let index = min(max(popup.indexOfSelectedItem, 0), passwords.count - 1)
+        applyStoredPassword(passwords[index])
+    }
+
+    private func continueAccountLoginIfNeeded(at url: URL?) {
+        guard isAccountLoginTab, let url else { return }
+        if DesktopBrowserChatGPT.isPostLoginLanding(url) {
+            load(DesktopBrowserChatGPT.loginURL)
+            return
+        }
+        if DesktopBrowserChatGPT.isWebApp(url) {
+            isAccountLoginTab = false
+        }
     }
 
     private func refreshNavigationState() {
@@ -496,6 +819,33 @@ final class DesktopBrowserTab: NSObject, ObservableObject, Identifiable, WKNavig
     private static func nonempty(_ value: String?) -> String? {
         guard let value, !value.isEmpty else { return nil }
         return value
+    }
+
+    /// WebKit's `_WKNavigationActionPolicyAllowWithoutTryingAppLink` (`allow + 2`).
+    /// `.allow` still hands chatgpt.com to the ChatGPT Mac app via universal links.
+    private static let allowWithoutOpeningApps = WKNavigationActionPolicy(
+        rawValue: WKNavigationActionPolicy.allow.rawValue + 2
+    ) ?? .allow
+
+    private static let externalSchemes: Set<String> = [
+        "mailto", "tel", "sms", "facetime", "facetime-audio", "itms-apps", "itmss", "macappstore",
+    ]
+
+    private static var safariVersion: String {
+        let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Safari")
+        let version = url
+            .flatMap(Bundle.init(url:))
+            .flatMap { $0.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String }
+            .flatMap { $0.split(separator: " ").first.map(String.init) }
+        return version ?? "26.0"
+    }
+
+    private static var safariApplicationName: String {
+        "Version/\(safariVersion) Safari/605.1.15"
+    }
+
+    private static var safariCompatibleUserAgent: String {
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) \(safariApplicationName)"
     }
 
     private static let consoleCaptureScript = """
@@ -583,5 +933,14 @@ private final class DesktopBrowserDownloadDelegate: NSObject, WKDownloadDelegate
         model?.updateDownload(id: id, state: .failed(error.localizedDescription))
         Self.retained.removeValue(forKey: ObjectIdentifier(download))
         progressObservation = nil
+    }
+
+    func download(
+        _ download: WKDownload,
+        didReceive challenge: URLAuthenticationChallenge,
+        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+    ) {
+        let response = DesktopBrowserKeychain.respond(to: challenge, window: download.webView?.window ?? NSApp.keyWindow)
+        completionHandler(response.0, response.1)
     }
 }

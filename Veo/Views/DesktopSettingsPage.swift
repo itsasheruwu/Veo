@@ -142,8 +142,16 @@ struct DesktopSettingsPage: View {
     @AppStorage(DesktopComposerPreferences.contextWindowUsageStyleKey) private var contextWindowUsageStyleRaw =
         DesktopContextWindowUsageStyle.percent.rawValue
     @AppStorage(DesktopUtilityPreferences.restoreBrowserTabsKey) private var restoresBrowserTabs = false
+    @AppStorage(DesktopBrowserPreferences.searchEngineKey) private var searchEngineRaw =
+        DesktopBrowserSearchEngine.google.rawValue
+    @AppStorage(DesktopBrowserPreferences.requestDesktopSiteKey) private var requestDesktopSite = true
+    @AppStorage(DesktopBrowserPreferences.javaScriptEnabledKey) private var javaScriptEnabled = true
+    @AppStorage(DesktopBrowserPreferences.fraudulentWebsiteWarningKey) private var fraudulentWebsiteWarning = true
+    @AppStorage(DesktopBrowserPreferences.autoFillPasswordsKey) private var autoFillPasswords = true
     @State private var apiKey = ""
+    @State private var passkeyAccess = DesktopBrowserKeychain.passkeyAccess()
     @State private var confirmsLogout = false
+    @State private var confirmsClearBrowserData = false
     @State private var pluginInstallTarget: DesktopPluginRecord?
     @State private var pluginUninstallTarget: DesktopPluginRecord?
     @State private var notificationSoundError: String?
@@ -284,6 +292,16 @@ struct DesktopSettingsPage: View {
             Text("This signs the Codex CLI out for other local Codex clients too. No credentials are displayed or retained by Veo.")
         }
         .confirmationDialog(
+            "Clear cookies and website data?",
+            isPresented: $confirmsClearBrowserData,
+            titleVisibility: .visible
+        ) {
+            Button("Clear Data", role: .destructive) { DesktopBrowserPreferences.clearWebsiteData() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes cookies, cache, and other website data stored by Veo’s browser.")
+        }
+        .confirmationDialog(
             "Install plugin?",
             isPresented: Binding(
                 get: { pluginInstallTarget != nil },
@@ -379,19 +397,6 @@ struct DesktopSettingsPage: View {
                         .labelsHidden()
                         .toggleStyle(.switch)
                         .controlSize(.small)
-                    }
-
-                    SettingsPanelDivider()
-
-                    SettingsRow(
-                        title: "Restore browser tabs",
-                        detail: "Remember each project's Browser tab URLs and restore them after Veo relaunches.",
-                        systemImage: "globe"
-                    ) {
-                        Toggle("Restore browser tabs", isOn: $restoresBrowserTabs)
-                            .labelsHidden()
-                            .toggleStyle(.switch)
-                            .controlSize(.small)
                     }
                 }
 
@@ -499,6 +504,9 @@ struct DesktopSettingsPage: View {
                 .labelStyle(SettingsNoteLabelStyle())
                 .padding(.top, 6)
             }
+
+        case .browser:
+            browserSettings
 
         case .runtime:
             VStack(alignment: .leading, spacing: 22) {
@@ -914,10 +922,10 @@ struct DesktopSettingsPage: View {
     @ViewBuilder
     private var accountActions: some View {
         SettingsPanel {
-            if store.accountOverview.accountType == "Signed out" || store.accountOverview.requiresOpenAIAuth {
+            if store.accountOverview.accountType == "Signed out" {
                 SettingsRow(
                     title: "Sign in with ChatGPT",
-                    detail: "Continue in your browser through the local Codex runtime.",
+                    detail: "Opens in Veo’s browser so ChatGPT stays signed in there too.",
                     systemImage: "person.badge.key"
                 ) {
                     HStack(spacing: 7) {
@@ -955,15 +963,29 @@ struct DesktopSettingsPage: View {
                     }
                 }
             } else {
-                SettingsRow(
-                    title: "Shared local account",
-                    detail: "Signing out affects the Codex CLI and other local clients.",
-                    systemImage: "rectangle.portrait.and.arrow.right"
-                ) {
-                    Button("Sign Out", role: .destructive) { confirmsLogout = true }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                        .disabled(!store.capabilities.supports(.accountLogout) || store.integrationMutationID != nil)
+                if store.accountOverview.accountType == "ChatGPT" {
+                    SettingsRow(
+                        title: "Signed in with ChatGPT",
+                        detail: store.accountOverview.email
+                            ?? "Codex is signed in. ChatGPT in Veo’s browser uses the same login.",
+                        systemImage: "person.badge.key"
+                    ) {
+                        Button("Sign Out", role: .destructive) { confirmsLogout = true }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .disabled(!store.capabilities.supports(.accountLogout) || store.integrationMutationID != nil)
+                    }
+                } else {
+                    SettingsRow(
+                        title: "Shared local account",
+                        detail: "Signing out affects the Codex CLI and other local clients.",
+                        systemImage: "rectangle.portrait.and.arrow.right"
+                    ) {
+                        Button("Sign Out", role: .destructive) { confirmsLogout = true }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .disabled(!store.capabilities.supports(.accountLogout) || store.integrationMutationID != nil)
+                    }
                 }
 
                 if store.availableRateLimitResetCredits > 0 {
@@ -1000,7 +1022,7 @@ struct DesktopSettingsPage: View {
                 SettingsRow(
                     title: accountLoginTitle(session.state),
                     detail: accountLoginDetail(session),
-                    systemImage: "safari"
+                    systemImage: "globe"
                 ) {
                     if case .awaitingUser = session.state {
                         Button("Cancel") { store.cancelAccountLogin() }
@@ -1300,7 +1322,7 @@ struct DesktopSettingsPage: View {
     private func accountLoginDetail(_ session: DesktopAccountLoginSession) -> String {
         switch session.state {
         case .awaitingUser:
-            return session.userCode.map { "Code: \($0)" } ?? "Complete sign-in in the secure browser window."
+            return session.userCode.map { "Code: \($0)" } ?? "Complete sign-in in Veo’s browser."
         case .completed:
             return "The local Codex account is refreshing."
         case .failed(let message):
@@ -1386,6 +1408,150 @@ struct DesktopSettingsPage: View {
             Text("—")
                 .foregroundStyle(.tertiary)
         }
+    }
+
+    private var searchEngineBinding: Binding<DesktopBrowserSearchEngine> {
+        Binding(
+            get: { DesktopBrowserSearchEngine(rawValue: searchEngineRaw) ?? .google },
+            set: { searchEngineRaw = $0.rawValue }
+        )
+    }
+
+    @ViewBuilder
+    private var browserSettings: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionTitle("Search")
+
+            SettingsPanel {
+                SettingsRow(
+                    title: "Default search engine",
+                    detail: "Used by the address bar and the new-tab start page.",
+                    systemImage: "magnifyingglass"
+                ) {
+                    Picker("Default search engine", selection: searchEngineBinding) {
+                        ForEach(DesktopBrowserSearchEngine.allCases) { engine in
+                            Text(engine.title).tag(engine)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .controlSize(.small)
+                    .frame(width: 140)
+                }
+            }
+
+            sectionTitle("Tabs")
+                .padding(.top, 16)
+
+            SettingsPanel {
+                SettingsRow(
+                    title: "Restore browser tabs",
+                    detail: "Remember each project’s Browser tab URLs after Veo relaunches.",
+                    systemImage: "rectangle.on.rectangle"
+                ) {
+                    Toggle("Restore browser tabs", isOn: $restoresBrowserTabs)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                }
+            }
+
+            sectionTitle("Passwords")
+                .padding(.top, 16)
+
+            SettingsPanel {
+                SettingsRow(
+                    title: "AutoFill passwords",
+                    detail: "Offer to save logins in iCloud Keychain and fill them on return visits.",
+                    systemImage: "key.fill"
+                ) {
+                    Toggle("AutoFill passwords", isOn: $autoFillPasswords)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                }
+
+                SettingsPanelDivider()
+
+                SettingsRow(
+                    title: "Passkeys",
+                    detail: passkeyAccess == .authorized
+                        ? "Veo can use passkeys stored in Keychain for sites in this browser."
+                        : "Allow Veo to use Keychain passkeys when a site asks to sign in.",
+                    systemImage: "person.badge.key"
+                ) {
+                    if passkeyAccess == .authorized {
+                        Text(passkeyAccess.title)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Button(passkeyAccess == .denied ? "Blocked" : "Allow…") {
+                            Task {
+                                passkeyAccess = await DesktopBrowserKeychain.requestPasskeyAccess()
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(passkeyAccess == .denied || passkeyAccess == .unavailable)
+                    }
+                }
+            }
+
+            sectionTitle("Web content")
+                .padding(.top, 16)
+
+            SettingsPanel {
+                SettingsRow(
+                    title: "Request desktop website",
+                    detail: "Ask sites for their full desktop layout instead of a compact page.",
+                    systemImage: "desktopcomputer"
+                ) {
+                    Toggle("Request desktop website", isOn: $requestDesktopSite)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                }
+
+                SettingsPanelDivider()
+
+                SettingsRow(
+                    title: "JavaScript",
+                    detail: "Allow pages to run scripts. Turning this off can break most sites.",
+                    systemImage: "curlybraces"
+                ) {
+                    Toggle("JavaScript", isOn: $javaScriptEnabled)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                }
+
+                SettingsPanelDivider()
+
+                SettingsRow(
+                    title: "Fraudulent website warning",
+                    detail: "Warn before opening sites Safari identifies as deceptive.",
+                    systemImage: "exclamationmark.shield"
+                ) {
+                    Toggle("Fraudulent website warning", isOn: $fraudulentWebsiteWarning)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                }
+
+                SettingsPanelDivider()
+
+                SettingsRow(
+                    title: "Website data",
+                    detail: "Cookies, cache, and local storage used by Veo’s browser.",
+                    systemImage: "externaldrive"
+                ) {
+                    Button("Clear…") { confirmsClearBrowserData = true }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                }
+            }
+        }
+        .onAppear { passkeyAccess = DesktopBrowserKeychain.passkeyAccess() }
     }
 
     @ViewBuilder

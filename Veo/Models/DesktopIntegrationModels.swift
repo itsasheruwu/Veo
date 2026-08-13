@@ -44,15 +44,19 @@ struct DesktopAccountLoginSession: Identifiable, Hashable {
         guard let rawType = DesktopProtocolValue.string(response, "type") else { return nil }
         let kind = DesktopAccountLoginKind(protocolValue: rawType)
         let loginID = DesktopProtocolValue.string(response, "loginId")
+            ?? DesktopProtocolValue.string(response, "login_id")
         let rawURL = DesktopProtocolValue.string(response, "authUrl")
+            ?? DesktopProtocolValue.string(response, "auth_url")
             ?? DesktopProtocolValue.string(response, "verificationUrl")
+            ?? DesktopProtocolValue.string(response, "verification_url")
         let authorizationURL = rawURL.flatMap(URL.init(string:))
 
         return DesktopAccountLoginSession(
             id: loginID ?? "immediate:\(rawType)",
             kind: kind,
             authorizationURL: authorizationURL,
-            userCode: DesktopProtocolValue.string(response, "userCode"),
+            userCode: DesktopProtocolValue.string(response, "userCode")
+                ?? DesktopProtocolValue.string(response, "user_code"),
             state: loginID == nil ? .completed : .awaitingUser
         )
     }

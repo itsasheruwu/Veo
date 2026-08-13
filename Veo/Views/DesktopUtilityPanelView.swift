@@ -22,7 +22,11 @@ struct DesktopUtilityPanelView: View {
                     presentsAIReview: $model.presentsAIReview
                 )
             case .some(.browser):
-                DesktopBrowserPanelView(model: model.browser)
+                DesktopBrowserPanelView(
+                    model: model.browser,
+                    accountLoginSession: store.accountLoginSession,
+                    onCancelAccountLogin: { store.cancelAccountLogin() }
+                )
             case .some(.files):
                 DesktopFilesPanelView(files: model.files, repository: store.gitRepository) { fileURL, workspaceURL in
                     model.openWorkspaceFile(fileURL, workspaceURL: workspaceURL)

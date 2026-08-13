@@ -7,10 +7,12 @@ import SwiftUI
 
 struct DesktopSettingsSidebarView: View {
     @Environment(\.veoAccent) private var veoAccent
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject var navigation: DesktopNavigationState
     @AppStorage(DesktopAppearancePreferences.leftSidebarMaterialKey) private var sidebarMaterialRaw =
         DesktopSidebarMaterial.solid.rawValue
     @State private var isBackHovered = false
+    @State private var backChevronOffset: CGFloat = 0
 
     var body: some View {
         VStack(spacing: 0) {
@@ -34,19 +36,22 @@ struct DesktopSettingsSidebarView: View {
 
             Divider()
 
-            Button {
-                navigation.showWorkspace()
-            } label: {
-                Label("Back", systemImage: "chevron.backward")
-                    .font(.system(size: 12.5, weight: .medium))
-                    .padding(.horizontal, 9)
-                    .frame(height: 34)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
-                    .background(
-                        Color.primary.opacity(isBackHovered ? 0.07 : 0),
-                        in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    )
+            Button(action: goBackToWorkspace) {
+                Label {
+                    Text("Back")
+                } icon: {
+                    Image(systemName: "chevron.backward")
+                        .offset(x: backChevronOffset)
+                }
+                .font(.system(size: 12.5, weight: .medium))
+                .padding(.horizontal, 9)
+                .frame(height: 34)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .background(
+                    Color.primary.opacity(isBackHovered ? 0.07 : 0),
+                    in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                )
             }
             .buttonStyle(.plain)
             .padding(.horizontal, 9)
@@ -61,6 +66,19 @@ struct DesktopSettingsSidebarView: View {
         }
         .desktopSidebarChrome(DesktopSidebarMaterial(rawValue: sidebarMaterialRaw) ?? .solid)
         .ignoresSafeArea(.container, edges: .top)
+    }
+
+    private func goBackToWorkspace() {
+        guard !reduceMotion else {
+            navigation.showWorkspace()
+            return
+        }
+        withAnimation(.easeOut(duration: 0.14)) {
+            backChevronOffset = -5
+        } completion: {
+            backChevronOffset = 0
+            navigation.showWorkspace()
+        }
     }
 
     private func categoryButton(_ category: DesktopSettingsCategory) -> some View {
@@ -761,9 +779,7 @@ struct DesktopSettingsPage: View {
 
                     SettingsRow(
                         title: "Install automatically",
-                        detail: updateService.canInstallInPlace
-                            ? "Download and install updates without asking. Veo asks before relaunching."
-                            : "This build runs from a location Veo cannot replace, so updates open the release page instead.",
+                        detail: "Download and install updates without asking. Veo asks before relaunching.",
                         systemImage: "square.and.arrow.down",
                         nestDepth: 1,
                         nestStyle: .leaf
@@ -772,7 +788,7 @@ struct DesktopSettingsPage: View {
                             .labelsHidden()
                             .toggleStyle(.switch)
                             .controlSize(.small)
-                            .disabled(!updateService.automaticChecks || !updateService.canInstallInPlace)
+                            .disabled(!updateService.automaticChecks || !updateService.canInstallUpdates)
                     }
                 }
 
@@ -2012,9 +2028,10 @@ struct DesktopSettingsPage: View {
         case .checking:
             return "Checking for a newer release…"
         case let .downloading(progress):
-            return progress >= 1
-                ? "Installing Veo \(updateService.availableRelease?.version ?? "")…"
-                : "Downloading Veo \(updateService.availableRelease?.version ?? "")…"
+            let percent = Int((progress * 100).rounded())
+            return "Downloading Veo \(updateService.availableRelease?.version ?? "")… \(percent)%"
+        case .installing:
+            return "Installing Veo \(updateService.availableRelease?.version ?? "")…"
         case let .available(release):
             return "Veo \(release.version) is available. You have \(updateService.currentVersion)."
         case let .readyToRelaunch(release):
@@ -2040,7 +2057,7 @@ struct DesktopSettingsPage: View {
 
     private var updateStatusSymbol: String {
         switch updateService.phase {
-        case .checking, .downloading: return "arrow.triangle.2.circlepath"
+        case .checking, .downloading, .installing: return "arrow.triangle.2.circlepath"
         case .available: return "arrow.down.circle.fill"
         case .readyToRelaunch: return "arrow.clockwise.circle.fill"
         case .failed: return "exclamationmark.triangle.fill"
@@ -2052,7 +2069,7 @@ struct DesktopSettingsPage: View {
         switch updateService.phase {
         case .available, .readyToRelaunch: return accentColor
         case .failed: return .orange
-        case .checking, .downloading: return .secondary
+        case .checking, .downloading, .installing: return .secondary
         case .idle, .upToDate: return .green
         }
     }
@@ -2065,9 +2082,7 @@ struct DesktopSettingsPage: View {
                 Button("Skip") { updateService.skipAvailableVersion() }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
-                Button(updateService.canInstallInPlace && release.downloadURL != nil
-                    ? "Install"
-                    : "Download") {
+                Button("Install") {
                     updateService.installUpdate(release)
                 }
                 .buttonStyle(.borderedProminent)
@@ -2077,12 +2092,10 @@ struct DesktopSettingsPage: View {
             Button("Relaunch") { updateService.relaunch() }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
-        case .downloading, .checking:
+        case .downloading, .checking, .installing:
             ProgressView().controlSize(.small)
         case .failed, .idle, .upToDate:
-            Button("Release Notes") { updateService.openReleasePage() }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
+            EmptyView()
         }
     }
 }

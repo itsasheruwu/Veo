@@ -39,13 +39,13 @@
     <div class="meta">
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
         <span class="tag">Latest</span>
-        <strong style="font-size:20px;letter-spacing:-.02em">Veo 1.7</strong>
+        <strong style="font-size:20px;letter-spacing:-.02em">Veo 1.8</strong>
         <span class="faint">· 13 Aug 2026</span>
       </div>
-      <p class="muted" style="margin-bottom:18px;font-size:14.5px">A Safari-like in-app browser with ChatGPT sign-in, Keychain AutoFill, and a composer that still fits when the right panel is wide. macOS 14 or later.</p>
+      <p class="muted" style="margin-bottom:18px;font-size:14.5px">In-app updates that download without freezing the workspace, plus a tighter settings path. macOS 14 or later.</p>
       <div class="actions">
-        <a class="btn btn-primary" href="https://github.com/itsasheruwu/Veo/releases/download/v1.7.0/Veo-1.7-macOS-universal.dmg">Download DMG · 11.1 MB</a>
-        <a class="btn btn-ghost" href="https://github.com/itsasheruwu/Veo/releases/download/v1.7.0/Veo-1.7-macOS-universal.pkg">Installer PKG · 9.7 MB</a>
+        <a class="btn btn-primary" href="https://github.com/itsasheruwu/Veo/releases/download/v1.8.0/Veo-1.8-macOS-universal.dmg">Download DMG · 11.1 MB</a>
+        <a class="btn btn-ghost" href="https://github.com/itsasheruwu/Veo/releases/download/v1.8.0/Veo-1.8-macOS-universal.pkg">Installer PKG · 9.7 MB</a>
         <a class="btn btn-ghost" href="changelog.html">Release notes</a>
       </div>
     </div>
@@ -77,10 +77,12 @@
   <div class="wrap">
     <div class="section-label">Verify</div>
     <h2>Checksums</h2>
-    <p class="lede mt-32">Compare before you open. Run <code>shasum -a 256 ~/Downloads/Veo-1.7-macOS-universal.dmg</code> and match the digest below.</p>
+      <p class="lede mt-32">Compare before you open. Run <code>shasum -a 256 ~/Downloads/Veo-1.8-macOS-universal.dmg</code> and match the digest below.</p>
     <table class="table mt-32">
       <thead><tr><th>File</th><th>SHA-256</th></tr></thead>
       <tbody>
+        <tr><td>Veo-1.8 · DMG</td><td class="hash">4ef631195bcfb7b5abf5339d8949d33f4e085fad08b13dbbdbf860699f9560e6</td></tr>
+        <tr><td>Veo-1.8 · PKG</td><td class="hash">2fa7a57e5a21a37d5934a9f25117b99c22451754419c5a49da92d3777dc99172</td></tr>
         <tr><td>Veo-1.7 · DMG</td><td class="hash">44fcc1a1f20d879143578d3d8a4266430b3c9a1b46db1b2a488e93ca4605a864</td></tr>
         <tr><td>Veo-1.7 · PKG</td><td class="hash">a9afb21732da1bcd7d45425c036c449cdb5ef9b408acac1871072f450d700f9d</td></tr>
         <tr><td>Veo-1.6 · DMG</td><td class="hash">03ffd7abb340eaf19ff3752e53bede8ebcea73266761a4f564d819dbe8e90b8f</td></tr>
@@ -106,7 +108,9 @@
       <p class="lede mt-32">Since 1.2, Veo checks GitHub for new releases on its own and shows the status in the sidebar above the runtime row.</p>
       <ul class="bullets mt-32">
         <li>Automatic checks are on by default.</li>
-        <li>Automatic installs stay opt-in, and are unavailable when the running bundle can't be replaced in place.</li>
+        <li>Automatic installs stay opt-in.</li>
+        <li>Downloads run in the background with progress in the sidebar, and never open the GitHub release page to finish.</li>
+        <li>If the running copy can’t be replaced, Veo installs into Applications instead.</li>
         <li>Downloads are code-signature verified before atomically replacing the installed app.</li>
       </ul>
       <p class="faint mt-32">Settings → Updates.</p>
@@ -137,6 +141,14 @@ open /tmp/veo-derived/Build/Products/Debug/Veo.app</pre>
     <table class="table mt-32">
       <thead><tr><th>Version</th><th>Released</th><th>Highlight</th><th>Files</th></tr></thead>
       <tbody>
+        <tr>
+          <td>1.7</td><td>13 Aug 2026</td><td>In-app browser and ChatGPT sign-in</td>
+          <td><a href="https://github.com/itsasheruwu/Veo/releases/tag/v1.7.0" style="color:var(--accent)">Release</a></td>
+        </tr>
+        <tr>
+          <td>1.6</td><td>13 Aug 2026</td><td>Utility panel with Review, Browser, and Files</td>
+          <td><a href="https://github.com/itsasheruwu/Veo/releases/tag/v1.6.0" style="color:var(--accent)">Release</a></td>
+        </tr>
         <tr>
           <td>1.5</td><td>11 Aug 2026</td><td>Notification materials and faster chats</td>
           <td><a href="https://github.com/itsasheruwu/Veo/releases/tag/v1.5.0" style="color:var(--accent)">Release</a></td>

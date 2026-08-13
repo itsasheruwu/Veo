@@ -22,6 +22,7 @@ enum DesktopUpdatePhase: Equatable {
     case upToDate
     case available(DesktopUpdateRelease)
     case downloading(Double)
+    case installing
     case readyToRelaunch(DesktopUpdateRelease)
     case failed(String)
 }
@@ -46,24 +47,31 @@ final class DesktopUpdateService: ObservableObject {
     private let session: URLSession
     private var timer: Timer?
     private var activeTask: Task<Void, Never>?
+    private var relaunchURL = Bundle.main.bundleURL
+    private var installingRelease: DesktopUpdateRelease?
 
-    /// Only bundles the user actually installed can be replaced in place; a build
-    /// running from DerivedData or a read-only mount falls back to the release page.
-    var canInstallInPlace: Bool {
-        let bundleURL = Bundle.main.bundleURL
-        guard bundleURL.pathExtension == "app" else { return false }
-        return FileManager.default.isWritableFile(atPath: bundleURL.deletingLastPathComponent().path)
+    /// True when Veo can write the running bundle or `/Applications`.
+    var canInstallUpdates: Bool {
+        Self.isWritableInstallLocation(Self.preferredInstallURL())
     }
 
     init(
         defaults: UserDefaults = .standard,
         feedURL: URL = URL(string: "https://api.github.com/repos/itsasheruwu/Veo/releases/latest")!,
-        session: URLSession = .shared
+        session: URLSession? = nil
     ) {
         DesktopUpdatePreferences.registerDefaults(defaults)
         self.defaults = defaults
         self.feedURL = feedURL
-        self.session = session
+        if let session {
+            self.session = session
+        } else {
+            let configuration = URLSessionConfiguration.default
+            configuration.waitsForConnectivity = true
+            configuration.timeoutIntervalForRequest = 60
+            configuration.timeoutIntervalForResource = 30 * 60
+            self.session = URLSession(configuration: configuration)
+        }
         self.currentVersion = Bundle.main
             .object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
         self.automaticChecks = defaults.bool(forKey: DesktopUpdatePreferences.automaticChecksKey)
@@ -78,20 +86,23 @@ final class DesktopUpdateService: ObservableObject {
     var availableRelease: DesktopUpdateRelease? {
         switch phase {
         case let .available(release), let .readyToRelaunch(release): return release
-        default: return nil
+        default: return installingRelease
         }
     }
 
     var isBusy: Bool {
         switch phase {
-        case .checking, .downloading: return true
+        case .checking, .downloading, .installing: return true
         default: return false
         }
     }
 
     func checkForUpdates(userInitiated: Bool) {
         guard activeTask == nil else { return }
-        if case .downloading = phase { return }
+        switch phase {
+        case .downloading, .installing: return
+        default: break
+        }
         phase = .checking
         activeTask = Task { [weak self] in
             guard let self else { return }
@@ -111,7 +122,7 @@ final class DesktopUpdateService: ObservableObject {
                     return
                 }
                 self.phase = .available(release)
-                if self.automaticInstall, self.canInstallInPlace, release.downloadURL != nil {
+                if self.automaticInstall, self.canInstallUpdates, release.downloadURL != nil {
                     self.installUpdate(release)
                 }
             } catch is CancellationError {
@@ -128,40 +139,46 @@ final class DesktopUpdateService: ObservableObject {
         phase = .upToDate
     }
 
-    func openReleasePage() {
-        let url = availableRelease?.pageURL
-            ?? URL(string: "https://github.com/itsasheruwu/Veo/releases/latest")!
-        NSWorkspace.shared.open(url)
-    }
-
     func installUpdate(_ release: DesktopUpdateRelease) {
-        guard activeTask == nil, let downloadURL = release.downloadURL else {
-            openReleasePage()
+        guard activeTask == nil else { return }
+        guard let downloadURL = release.downloadURL else {
+            phase = .failed("This release does not include a downloadable Veo disk image.")
             return
         }
-        guard canInstallInPlace else {
-            openReleasePage()
+        let installURL = Self.preferredInstallURL()
+        guard Self.isWritableInstallLocation(installURL) else {
+            phase = .failed("Veo needs write access to Applications to install this update.")
             return
         }
+
+        installingRelease = release
         phase = .downloading(0)
+        let userAgent = "Veo/\(currentVersion)"
         activeTask = Task { [weak self] in
             guard let self else { return }
             defer { self.activeTask = nil }
             do {
-                let archiveURL = try await self.download(from: downloadURL)
+                let archiveURL = try await self.download(from: downloadURL, userAgent: userAgent)
                 defer { try? FileManager.default.removeItem(at: archiveURL.deletingLastPathComponent()) }
-                try await self.replaceRunningBundle(withDiskImageAt: archiveURL)
+                self.phase = .installing
+                let installedURL = try await Task.detached(priority: .userInitiated) {
+                    try Self.replaceRunningBundle(withDiskImageAt: archiveURL, installingAt: installURL)
+                }.value
+                self.relaunchURL = installedURL
+                self.installingRelease = nil
                 self.phase = .readyToRelaunch(release)
             } catch is CancellationError {
+                self.installingRelease = nil
                 self.phase = .available(release)
             } catch {
+                self.installingRelease = nil
                 self.phase = .failed(error.localizedDescription)
             }
         }
     }
 
     func relaunch() {
-        let bundleURL = Bundle.main.bundleURL
+        let bundleURL = relaunchURL
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.createsNewApplicationInstance = true
         NSWorkspace.shared.openApplication(at: bundleURL, configuration: configuration) { _, _ in
@@ -211,32 +228,91 @@ final class DesktopUpdateService: ObservableObject {
         )
     }
 
-    private func download(from url: URL) async throws -> URL {
-        let (temporaryURL, response) = try await session.download(from: url)
-        if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-            throw NSError(
-                domain: "VeoUpdates",
-                code: http.statusCode,
-                userInfo: [NSLocalizedDescriptionKey: "The update download failed (HTTP \(http.statusCode))."]
-            )
-        }
+    private func download(from url: URL, userAgent: String) async throws -> URL {
         let stagingURL = try FileManager.default.url(
             for: .itemReplacementDirectory,
             in: .userDomainMask,
-            appropriateFor: Bundle.main.bundleURL,
+            appropriateFor: FileManager.default.homeDirectoryForCurrentUser,
             create: true
         )
         let destination = stagingURL.appendingPathComponent("Veo-update.dmg")
-        try FileManager.default.moveItem(at: temporaryURL, to: destination)
-        phase = .downloading(1)
+        let onProgress: @Sendable (Double) -> Void = { [weak self] fraction in
+            Task { @MainActor in
+                guard let self, case .downloading = self.phase else { return }
+                self.phase = .downloading(fraction)
+            }
+        }
+        try await Task.detached(priority: .userInitiated) {
+            try await Self.downloadDiskImage(
+                from: url,
+                userAgent: userAgent,
+                destination: destination,
+                onProgress: onProgress
+            )
+        }.value
         return destination
+    }
+
+    nonisolated private static func downloadDiskImage(
+        from url: URL,
+        userAgent: String,
+        destination: URL,
+        onProgress: @escaping @Sendable (Double) -> Void
+    ) async throws {
+        var request = URLRequest(url: url)
+        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue("application/octet-stream", forHTTPHeaderField: "Accept")
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.timeoutInterval = 300
+
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            let delegate = UpdateDownloadDelegate(
+                destination: destination,
+                onProgress: onProgress,
+                continuation: continuation
+            )
+            let configuration = URLSessionConfiguration.ephemeral
+            configuration.timeoutIntervalForRequest = 60
+            configuration.timeoutIntervalForResource = 30 * 60
+            let queue = OperationQueue()
+            queue.name = "com.ash.Veo.update-download"
+            queue.maxConcurrentOperationCount = 1
+            queue.qualityOfService = .userInitiated
+            let session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: queue)
+            delegate.session = session
+            session.downloadTask(with: request).resume()
+        }
     }
 
     // MARK: - Install
 
-    private func replaceRunningBundle(withDiskImageAt imageURL: URL) async throws {
-        let bundleURL = Bundle.main.bundleURL
-        let mountPoint = try Self.run(
+    nonisolated private static func preferredInstallURL() -> URL {
+        let current = Bundle.main.bundleURL
+        let parent = current.deletingLastPathComponent()
+        if current.pathExtension == "app", isWritableInstallLocation(current) {
+            // A read-only disk image is not a lasting install location.
+            let parentPath = parent.path
+            if !parentPath.hasPrefix("/Volumes/") {
+                return current
+            }
+        }
+        return URL(fileURLWithPath: "/Applications/Veo.app")
+    }
+
+    nonisolated private static func isWritableInstallLocation(_ bundleURL: URL) -> Bool {
+        let parent = bundleURL.deletingLastPathComponent()
+        if FileManager.default.fileExists(atPath: bundleURL.path) {
+            return FileManager.default.isWritableFile(atPath: parent.path)
+        }
+        return FileManager.default.isWritableFile(atPath: parent.path)
+    }
+
+    @discardableResult
+    nonisolated private static func replaceRunningBundle(
+        withDiskImageAt imageURL: URL,
+        installingAt bundleURL: URL
+    ) throws -> URL {
+        let mountPoint = try run(
             "/usr/bin/hdiutil",
             ["attach", imageURL.path, "-nobrowse", "-readonly", "-mountrandom", "/tmp"]
         )
@@ -256,7 +332,7 @@ final class DesktopUpdateService: ObservableObject {
                 userInfo: [NSLocalizedDescriptionKey: "The downloaded disk image could not be mounted."]
             )
         }
-        defer { _ = try? Self.run("/usr/bin/hdiutil", ["detach", mountPoint, "-quiet"]) }
+        defer { _ = try? run("/usr/bin/hdiutil", ["detach", mountPoint, "-quiet"]) }
 
         let contents = try FileManager.default.contentsOfDirectory(atPath: mountPoint)
         guard let appName = contents.first(where: { $0.hasSuffix(".app") }) else {
@@ -268,19 +344,19 @@ final class DesktopUpdateService: ObservableObject {
         }
         let sourceURL = URL(fileURLWithPath: mountPoint).appendingPathComponent(appName)
 
-        // Verify the new bundle is signed before it replaces the running one.
-        _ = try Self.run("/usr/bin/codesign", ["--verify", "--deep", "--strict", sourceURL.path])
+        _ = try run("/usr/bin/codesign", ["--verify", "--deep", "--strict", sourceURL.path])
 
         let stagedURL = bundleURL
             .deletingLastPathComponent()
             .appendingPathComponent(".Veo-update-\(UUID().uuidString.prefix(8)).app")
-        _ = try Self.run("/usr/bin/ditto", [sourceURL.path, stagedURL.path])
+        _ = try run("/usr/bin/ditto", [sourceURL.path, stagedURL.path])
         do {
-            try Self.swapInPlace(stagedURL: stagedURL, bundleURL: bundleURL)
+            try swapInPlace(stagedURL: stagedURL, bundleURL: bundleURL)
         } catch {
             try? FileManager.default.removeItem(at: stagedURL)
             throw error
         }
+        return bundleURL
     }
 
     /// Installs the staged bundle by renaming rather than `replaceItemAt`.
@@ -291,49 +367,43 @@ final class DesktopUpdateService: ObservableObject {
     /// permission on the enclosing folder, so they succeed where replacing the item
     /// in place does not. The previous bundle is moved aside first so a failure can
     /// still restore it, and is only deleted once the new bundle is in position.
-    private static func swapInPlace(stagedURL: URL, bundleURL: URL) throws {
+    nonisolated private static func swapInPlace(stagedURL: URL, bundleURL: URL) throws {
         let manager = FileManager.default
-        // A fixed name keeps an undeletable leftover from accumulating one copy
-        // per update; each install reuses the same slot.
         var parkedURL = bundleURL
             .deletingLastPathComponent()
             .appendingPathComponent(".Veo-previous.app")
         try? manager.removeItem(at: parkedURL)
         if manager.fileExists(atPath: parkedURL.path) {
-            // The slot is held by an undeletable root-owned leftover, so this
-            // install needs its own.
             parkedURL = bundleURL
                 .deletingLastPathComponent()
                 .appendingPathComponent(".Veo-previous-\(UUID().uuidString.prefix(8)).app")
         }
 
-        try manager.moveItem(at: bundleURL, to: parkedURL)
+        if manager.fileExists(atPath: bundleURL.path) {
+            try manager.moveItem(at: bundleURL, to: parkedURL)
+        }
         do {
             try manager.moveItem(at: stagedURL, to: bundleURL)
         } catch {
-            // Put the working install back before surfacing the failure.
-            try? manager.moveItem(at: parkedURL, to: bundleURL)
+            if manager.fileExists(atPath: parkedURL.path) {
+                try? manager.moveItem(at: parkedURL, to: bundleURL)
+            }
             throw error
         }
 
-        // A root-owned previous bundle (installed from the PKG) cannot be deleted,
-        // chmod'd, or moved by an unprivileged process. The update itself already
-        // succeeded, so the leftover is hidden and left in place rather than
-        // failing an otherwise complete install; the next PKG install or a manual
-        // delete clears it.
         try? manager.removeItem(at: parkedURL)
     }
 
     @discardableResult
-    private static func run(_ launchPath: String, _ arguments: [String]) throws -> String {
+    nonisolated private static func run(_ launchPath: String, _ arguments: [String]) throws -> String {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: launchPath)
         process.arguments = arguments
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = Pipe()
+        let stdout = Pipe()
+        process.standardOutput = stdout
+        process.standardError = FileHandle.nullDevice
         try process.run()
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let data = stdout.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         guard process.terminationStatus == 0 else {
             throw NSError(
@@ -380,5 +450,83 @@ final class DesktopUpdateService: ObservableObject {
         normalizedVersion(version)
             .split(whereSeparator: { $0 == "." || $0 == "-" })
             .compactMap { Int($0.prefix(while: \.isNumber)) }
+    }
+}
+
+/// Writes the GitHub asset to disk on a background session so the UI thread stays free.
+private final class UpdateDownloadDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+    private let destination: URL
+    private let onProgress: @Sendable (Double) -> Void
+    private var continuation: CheckedContinuation<Void, Error>?
+    var session: URLSession?
+    private var lastReported = -1.0
+    private var hasFinished = false
+
+    init(
+        destination: URL,
+        onProgress: @escaping @Sendable (Double) -> Void,
+        continuation: CheckedContinuation<Void, Error>
+    ) {
+        self.destination = destination
+        self.onProgress = onProgress
+        self.continuation = continuation
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        downloadTask: URLSessionDownloadTask,
+        didWriteData bytesWritten: Int64,
+        totalBytesWritten: Int64,
+        totalBytesExpectedToWrite: Int64
+    ) {
+        guard totalBytesExpectedToWrite > 0 else { return }
+        let fraction = min(1, Double(totalBytesWritten) / Double(totalBytesExpectedToWrite))
+        guard fraction - lastReported >= 0.01 || fraction >= 1 else { return }
+        lastReported = fraction
+        onProgress(fraction)
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        downloadTask: URLSessionDownloadTask,
+        didFinishDownloadingTo location: URL
+    ) {
+        do {
+            if let http = downloadTask.response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+                throw NSError(
+                    domain: "VeoUpdates",
+                    code: http.statusCode,
+                    userInfo: [NSLocalizedDescriptionKey: "The update download failed (HTTP \(http.statusCode))."]
+                )
+            }
+            if FileManager.default.fileExists(atPath: destination.path) {
+                try FileManager.default.removeItem(at: destination)
+            }
+            try FileManager.default.copyItem(at: location, to: destination)
+            finish(.success(()))
+        } catch {
+            finish(.failure(error))
+        }
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        if let error {
+            finish(.failure(error))
+        }
+    }
+
+    private func finish(_ result: Result<Void, Error>) {
+        guard !hasFinished else { return }
+        hasFinished = true
+        session?.finishTasksAndInvalidate()
+        session = nil
+        switch result {
+        case .success:
+            onProgress(1)
+            continuation?.resume(returning: ())
+        case .failure(let error):
+            continuation?.resume(throwing: error)
+        }
+        continuation = nil
     }
 }

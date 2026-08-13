@@ -1231,6 +1231,7 @@ private struct DesktopPendingRequestView: View {
 
 private struct DesktopSidebarView: View {
     @Environment(\.veoAccent) private var veoAccent
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @EnvironmentObject private var updateService: DesktopUpdateService
     @ObservedObject var store: DesktopCodexStore
     let openSettings: () -> Void
@@ -1249,6 +1250,7 @@ private struct DesktopSidebarView: View {
     @State private var forkTarget: DesktopThread?
     @State private var deleteTarget: DesktopThread?
     @State private var expandedAgentThreadIDs = Set<String>()
+    @State private var settingsGearTurns = 0
     @FocusState private var searchFocused: Bool
     @FocusState private var focusedProjectPath: String?
 
@@ -1773,6 +1775,7 @@ private struct DesktopSidebarView: View {
             .fill(store.runtimeState.isReady ? Color.green : (store.runtimeState == .starting ? Color.orange : Color.red))
             .frame(width: 8, height: 8)
             .overlay(Circle().stroke(.white.opacity(0.7), lineWidth: 1))
+            .frame(width: 14, height: 14, alignment: .center)
             .help(store.runtimeState.title)
             .accessibilityLabel("Codex runtime")
             .accessibilityValue(store.runtimeState.title)
@@ -1894,40 +1897,57 @@ private struct DesktopSidebarView: View {
     private var sidebarFooter: some View {
         VStack(spacing: 0) {
             Divider()
-            updateStatusRow
-            HStack(spacing: 10) {
-                Button {
-                    if store.runtimeState.isReady {
-                        store.refreshThreads()
-                    } else {
-                        store.reconnect()
+            VStack(spacing: 0) {
+                updateStatusRow
+                HStack(spacing: 8) {
+                    Button {
+                        if store.runtimeState.isReady {
+                            store.refreshThreads()
+                        } else {
+                            store.reconnect()
+                        }
+                    } label: {
+                        HStack(spacing: 8) {
+                            runtimeDot
+                            Text(store.runtimeState.title)
+                                .font(.system(size: 11.5, weight: .medium))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        .contentShape(Rectangle())
                     }
-                } label: {
-                    HStack(spacing: 8) {
-                        runtimeDot
-                        Text(store.runtimeState.title)
-                            .font(.system(size: 11.5, weight: .medium))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
+                    .buttonStyle(.plain)
+                    .help(store.runtimeState.isReady ? "Refresh chats" : "Reconnect runtime")
+                    .accessibilityLabel(store.runtimeState.isReady ? "Refresh chats" : "Reconnect runtime")
+
+                    Spacer(minLength: 8)
+
+                    Button(action: openSettingsFromGear) {
+                        Image(systemName: "gearshape")
+                            .font(.system(size: 13))
+                            .rotationEffect(.degrees(Double(settingsGearTurns) * 360))
+                            .frame(width: 26, height: 26, alignment: .trailing)
                     }
-                    .contentShape(Rectangle())
+                    .buttonStyle(.plain)
+                    .help("Settings")
+                    .accessibilityLabel("Settings")
                 }
-                .buttonStyle(.plain)
-                .help(store.runtimeState.isReady ? "Refresh chats" : "Reconnect runtime")
-                .accessibilityLabel(store.runtimeState.isReady ? "Refresh chats" : "Reconnect runtime")
-
-                Spacer(minLength: 8)
-
-                Button(action: openSettings) {
-                    Image(systemName: "gearshape")
-                        .font(.system(size: 13))
-                        .frame(width: 26, height: 26)
-                }
-                .buttonStyle(.plain)
-                .help("Settings")
-                .accessibilityLabel("Settings")
+                .padding(.bottom, DesktopTheme.spaceM)
             }
-            .padding(DesktopTheme.spaceM)
+            .padding(.horizontal, DesktopTheme.spaceM)
+            .padding(.top, 9)
+        }
+    }
+
+    private func openSettingsFromGear() {
+        guard !reduceMotion else {
+            openSettings()
+            return
+        }
+        withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) {
+            settingsGearTurns += 1
+        } completion: {
+            openSettings()
         }
     }
 
@@ -1939,12 +1959,8 @@ private struct DesktopSidebarView: View {
             case .readyToRelaunch:
                 updateService.relaunch()
             case let .available(release):
-                if updateService.canInstallInPlace, release.downloadURL != nil {
-                    updateService.installUpdate(release)
-                } else {
-                    openUpdates()
-                }
-            case .checking, .downloading:
+                updateService.installUpdate(release)
+            case .checking, .downloading, .installing:
                 openUpdates()
             default:
                 updateService.checkForUpdates(userInitiated: true)
@@ -1952,13 +1968,14 @@ private struct DesktopSidebarView: View {
         } label: {
             HStack(spacing: 8) {
                 updateIcon
-                if case let .downloading(progress) = updateService.phase, progress < 1 {
+                switch updateService.phase {
+                case .downloading, .installing:
                     DesktopShimmerText(
                         text: updateStatusTitle,
                         font: .system(size: 11.5, weight: .medium),
                         isActive: true
                     )
-                } else {
+                default:
                     Text(updateStatusTitle)
                         .font(.system(size: 11.5, weight: .medium))
                         .foregroundStyle(updateIsActionable ? veoAccent : .secondary)
@@ -1969,6 +1986,7 @@ private struct DesktopSidebarView: View {
                     Image(systemName: "chevron.right")
                         .font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(.tertiary)
+                        .frame(width: 26, height: 26, alignment: .trailing)
                 }
                 .buttonStyle(.plain)
                 .help("Update settings")
@@ -1977,8 +1995,6 @@ private struct DesktopSidebarView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .padding(.horizontal, DesktopTheme.spaceM)
-        .padding(.top, 9)
         .help(updateStatusHelp)
         .accessibilityLabel("Software update")
         .accessibilityValue(updateStatusTitle)
@@ -1993,28 +2009,31 @@ private struct DesktopSidebarView: View {
 
     @ViewBuilder
     private var updateIcon: some View {
-        switch updateService.phase {
-        case .checking:
-            ProgressView()
-                .controlSize(.mini)
-                .frame(width: 8, height: 8)
-        case .downloading:
-            Image(systemName: "arrow.down.circle")
-                .font(.system(size: 10.5, weight: .semibold))
-                .foregroundStyle(veoAccent)
-        case .available, .readyToRelaunch:
-            Circle()
-                .fill(veoAccent)
-                .frame(width: 8, height: 8)
-        case .failed:
-            Image(systemName: "exclamationmark.circle")
-                .font(.system(size: 10.5, weight: .semibold))
-                .foregroundStyle(.orange)
-        case .idle, .upToDate:
-            Image(systemName: "checkmark.circle")
-                .font(.system(size: 10.5, weight: .semibold))
-                .foregroundStyle(.secondary)
+        Group {
+            switch updateService.phase {
+            case .checking:
+                ProgressView()
+                    .controlSize(.mini)
+                    .frame(width: 8, height: 8)
+            case .downloading, .installing:
+                Image(systemName: "arrow.down.circle")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(veoAccent)
+            case .available, .readyToRelaunch:
+                Circle()
+                    .fill(veoAccent)
+                    .frame(width: 8, height: 8)
+            case .failed:
+                Image(systemName: "exclamationmark.circle")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(.orange)
+            case .idle, .upToDate:
+                Image(systemName: "checkmark.circle")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
         }
+        .frame(width: 14, height: 14, alignment: .center)
     }
 
     private var updateStatusTitle: String {
@@ -2022,7 +2041,9 @@ private struct DesktopSidebarView: View {
         case .checking:
             return "Checking for updates…"
         case let .downloading(progress):
-            return progress >= 1 ? "Installing update…" : "Downloading update…"
+            return "Downloading update… \(Int((progress * 100).rounded()))%"
+        case .installing:
+            return "Installing update…"
         case let .available(release):
             return "Update available — \(release.version)"
         case let .readyToRelaunch(release):
@@ -2039,9 +2060,7 @@ private struct DesktopSidebarView: View {
     private var updateStatusHelp: String {
         switch updateService.phase {
         case .available:
-            return updateService.canInstallInPlace
-                ? "Download and install this update"
-                : "Open the release page"
+            return "Download and install this update"
         case .readyToRelaunch:
             return "Relaunch Veo to finish updating"
         case let .failed(message):

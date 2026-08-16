@@ -31,6 +31,8 @@ struct DesktopUtilityPanelView: View {
                 DesktopFilesPanelView(files: model.files, repository: store.gitRepository) { fileURL, workspaceURL in
                     model.openWorkspaceFile(fileURL, workspaceURL: workspaceURL)
                 }
+            case .some(.subagents):
+                DesktopSubagentsPanelView(store: store, model: model)
             case .none:
                 ContentUnavailableView("No utility tab", systemImage: "rectangle.stack")
             }
@@ -85,6 +87,13 @@ struct DesktopUtilityPanelView: View {
                 } label: {
                     Label("Files", systemImage: DesktopUtilityPanelTab.files.systemImage)
                 }
+                if model.subagentsAvailable {
+                    Button {
+                        model.addTab(.subagents)
+                    } label: {
+                        Label("Subagents", systemImage: DesktopUtilityPanelTab.subagents.systemImage)
+                    }
+                }
             } label: {
                 Image(systemName: "plus")
                     .font(.system(size: 12, weight: .semibold))
@@ -116,6 +125,16 @@ struct DesktopUtilityPanelView: View {
                 title: "Files",
                 systemImage: DesktopUtilityPanelTab.files.systemImage,
                 isLoading: false,
+                isSelected: model.selectedTabID == item.id,
+                select: { model.selectTab(item.id) },
+                close: { model.closeTab(item.id) }
+            )
+            .contextMenu { tabContextMenu(item: item, index: index) }
+        case .subagents:
+            DesktopUtilityTabButton(
+                title: "Subagents",
+                systemImage: DesktopUtilityPanelTab.subagents.systemImage,
+                isLoading: store.selectedSubagents.contains(where: \.isActive),
                 isSelected: model.selectedTabID == item.id,
                 select: { model.selectTab(item.id) },
                 close: { model.closeTab(item.id) }

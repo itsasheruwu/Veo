@@ -25,7 +25,18 @@ struct DesktopThreadMinimapTurn: Identifiable, Hashable {
         from items: [DesktopTimelineItem],
         modelTopicStartIDs: Set<String>? = nil
     ) -> [Self] {
-        let rawTurns = rawTurns(from: items)
+        DesktopThreadMinimapSnapshot(items: items)
+            .topicTurns(modelTopicStartIDs: modelTopicStartIDs)
+    }
+
+    static func analysisRequest(from items: [DesktopTimelineItem]) -> DesktopThreadMinimapAnalysisRequest? {
+        DesktopThreadMinimapSnapshot(items: items).makeAnalysisRequest()
+    }
+
+    fileprivate static func topicTurns(
+        from rawTurns: [DesktopThreadMinimapTurn],
+        modelTopicStartIDs: Set<String>? = nil
+    ) -> [Self] {
 
         var topics: [DesktopThreadMinimapTurn] = []
         for turn in rawTurns {
@@ -56,8 +67,9 @@ struct DesktopThreadMinimapTurn: Identifiable, Hashable {
         }
     }
 
-    static func analysisRequest(from items: [DesktopTimelineItem]) -> DesktopThreadMinimapAnalysisRequest? {
-        let turns = rawTurns(from: items)
+    fileprivate static func analysisRequest(
+        fromRawTurns turns: [DesktopThreadMinimapTurn]
+    ) -> DesktopThreadMinimapAnalysisRequest? {
         guard turns.count > 1, turns.count <= 300 else { return nil }
         let summaries: [[String: String]] = turns.map { turn in
             [
@@ -85,7 +97,7 @@ struct DesktopThreadMinimapTurn: Identifiable, Hashable {
         )
     }
 
-    private static func rawTurns(from items: [DesktopTimelineItem]) -> [DesktopThreadMinimapTurn] {
+    fileprivate static func rawTurns(from items: [DesktopTimelineItem]) -> [DesktopThreadMinimapTurn] {
         struct Builder {
             var id: String
             var targetItemID: String
@@ -262,6 +274,30 @@ struct DesktopThreadMinimapTurn: Identifiable, Hashable {
             .split(whereSeparator: \Character.isWhitespace)
             .joined(separator: " ")
         return normalized.isEmpty ? fallback : normalized
+    }
+}
+
+/// The minimap has two consumers: deterministic rendering and optional model analysis.
+/// Build their shared turn representation once for each timeline revision so a streamed
+/// response does not normalize the full history twice from `body`.
+struct DesktopThreadMinimapSnapshot: Hashable {
+    let rawTurns: [DesktopThreadMinimapTurn]
+
+    init(items: [DesktopTimelineItem]) {
+        self.rawTurns = DesktopThreadMinimapTurn.rawTurns(from: items)
+    }
+
+    static let empty = DesktopThreadMinimapSnapshot(items: [])
+
+    func topicTurns(modelTopicStartIDs: Set<String>?) -> [DesktopThreadMinimapTurn] {
+        DesktopThreadMinimapTurn.topicTurns(
+            from: rawTurns,
+            modelTopicStartIDs: modelTopicStartIDs
+        )
+    }
+
+    func makeAnalysisRequest() -> DesktopThreadMinimapAnalysisRequest? {
+        DesktopThreadMinimapTurn.analysisRequest(fromRawTurns: rawTurns)
     }
 }
 

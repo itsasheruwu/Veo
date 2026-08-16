@@ -3,6 +3,7 @@
 // Layer: Desktop app view
 
 import AppKit
+import ServiceManagement
 import SwiftUI
 
 struct DesktopSettingsSidebarView: View {
@@ -156,6 +157,7 @@ struct DesktopSettingsPage: View {
     @AppStorage(DesktopAppearancePreferences.threadMinimapVisibleKey) private var showsThreadMinimap = true
     @AppStorage(DesktopAppearancePreferences.threadMinimapMaterialKey) private var threadMinimapMaterialRaw =
         DesktopMinimapMaterial.liquidGlass.rawValue
+    @AppStorage(DesktopComposerPreferences.showsTurnStatusKey) private var showsTurnStatus = true
     @AppStorage(DesktopComposerPreferences.showsContextWindowUsageKey) private var showsContextWindowUsage = false
     @AppStorage(DesktopComposerPreferences.contextWindowUsageStyleKey) private var contextWindowUsageStyleRaw =
         DesktopContextWindowUsageStyle.percent.rawValue
@@ -166,6 +168,9 @@ struct DesktopSettingsPage: View {
     @AppStorage(DesktopBrowserPreferences.javaScriptEnabledKey) private var javaScriptEnabled = true
     @AppStorage(DesktopBrowserPreferences.fraudulentWebsiteWarningKey) private var fraudulentWebsiteWarning = true
     @AppStorage(DesktopBrowserPreferences.autoFillPasswordsKey) private var autoFillPasswords = true
+    @AppStorage(DesktopAutoContinuationPreferences.enabledByDefaultKey) private var autoContinueUsageLimits = false
+    @AppStorage(DesktopAutoContinuationPreferences.wakePolicyKey) private var autoContinueWakePolicyRaw =
+        DesktopAutoContinuationWakePolicy.nextLaunch.rawValue
     @State private var apiKey = ""
     @State private var passkeyAccess = DesktopBrowserKeychain.passkeyAccess()
     @State private var confirmsLogout = false
@@ -177,6 +182,16 @@ struct DesktopSettingsPage: View {
 
     private var accentColor: Color {
         DesktopAppearancePreferences.color(fromHex: accentColorHex) ?? DesktopTheme.accent
+    }
+
+    private var autoContinueWakePolicyBinding: Binding<DesktopAutoContinuationWakePolicy> {
+        Binding(
+            get: { DesktopAutoContinuationWakePolicy(rawValue: autoContinueWakePolicyRaw) ?? .nextLaunch },
+            set: {
+                autoContinueWakePolicyRaw = $0.rawValue
+                store.autoContinuationPreferenceDidChange()
+            }
+        )
     }
 
     private var accentColorBinding: Binding<Color> {
@@ -870,7 +885,7 @@ struct DesktopSettingsPage: View {
                         title: "Secondary limit",
                         detail: accountLimitDetail(
                             usedPercent: store.accountOverview.secondaryUsedPercent,
-                            resetsAt: nil
+                            resetsAt: store.accountOverview.secondaryResetsAt
                         ),
                         systemImage: "clock.arrow.2.circlepath"
                     ) {
@@ -887,6 +902,61 @@ struct DesktopSettingsPage: View {
                         systemImage: "sum"
                     ) {
                         EmptyView()
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    sectionTitle("Usage-limit continuation")
+                    SettingsPanel {
+                        SettingsRow(
+                            title: "Automatically continue after usage limits",
+                            detail: "Use this as the default for future interrupted turns.",
+                            systemImage: "arrow.clockwise.circle"
+                        ) {
+                            Toggle("Automatically continue", isOn: $autoContinueUsageLimits)
+                                .labelsHidden()
+                                .toggleStyle(.switch)
+                                .controlSize(.small)
+                        }
+
+                        SettingsPanelDivider()
+
+                        SettingsRow(
+                            title: "When Veo is closed",
+                            detail: autoContinueWakePolicyBinding.wrappedValue == .wakeQuietly
+                                ? "Allow a bundled helper to wake Veo without showing its window."
+                                : "Pending work resumes the next time Veo opens.",
+                            systemImage: "moon.zzz"
+                        ) {
+                            Picker("When Veo is closed", selection: autoContinueWakePolicyBinding) {
+                                ForEach(DesktopAutoContinuationWakePolicy.allCases) { policy in
+                                    Text(policy.title).tag(policy)
+                                }
+                            }
+                            .labelsHidden()
+                            .frame(width: 190)
+                        }
+                    }
+
+                    if let message = store.autoContinuationHelperMessage {
+                        HStack(spacing: 8) {
+                            Label(message, systemImage: "exclamationmark.triangle")
+                                .font(.system(size: 11.5))
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Button("Open Login Items") { store.openAutoContinuationLoginItemsSettings() }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                        }
+                    } else if autoContinueWakePolicyBinding.wrappedValue == .wakeQuietly {
+                        Label(
+                            store.autoContinuationHelperStatus == .enabled
+                                ? "Quiet wake is ready. The helper never runs Codex or edits projects."
+                                : "The helper registers only while an auto-continuation is pending.",
+                            systemImage: "checkmark.shield"
+                        )
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(.secondary)
                     }
                 }
 
@@ -1777,13 +1847,12 @@ struct DesktopSettingsPage: View {
                         detail: windowMaterialBinding.wrappedValue.title,
                         systemImage: "macwindow"
                     ) {
-                        Picker("Theme material", selection: windowMaterialBinding) {
-                            ForEach(DesktopWindowMaterial.allCases) { material in
-                                Text(material.title).tag(material)
-                            }
-                        }
-                        .labelsHidden()
-                        .pickerStyle(.segmented)
+                        SettingsSegmentedControl(
+                            "Theme material",
+                            options: DesktopWindowMaterial.allCases,
+                            selection: windowMaterialBinding,
+                            title: \.title
+                        )
                         .frame(maxWidth: 280)
                     }
                 }
@@ -1813,13 +1882,12 @@ struct DesktopSettingsPage: View {
                         detail: leftSidebarMaterialBinding.wrappedValue.title,
                         systemImage: "sidebar.leading"
                     ) {
-                        Picker("Left sidebar material", selection: leftSidebarMaterialBinding) {
-                            ForEach(DesktopSidebarMaterial.allCases) { material in
-                                Text(material.title).tag(material)
-                            }
-                        }
-                        .labelsHidden()
-                        .pickerStyle(.segmented)
+                        SettingsSegmentedControl(
+                            "Left sidebar material",
+                            options: DesktopSidebarMaterial.allCases,
+                            selection: leftSidebarMaterialBinding,
+                            title: \.title
+                        )
                         .frame(maxWidth: 280)
                     }
 
@@ -1830,13 +1898,12 @@ struct DesktopSettingsPage: View {
                         detail: rightSidebarMaterialBinding.wrappedValue.title,
                         systemImage: "sidebar.trailing"
                     ) {
-                        Picker("Right sidebar material", selection: rightSidebarMaterialBinding) {
-                            ForEach(DesktopSidebarMaterial.allCases) { material in
-                                Text(material.title).tag(material)
-                            }
-                        }
-                        .labelsHidden()
-                        .pickerStyle(.segmented)
+                        SettingsSegmentedControl(
+                            "Right sidebar material",
+                            options: DesktopSidebarMaterial.allCases,
+                            selection: rightSidebarMaterialBinding,
+                            title: \.title
+                        )
                         .frame(maxWidth: 280)
                     }
                 }
@@ -1862,14 +1929,26 @@ struct DesktopSettingsPage: View {
                         detail: composerMaterialBinding.wrappedValue.title,
                         systemImage: "rectangle.and.pencil.and.ellipsis"
                     ) {
-                        Picker("Composer material", selection: composerMaterialBinding) {
-                            ForEach(DesktopComposerMaterial.allCases) { material in
-                                Text(material.title).tag(material)
-                            }
-                        }
-                        .labelsHidden()
-                        .pickerStyle(.segmented)
+                        SettingsSegmentedControl(
+                            "Composer material",
+                            options: DesktopComposerMaterial.allCases,
+                            selection: composerMaterialBinding,
+                            title: \.title
+                        )
                         .frame(maxWidth: 280)
+                    }
+
+                    SettingsPanelDivider()
+
+                    SettingsRow(
+                        title: "Show turn status",
+                        detail: "Display todo progress and live file-change totals above the composer.",
+                        systemImage: "checklist"
+                    ) {
+                        Toggle("Show turn status", isOn: $showsTurnStatus)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .controlSize(.small)
                     }
 
                     SettingsPanelDivider()
@@ -1893,13 +1972,12 @@ struct DesktopSettingsPage: View {
                             nestDepth: 1,
                             nestStyle: .leaf
                         ) {
-                            Picker("Usage style", selection: contextWindowUsageStyleBinding) {
-                                ForEach(DesktopContextWindowUsageStyle.allCases) { style in
-                                    Text(style.title).tag(style)
-                                }
-                            }
-                            .labelsHidden()
-                            .pickerStyle(.segmented)
+                            SettingsSegmentedControl(
+                                "Usage style",
+                                options: DesktopContextWindowUsageStyle.allCases,
+                                selection: contextWindowUsageStyleBinding,
+                                title: \.title
+                            )
                             .frame(width: 210)
                         }
                     }
@@ -1915,13 +1993,12 @@ struct DesktopSettingsPage: View {
                         detail: notificationMaterialBinding.wrappedValue.title,
                         systemImage: "bell.badge"
                     ) {
-                        Picker("Notification material", selection: notificationMaterialBinding) {
-                            ForEach(DesktopNotificationMaterial.allCases) { material in
-                                Text(material.title).tag(material)
-                            }
-                        }
-                        .labelsHidden()
-                        .pickerStyle(.segmented)
+                        SettingsSegmentedControl(
+                            "Notification material",
+                            options: DesktopNotificationMaterial.allCases,
+                            selection: notificationMaterialBinding,
+                            title: \.title
+                        )
                         .frame(maxWidth: 280)
                     }
                 }
@@ -1966,13 +2043,12 @@ struct DesktopSettingsPage: View {
                             nestDepth: 1,
                             nestStyle: .leaf
                         ) {
-                            Picker("Minimap material", selection: threadMinimapMaterialBinding) {
-                                ForEach(DesktopMinimapMaterial.allCases) { material in
-                                    Text(material.title).tag(material)
-                                }
-                            }
-                            .labelsHidden()
-                            .pickerStyle(.segmented)
+                            SettingsSegmentedControl(
+                                "Minimap material",
+                                options: DesktopMinimapMaterial.allCases,
+                                selection: threadMinimapMaterialBinding,
+                                title: \.title
+                            )
                             .frame(maxWidth: 280)
                         }
                     }
@@ -2278,6 +2354,74 @@ private struct SettingsPanel<Content: View>: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(Color.primary.opacity(0.08), lineWidth: 1)
         )
+    }
+}
+
+/// A deterministic settings segment that keeps Veo's accent selected state
+/// without relying on the native segmented picker's toggle-redraw behavior.
+private struct SettingsSegmentedControl<Option: Hashable>: View {
+    @Environment(\.veoAccent) private var veoAccent
+
+    let accessibilityLabel: String
+    let options: [Option]
+    @Binding var selection: Option
+    let title: (Option) -> String
+
+    init(
+        _ accessibilityLabel: String,
+        options: [Option],
+        selection: Binding<Option>,
+        title: @escaping (Option) -> String
+    ) {
+        self.accessibilityLabel = accessibilityLabel
+        self.options = options
+        _selection = selection
+        self.title = title
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(Array(options.enumerated()), id: \.offset) { index, option in
+                Button {
+                    selection = option
+                } label: {
+                    Text(title(option))
+                        .font(.system(size: 11, weight: selection == option ? .semibold : .medium))
+                        .foregroundStyle(selection == option ? Color.white : Color.primary)
+                        .frame(maxWidth: .infinity, minHeight: 20, maxHeight: 20)
+                        .contentShape(Rectangle())
+                        .background {
+                            if selection == option {
+                                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                    .fill(veoAccent)
+                            }
+                        }
+                        .overlay(alignment: .leading) {
+                            if index > 0,
+                               selection != option,
+                               selection != options[index - 1] {
+                                Rectangle()
+                                    .fill(Color.primary.opacity(0.16))
+                                    .frame(width: 1, height: 15)
+                            }
+                        }
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(title(option))
+                .accessibilityAddTraits(selection == option ? .isSelected : [])
+            }
+        }
+        .padding(2)
+        .background(Color.primary.opacity(0.065), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+        )
+        .transaction { transaction in
+            transaction.animation = nil
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(accessibilityLabel)
     }
 }
 

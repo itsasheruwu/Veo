@@ -35,12 +35,14 @@ Veo has no hosted backend, subscription, relay, phone companion, or bundled cred
 - Open a new project at any time; selecting a chat restores its recorded `cwd` automatically.
 - Optionally show existing Codex CLI history alongside Veo-owned chats.
 - See active work at a glance through progress states, shimmering thread titles, and reconnect-aware Stop controls.
+- Follow delegated work through live subagent summaries, transcripts, and review status without leaving the parent chat.
 
 ### A native conversation timeline
 
 - Stream responses, reasoning, plans, commands, file changes, tool calls, and structured activity without flattening their order.
 - Answer user-input requests, approvals, permission prompts, and MCP forms inside the timeline.
 - Inspect grouped activity, review current changes, compact long conversations, fork chats, and manage goals or plans.
+- Track the current plan, changed files, GPT-5.6 Auto stages, and active subagents in a compact turn-status surface above the composer.
 - Use the thread minimap to navigate long tasks by topic.
 - Show context-window usage as a percentage or token count when you want it.
 
@@ -53,7 +55,8 @@ Veo has no hosted backend, subscription, relay, phone companion, or bundled cred
 
 ### A composer that knows the workspace
 
-- Choose the model, reasoning effort, service tier, and access mode reported by the connected Codex runtime.
+- Choose Agentic, Plan, or Debug interaction, plus the model, reasoning effort, service tier, and access mode reported by the connected Codex runtime.
+- Select GPT-5.6 Auto to route implementation and review across available GPT-5.6 variants with explicit fallbacks when a lane is unavailable.
 - Attach files and structured context, mention project files, and queue or steer follow-up messages.
 - Type `/` for native commands such as `/model`, `/permissions`, `/review`, `/browser`, `/compact`, `/fork`, `/diff`, `/terminal`, and `/usage`.
 - Keep drafts tied to their chats and copy the last response as Markdown.
@@ -75,6 +78,8 @@ Claude and Codex commands are gated separately from ordinary shell commands. Whe
 ### Runtime and account visibility
 
 Veo exposes the capabilities the connected Codex CLI actually reports. Runtime settings surface managed access requirements, experimental features, hooks, thread subscriptions, integrations, and protocol activity without inventing support for unavailable features. Account settings provide local sign-in state, usage, limits, and login controls through Codex.
+
+When a turn reaches a reported usage limit, Veo can retain the interrupted turn and continue it after the reset window. Continuation is opt-in, stored locally, and can either wait for the next launch or use an approved background login item to wake Veo quietly.
 
 ## Requirements
 
@@ -186,7 +191,7 @@ Read the [Privacy Notice](Legal/PRIVACY_POLICY.md) and [Terms of Use](Legal/TERM
 
 ```text
 Veo.xcodeproj/             Xcode project and shared Veo scheme
-BuildSupport/              Bundle metadata
+BuildSupport/              Bundle metadata and background wake helper
 Veo/
   App/                     SwiftUI app entry point and scenes
   Models/                  Protocol, preference, and navigation models

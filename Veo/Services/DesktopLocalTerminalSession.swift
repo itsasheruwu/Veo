@@ -19,18 +19,28 @@ final class DesktopLocalTerminalSession: ObservableObject, Identifiable {
     @Published var tabSuffix: String = ""
 
     /// Retained raw PTY bytes so the view can restore after the panel is hidden.
-    private(set) var scrollback = Data()
     private let maxScrollbackBytes = 512_000
+    private var scrollbackChunks: [Data] = []
+    private var firstScrollbackChunkIndex = 0
+    private var scrollbackByteCount = 0
 
     private var process: Process?
     private var masterFD: Int32 = -1
     private var readSource: DispatchSourceRead?
-    private var pendingOutput = Data()
+    private var outputBuffer = DesktopTerminalOutputBuffer(maximumBytes: 256_000)
     private var flushScheduled = false
+    private var pendingTerminationStatus: Int32?
+    private var readerReachedEnd = false
     private var columns: UInt16 = 80
     private var rows: UInt16 = 24
 
     weak var outputSink: DesktopTerminalOutputSink?
+
+    init() {
+        // Resolve the full login-shell PATH before a later tab needs it, but never
+        // block the main actor or first terminal launch on a user's shell startup.
+        DesktopTerminalPATHResolver.shared.prewarm()
+    }
 
     /// Last winsize applied to the PTY (for seeding new tabs).
     var ptyColumns: Int { Int(columns) }
@@ -92,6 +102,8 @@ final class DesktopLocalTerminalSession: ObservableObject, Identifiable {
     }
 
     func terminate(clearScrollback: Bool = false) {
+        pendingTerminationStatus = nil
+        readerReachedEnd = false
         readSource?.cancel()
         readSource = nil
         if masterFD >= 0 {
@@ -105,17 +117,20 @@ final class DesktopLocalTerminalSession: ObservableObject, Identifiable {
         process = nil
         isRunning = false
         isStarting = false
-        pendingOutput.removeAll(keepingCapacity: false)
+        outputBuffer.reset()
+        outputBuffer = DesktopTerminalOutputBuffer(maximumBytes: 256_000)
         flushScheduled = false
         if clearScrollback {
-            scrollback = Data()
+            scrollbackChunks.removeAll(keepingCapacity: false)
+            firstScrollbackChunkIndex = 0
+            scrollbackByteCount = 0
             outputSink?.terminalReplaceAll(Data())
         }
     }
 
     func attach(sink: DesktopTerminalOutputSink) {
         outputSink = sink
-        sink.terminalReplaceAll(scrollback)
+        sink.terminalReplaceAll(scrollbackSnapshot())
     }
 
     func detach(sink: DesktopTerminalOutputSink) {
@@ -128,6 +143,8 @@ final class DesktopLocalTerminalSession: ObservableObject, Identifiable {
         startupError = nil
         exitStatus = nil
         isStarting = true
+        pendingTerminationStatus = nil
+        readerReachedEnd = false
 
         var master: Int32 = 0
         var slave: Int32 = 0
@@ -177,14 +194,24 @@ final class DesktopLocalTerminalSession: ObservableObject, Identifiable {
     }
 
     private func startReader(master: Int32) {
+        let outputBuffer = self.outputBuffer
         let source = DispatchSource.makeReadSource(fileDescriptor: master, queue: .global(qos: .userInteractive))
-        source.setEventHandler { [weak self] in
+        source.setEventHandler { [weak self, outputBuffer] in
             var buffer = [UInt8](repeating: 0, count: 16_384)
             let count = Darwin.read(master, &buffer, buffer.count)
-            guard count > 0 else { return }
+            guard count > 0 else {
+                let errorCode = errno
+                if count == 0 || (errorCode != EAGAIN && errorCode != EINTR) {
+                    DispatchQueue.main.async {
+                        self?.readerReachedEnd(master: master, buffer: outputBuffer)
+                    }
+                }
+                return
+            }
             let chunk = Data(buffer.prefix(count))
+            guard outputBuffer.append(chunk) else { return }
             DispatchQueue.main.async {
-                self?.enqueueOutput(chunk)
+                self?.scheduleOutputFlush(for: outputBuffer)
             }
         }
         source.setCancelHandler { }
@@ -192,42 +219,103 @@ final class DesktopLocalTerminalSession: ObservableObject, Identifiable {
         source.resume()
     }
 
-    private func enqueueOutput(_ data: Data) {
-        pendingOutput.append(data)
+    private func readerReachedEnd(master: Int32, buffer: DesktopTerminalOutputBuffer) {
+        guard masterFD == master, buffer === outputBuffer, !readerReachedEnd else { return }
+        readerReachedEnd = true
+        readSource?.cancel()
+        readSource = nil
+        if let status = pendingTerminationStatus {
+            finalizeTermination(status: status)
+        }
+    }
+
+    private func scheduleOutputFlush(for buffer: DesktopTerminalOutputBuffer) {
+        guard buffer === outputBuffer, buffer.hasPendingOutput else { return }
         guard !flushScheduled else { return }
         flushScheduled = true
         // Coalesce PTY bursts so the text view isn't rewritten per byte.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.016) { [weak self] in
-            self?.flushOutput()
+            self?.flushOutput(for: buffer)
         }
     }
 
-    private func flushOutput() {
+    private func flushOutput(for buffer: DesktopTerminalOutputBuffer) {
+        guard buffer === outputBuffer else { return }
         flushScheduled = false
-        guard !pendingOutput.isEmpty else { return }
-        let data = pendingOutput
-        pendingOutput.removeAll(keepingCapacity: true)
-        scrollback.append(data)
-        if scrollback.count > maxScrollbackBytes {
-            scrollback = Data(scrollback.suffix(maxScrollbackBytes))
-        }
+        let data = buffer.drain()
+        guard !data.isEmpty else { return }
+        appendToScrollback(data)
         outputSink?.terminalAppend(data)
     }
 
     private func handleTermination(status: Int32) {
+        process = nil
+        isRunning = false
+        isStarting = false
+        exitStatus = status
+        pendingTerminationStatus = status
+        if readerReachedEnd || readSource == nil {
+            finalizeTermination(status: status)
+        }
+    }
+
+    private func finalizeTermination(status: Int32) {
+        guard pendingTerminationStatus == status else { return }
+        pendingTerminationStatus = nil
+        // The reader has observed EOF/EIO, so all readable terminal bytes are in the
+        // synchronized buffer before it is drained and the master descriptor is closed.
+        flushOutput(for: outputBuffer)
         readSource?.cancel()
         readSource = nil
         if masterFD >= 0 {
             _ = Darwin.close(masterFD)
             masterFD = -1
         }
-        process = nil
-        isRunning = false
-        isStarting = false
-        exitStatus = status
+        outputBuffer.reset()
+        outputBuffer = DesktopTerminalOutputBuffer(maximumBytes: 256_000)
+        flushScheduled = false
+        readerReachedEnd = false
         let notice = Data("\r\n[Process exited with status \(status)]\r\n".utf8)
-        scrollback.append(notice)
+        appendToScrollback(notice)
         outputSink?.terminalAppend(notice)
+    }
+
+    private func appendToScrollback(_ data: Data) {
+        guard !data.isEmpty else { return }
+        if data.count >= maxScrollbackBytes {
+            let tail = Data(data.suffix(maxScrollbackBytes))
+            scrollbackChunks = [tail]
+            firstScrollbackChunkIndex = 0
+            scrollbackByteCount = tail.count
+            return
+        }
+
+        scrollbackChunks.append(data)
+        scrollbackByteCount += data.count
+        while scrollbackByteCount > maxScrollbackBytes,
+              firstScrollbackChunkIndex < scrollbackChunks.count {
+            let oldest = scrollbackChunks[firstScrollbackChunkIndex]
+            firstScrollbackChunkIndex += 1
+            scrollbackByteCount -= oldest.count
+        }
+        compactDiscardedScrollbackChunksIfNeeded()
+    }
+
+    private func scrollbackSnapshot() -> Data {
+        guard firstScrollbackChunkIndex < scrollbackChunks.count else { return Data() }
+        var snapshot = Data()
+        snapshot.reserveCapacity(scrollbackByteCount)
+        for chunk in scrollbackChunks[firstScrollbackChunkIndex...] {
+            snapshot.append(chunk)
+        }
+        return snapshot
+    }
+
+    private func compactDiscardedScrollbackChunksIfNeeded() {
+        guard firstScrollbackChunkIndex >= 64,
+              firstScrollbackChunkIndex * 2 >= scrollbackChunks.count else { return }
+        scrollbackChunks.removeFirst(firstScrollbackChunkIndex)
+        firstScrollbackChunkIndex = 0
     }
 
     private static func shellEnvironment() -> [String: String] {
@@ -235,7 +323,7 @@ final class DesktopLocalTerminalSession: ObservableObject, Identifiable {
         env["TERM"] = "xterm-256color"
         env["COLORTERM"] = "truecolor"
         env["LANG"] = env["LANG"] ?? "en_US.UTF-8"
-        var path = resolvedUserPATH()
+        var path = DesktopTerminalPATHResolver.shared.pathOrFallback()
         if let agentBin = DesktopTerminalPreferences.syncAgentCLIWrappers() {
             path = agentBin.path + ":" + path
         }
@@ -252,19 +340,46 @@ final class DesktopLocalTerminalSession: ObservableObject, Identifiable {
         return env
     }
 
-    private static var cachedUserPATH: String?
-    private static let pathLock = NSLock()
+}
 
-    /// Prefer the user's real login-shell PATH so Homebrew/nvm/local CLIs resolve.
-    private static func resolvedUserPATH() -> String {
-        pathLock.lock()
-        if let cachedUserPATH {
-            pathLock.unlock()
-            return cachedUserPATH
+/// Caches a login-shell PATH without ever making terminal startup wait on a
+/// user's shell configuration. It intentionally lives outside the main-actor
+/// session so the resolver can own its background work safely.
+private final class DesktopTerminalPATHResolver: @unchecked Sendable {
+    static let shared = DesktopTerminalPATHResolver()
+
+    private let lock = NSLock()
+    private var cachedPath: String?
+    private var isResolving = false
+
+    func prewarm() {
+        lock.lock()
+        guard cachedPath == nil, !isResolving else {
+            lock.unlock()
+            return
         }
-        pathLock.unlock()
+        isResolving = true
+        lock.unlock()
 
-        let fallback = defaultPATH()
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self else { return }
+            let fallback = Self.defaultPATH()
+            let resolved = self.resolveUserPATH(fallback: fallback)
+            self.lock.lock()
+            self.cachedPath = resolved
+            self.isResolving = false
+            self.lock.unlock()
+        }
+    }
+
+    func pathOrFallback() -> String {
+        lock.lock()
+        let cached = cachedPath
+        lock.unlock()
+        return cached ?? Self.defaultPATH()
+    }
+
+    private func resolveUserPATH(fallback: String) -> String {
         let process = Process()
         let pipe = Pipe()
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")
@@ -279,31 +394,25 @@ final class DesktopLocalTerminalSession: ObservableObject, Identifiable {
             "TERM": "dumb",
         ]
 
-        let resolved: String
         do {
             try process.run()
-            // Don't hang the UI if the user's shell init is slow/broken.
+            // This resolver is off-main; cap broken shell configuration without
+            // delaying the terminal UI or process startup.
             let deadline = Date().addingTimeInterval(1.5)
             while process.isRunning, Date() < deadline {
                 Thread.sleep(forTimeInterval: 0.02)
             }
             if process.isRunning {
                 process.terminate()
-                resolved = fallback
-            } else {
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                let text = String(decoding: data, as: UTF8.self)
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                resolved = text.isEmpty ? fallback : mergePATH(preferred: text, fallback: fallback)
+                return fallback
             }
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let text = String(decoding: data, as: UTF8.self)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return text.isEmpty ? fallback : Self.mergePATH(preferred: text, fallback: fallback)
         } catch {
-            resolved = fallback
+            return fallback
         }
-
-        pathLock.lock()
-        cachedUserPATH = resolved
-        pathLock.unlock()
-        return resolved
     }
 
     private static func defaultPATH() -> String {
@@ -321,7 +430,10 @@ final class DesktopLocalTerminalSession: ObservableObject, Identifiable {
             "/usr/sbin",
             "/sbin",
         ]
-        return mergePATH(preferred: extras.joined(separator: ":"), fallback: ProcessInfo.processInfo.environment["PATH"] ?? "")
+        return mergePATH(
+            preferred: extras.joined(separator: ":"),
+            fallback: ProcessInfo.processInfo.environment["PATH"] ?? ""
+        )
     }
 
     private static func mergePATH(preferred: String, fallback: String) -> String {
@@ -333,6 +445,98 @@ final class DesktopLocalTerminalSession: ObservableObject, Identifiable {
             parts.append(trimmed)
         }
         return parts.joined(separator: ":")
+    }
+}
+
+/// Bounded producer-side coalescing for a PTY read source. The read queue only
+/// posts one main-queue wakeup per burst, preventing high-output commands from
+/// filling the main queue with one task per 16 KiB read.
+private final class DesktopTerminalOutputBuffer: @unchecked Sendable {
+    private let maximumBytes: Int
+    private let lock = NSLock()
+    private var chunks: [Data] = []
+    private var firstChunkIndex = 0
+    private var byteCount = 0
+    private var flushRequested = false
+    private var didTruncate = false
+
+    init(maximumBytes: Int) {
+        self.maximumBytes = max(1, maximumBytes)
+    }
+
+    var hasPendingOutput: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return firstChunkIndex < chunks.count
+    }
+
+    /// Returns `true` only when this append needs a new main-queue wakeup.
+    func append(_ data: Data) -> Bool {
+        guard !data.isEmpty else { return false }
+        lock.lock()
+        defer { lock.unlock() }
+
+        chunks.append(data)
+        byteCount += data.count
+        while byteCount > maximumBytes, firstChunkIndex < chunks.count - 1 {
+            let oldest = chunks[firstChunkIndex]
+            firstChunkIndex += 1
+            byteCount -= oldest.count
+            didTruncate = true
+        }
+        if byteCount > maximumBytes, let newest = chunks.last {
+            let tail = Data(newest.suffix(maximumBytes))
+            chunks = [tail]
+            firstChunkIndex = 0
+            byteCount = tail.count
+            didTruncate = true
+        }
+        compactDiscardedChunksIfNeeded()
+
+        guard !flushRequested else { return false }
+        flushRequested = true
+        return true
+    }
+
+    func drain() -> Data {
+        lock.lock()
+        defer { lock.unlock() }
+
+        flushRequested = false
+        guard firstChunkIndex < chunks.count else {
+            didTruncate = false
+            return Data()
+        }
+        var output = Data()
+        let notice = didTruncate
+            ? Data("\r\n\u{001B}[0m[Terminal output truncated while Veo was catching up]\r\n".utf8)
+            : Data()
+        output.reserveCapacity(byteCount + notice.count)
+        output.append(notice)
+        for chunk in chunks[firstChunkIndex...] {
+            output.append(chunk)
+        }
+        chunks.removeAll(keepingCapacity: true)
+        firstChunkIndex = 0
+        byteCount = 0
+        didTruncate = false
+        return output
+    }
+
+    func reset() {
+        lock.lock()
+        chunks.removeAll(keepingCapacity: false)
+        firstChunkIndex = 0
+        byteCount = 0
+        flushRequested = false
+        didTruncate = false
+        lock.unlock()
+    }
+
+    private func compactDiscardedChunksIfNeeded() {
+        guard firstChunkIndex >= 64, firstChunkIndex * 2 >= chunks.count else { return }
+        chunks.removeFirst(firstChunkIndex)
+        firstChunkIndex = 0
     }
 }
 

@@ -225,7 +225,9 @@ struct DesktopComposerPayload: Identifiable, Codable, Hashable {
     let model: String?
     let reasoningEffort: String?
     let serviceTier: String?
-    let isPlanMode: Bool
+    let interactionMode: DesktopInteractionMode
+    let routingMode: DesktopModelRoutingMode
+    let autoRoutePlan: DesktopAutoRoutePlan?
 
     init(
         id: String = UUID().uuidString,
@@ -235,7 +237,9 @@ struct DesktopComposerPayload: Identifiable, Codable, Hashable {
         model: String? = nil,
         reasoningEffort: String? = nil,
         serviceTier: String? = nil,
-        isPlanMode: Bool = false,
+        interactionMode: DesktopInteractionMode = .agentic,
+        routingMode: DesktopModelRoutingMode = .direct,
+        autoRoutePlan: DesktopAutoRoutePlan? = nil,
         createdAt: Date = Date()
     ) {
         self.id = id
@@ -245,7 +249,9 @@ struct DesktopComposerPayload: Identifiable, Codable, Hashable {
         self.model = model
         self.reasoningEffort = reasoningEffort
         self.serviceTier = serviceTier
-        self.isPlanMode = isPlanMode
+        self.interactionMode = interactionMode
+        self.routingMode = routingMode
+        self.autoRoutePlan = autoRoutePlan
         self.createdAt = createdAt
     }
 
@@ -258,6 +264,9 @@ struct DesktopComposerPayload: Identifiable, Codable, Hashable {
         case model
         case reasoningEffort
         case serviceTier
+        case interactionMode
+        case routingMode
+        case autoRoutePlan
         case isPlanMode
     }
 
@@ -274,7 +283,33 @@ struct DesktopComposerPayload: Identifiable, Codable, Hashable {
         model = try container.decodeIfPresent(String.self, forKey: .model)
         reasoningEffort = try container.decodeIfPresent(String.self, forKey: .reasoningEffort)
         serviceTier = try container.decodeIfPresent(String.self, forKey: .serviceTier)
-        isPlanMode = try container.decodeIfPresent(Bool.self, forKey: .isPlanMode) ?? false
+        if let savedMode = try container.decodeIfPresent(
+            DesktopInteractionMode.self,
+            forKey: .interactionMode
+        ) {
+            interactionMode = savedMode
+        } else {
+            interactionMode = try container.decodeIfPresent(Bool.self, forKey: .isPlanMode) == true
+                ? .plan
+                : .agentic
+        }
+        routingMode = try container.decodeIfPresent(DesktopModelRoutingMode.self, forKey: .routingMode) ?? .direct
+        autoRoutePlan = try container.decodeIfPresent(DesktopAutoRoutePlan.self, forKey: .autoRoutePlan)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(text, forKey: .text)
+        try container.encode(createdAt, forKey: .createdAt)
+        try container.encode(attachments, forKey: .attachments)
+        try container.encodeIfPresent(accessMode, forKey: .accessMode)
+        try container.encodeIfPresent(model, forKey: .model)
+        try container.encodeIfPresent(reasoningEffort, forKey: .reasoningEffort)
+        try container.encodeIfPresent(serviceTier, forKey: .serviceTier)
+        try container.encode(interactionMode, forKey: .interactionMode)
+        try container.encode(routingMode, forKey: .routingMode)
+        try container.encodeIfPresent(autoRoutePlan, forKey: .autoRoutePlan)
     }
 
     var trimmedText: String {
@@ -282,9 +317,16 @@ struct DesktopComposerPayload: Identifiable, Codable, Hashable {
     }
 
     var protocolInput: [[String: Any]] {
+        protocolInput(includingDebugInstructions: false)
+    }
+
+    func protocolInput(includingDebugInstructions: Bool) -> [[String: Any]] {
         var input: [[String: Any]] = []
-        if !trimmedText.isEmpty {
-            input.append(["type": "text", "text": trimmedText])
+        let text = includingDebugInstructions && interactionMode == .debug
+            ? DesktopInteractionMode.applyingDebugInstructions(to: trimmedText)
+            : trimmedText
+        if !text.isEmpty {
+            input.append(["type": "text", "text": text])
         }
         input.append(contentsOf: attachments.compactMap(\.protocolObject))
         return input
@@ -721,6 +763,25 @@ struct DesktopTurnDiff: Equatable {
     }
 }
 
+struct DesktopTurnPlan: Equatable {
+    struct Step: Identifiable, Equatable {
+        let text: String
+        let status: String
+
+        var id: String { text }
+        var isCompleted: Bool { status == "completed" }
+        var isInProgress: Bool { status == "inProgress" }
+    }
+
+    var turnID: String?
+    var steps: [Step]
+
+    var currentStepNumber: Int {
+        guard !steps.isEmpty else { return 0 }
+        return (steps.firstIndex(where: { !$0.isCompleted }) ?? (steps.count - 1)) + 1
+    }
+}
+
 struct DesktopAccountOverview: Equatable {
     var accountType = "Signed out"
     var email: String?
@@ -729,6 +790,7 @@ struct DesktopAccountOverview: Equatable {
     var primaryUsedPercent: Int?
     var secondaryUsedPercent: Int?
     var primaryResetsAt: Date?
+    var secondaryResetsAt: Date?
     var lifetimeTokens: Int?
 }
 
@@ -795,6 +857,58 @@ struct DesktopAgentState: Hashable {
     var isActive: Bool { status == "pendingInit" || status == "running" }
 }
 
+struct DesktopCollaborationInvocation: Hashable {
+    let tool: String
+    let prompt: String?
+    let model: String?
+    let reasoningEffort: String?
+    let senderThreadID: String?
+    let receiverThreadIDs: [String]
+    let agentStates: [String: DesktopAgentState]
+
+    var humanizedTitle: String {
+        let normalized = (model ?? "").lowercased()
+        let effort = reasoningEffort.map { DesktopReasoningOption(id: $0, description: "").title } ?? ""
+        if normalized.contains("luna") { return "Luna / \(effort.nilIfEmpty ?? "Max") implementation" }
+        if normalized.contains("terra") { return "Terra / \(effort.nilIfEmpty ?? "High") escalation" }
+        if normalized.contains("sol") {
+            let isReview = prompt?.localizedCaseInsensitiveContains("review") == true
+                || prompt?.localizedCaseInsensitiveContains("VERDICT:") == true
+            return "Sol / \(effort.nilIfEmpty ?? "High") \(isReview ? "review" : "worker")"
+        }
+        return tool
+    }
+}
+
+struct DesktopSubAgentActivity: Hashable {
+    let kind: String
+    let agentThreadID: String?
+    let agentPath: String?
+
+    var isReview: Bool {
+        agentPath?.localizedCaseInsensitiveContains("review") == true
+    }
+}
+
+struct DesktopSubagentSummary: Identifiable, Hashable {
+    let id: String
+    let title: String
+    let role: String?
+    let prompt: String?
+    let state: DesktopAgentState
+    let updatedAt: Date?
+    let order: Int
+
+    var isActive: Bool { state.isActive }
+
+    var detail: String {
+        state.message?.trimmed.nilIfEmpty
+            ?? role?.trimmed.nilIfEmpty
+            ?? prompt?.firstNonemptyLine?.truncated(to: 92)
+            ?? state.displayStatus
+    }
+}
+
 struct DesktopTimelineItem: Identifiable, Hashable {
     enum Kind: String, Hashable {
         case user
@@ -817,6 +931,8 @@ struct DesktopTimelineItem: Identifiable, Hashable {
     var attachments: [DesktopComposerAttachment] = []
     var status: String?
     var agentStates: [String: DesktopAgentState] = [:]
+    var collaborationInvocation: DesktopCollaborationInvocation?
+    var subAgentActivity: DesktopSubAgentActivity?
     var toolMetadata: DesktopToolMetadata?
     var artifacts: [DesktopToolArtifact] = []
     var citations: [DesktopCitationEntry] = []
@@ -829,6 +945,17 @@ struct DesktopTimelineItem: Identifiable, Hashable {
 
         switch type {
         case "userMessage":
+            if let clientID = object.string("clientId"), clientID.hasPrefix("auto-continue-") {
+                return DesktopTimelineItem(
+                    id: "auto-continuation-\(turnID ?? clientID)",
+                    turnID: turnID,
+                    clientID: clientID,
+                    kind: .activity,
+                    title: "Auto-continued",
+                    body: "Continued after the usage limit reset.",
+                    status: "complete"
+                )
+            }
             let content = (object["content"] as? [[String: Any]]) ?? []
             let attachments = content.compactMap(DesktopComposerAttachment.parse)
             let body = content.compactMap { input -> String? in
@@ -958,27 +1085,43 @@ struct DesktopTimelineItem: Identifiable, Hashable {
                 .joined(separator: " · ")
             let body = stateSummary.nilIfEmpty
                 ?? (targets > 0 ? "\(targets) agent\(targets == 1 ? "" : "s")" : (status?.capitalized ?? "Working"))
+            let invocation = DesktopCollaborationInvocation(
+                tool: tool,
+                prompt: object.string("prompt"),
+                model: object.string("model"),
+                reasoningEffort: object.string("reasoningEffort"),
+                senderThreadID: object.string("senderThreadId"),
+                receiverThreadIDs: object["receiverThreadIds"] as? [String] ?? [],
+                agentStates: states
+            )
             return DesktopTimelineItem(
                 id: id,
                 turnID: turnID,
                 kind: .activity,
-                title: tool,
+                title: invocation.humanizedTitle,
                 body: body,
                 status: status,
                 agentStates: states,
+                collaborationInvocation: invocation,
                 toolMetadata: DesktopToolMetadata.parse(object)
             )
 
         case "subAgentActivity":
             let activity = object.string("kind") ?? "interacted"
             let agentPath = object.string("agentPath")?.nilIfEmpty
+            let subAgentActivity = DesktopSubAgentActivity(
+                kind: activity,
+                agentThreadID: object.string("agentThreadId")?.nilIfEmpty,
+                agentPath: agentPath
+            )
             return DesktopTimelineItem(
                 id: id,
                 turnID: turnID,
                 kind: .activity,
                 title: "Subagent \(activity)",
                 body: agentPath ?? object.string("agentThreadId") ?? "Agent activity",
-                status: activity
+                status: activity,
+                subAgentActivity: subAgentActivity
             )
 
         case "webSearch":

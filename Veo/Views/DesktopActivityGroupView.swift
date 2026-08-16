@@ -54,6 +54,8 @@ struct DesktopActivityGroupView: View {
     let group: DesktopActivityGroup
     let workspaceURL: URL?
     let isTurnRunning: Bool
+    var subagents: [DesktopSubagentSummary] = []
+    var onOpenSubagent: (String) -> Void = { _ in }
 
     @State private var isExpanded = false
 
@@ -151,6 +153,14 @@ struct DesktopActivityGroupView: View {
                 .accessibilityLabel("\(isExpanded ? "Collapse" : "Expand") \(group.items.count)-step work trace")
 
                 Spacer(minLength: 0)
+            }
+
+            if !subagents.isEmpty {
+                DesktopSubagentPillStrip(
+                    agents: subagents,
+                    onSelect: onOpenSubagent
+                )
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
             if isExpanded {

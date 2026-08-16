@@ -58,19 +58,39 @@ struct ComposerTextView: NSViewRepresentable {
 
         context.coordinator.parent = self
 
-        textView.font = .systemFont(ofSize: fontSize)
-        textView.placeholder = placeholder
-        textView.placeholderColor = placeholderColor
-        textView.isEditable = isEditable
-        textView.isSelectable = true
+        var needsDisplay = false
+        let desiredFont = NSFont.systemFont(ofSize: fontSize)
+        if textView.font?.isEqual(desiredFont) != true {
+            textView.font = desiredFont
+            needsDisplay = true
+        }
+        if textView.placeholder != placeholder {
+            textView.placeholder = placeholder
+            needsDisplay = true
+        }
+        if textView.placeholderColor.isEqual(placeholderColor) == false {
+            textView.placeholderColor = placeholderColor
+            needsDisplay = true
+        }
+        if textView.isEditable != isEditable {
+            textView.isEditable = isEditable
+            needsDisplay = true
+        }
+        if textView.isSelectable == false {
+            textView.isSelectable = true
+            needsDisplay = true
+        }
 
         if textView.string != text {
             let selected = textView.selectedRange()
             textView.string = text
             let limit = (text as NSString).length
             textView.setSelectedRange(NSRange(location: min(selected.location, limit), length: 0))
+            needsDisplay = true
         }
-        textView.needsDisplay = true
+        if needsDisplay {
+            textView.needsDisplay = true
+        }
 
         if context.coordinator.handledFocusToken != focusToken {
             context.coordinator.handledFocusToken = focusToken

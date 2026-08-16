@@ -46,11 +46,16 @@ final class CodexAppServerClient {
     private struct PendingClientRequest {
         let route: CodexAppServerRoute
         let completion: (Result<JSONObject, Error>) -> Void
+        var timeoutTask: Task<Void, Never>?
     }
+
+    private static let maximumStderrDiagnosticBytes = 64 * 1_024
 
     private var process: Process?
     private var standardInput: FileHandle?
-    private var stderrBuffer = ""
+    /// Retain enough of stderr to explain a crash without retaining an unbounded
+    /// diagnostic stream for the lifetime of a chatty runtime.
+    private var stderrTail = Data()
     private var nextRequestID = 1
     private var pendingRequests: [Int: PendingClientRequest] = [:]
     private var inboundServerRoutes: [DesktopRPCRequestID: CodexAppServerRoute] = [:]
@@ -73,7 +78,7 @@ final class CodexAppServerClient {
         stoppedIntentionally = false
         let generation = UUID()
         self.generation = generation
-        stderrBuffer = ""
+        stderrTail.removeAll(keepingCapacity: false)
         stdoutSplitter.reset()
 
         let process = Process()
@@ -107,10 +112,9 @@ final class CodexAppServerClient {
         errorPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
             guard !data.isEmpty else { return }
-            let text = String(decoding: data, as: UTF8.self)
             let client = self
-            Task { @MainActor [client, text, generation] in
-                client?.appendStderr(text, generation: generation)
+            Task { @MainActor [client, data, generation] in
+                client?.appendStderr(data, generation: generation)
             }
         }
 
@@ -175,11 +179,10 @@ final class CodexAppServerClient {
         capabilities = .unavailable
         inboundServerRoutes.removeAll()
         stdoutSplitter.reset()
+        stderrTail.removeAll(keepingCapacity: false)
 
         let error = CodexAppServerClientError.processUnavailable("The local Codex runtime restarted.")
-        let completions = pendingRequests.values.map(\.completion)
-        pendingRequests.removeAll()
-        completions.forEach { $0(.failure(error)) }
+        completeAllPendingRequests(with: error)
 
         input?.closeFile()
         if process?.isRunning == true {
@@ -212,7 +215,8 @@ final class CodexAppServerClient {
         return try await withCheckedThrowingContinuation { continuation in
             pendingRequests[requestID] = PendingClientRequest(
                 route: route,
-                completion: { result in continuation.resume(with: result) }
+                completion: { result in continuation.resume(with: result) },
+                timeoutTask: nil
             )
 
             do {
@@ -223,16 +227,26 @@ final class CodexAppServerClient {
                 if let params { request["params"] = params }
                 try send(request)
             } catch {
-                pendingRequests.removeValue(forKey: requestID)
-                continuation.resume(throwing: error)
+                takePendingRequest(requestID)?.completion(.failure(error))
                 return
             }
 
             if let timeoutSeconds {
-                Task { @MainActor [weak self] in
-                    try? await Task.sleep(for: .seconds(timeoutSeconds))
-                    guard let pending = self?.pendingRequests.removeValue(forKey: requestID) else { return }
+                let timeoutTask = Task { @MainActor [weak self] in
+                    do {
+                        try await Task.sleep(for: .seconds(timeoutSeconds))
+                    } catch {
+                        return
+                    }
+                    guard !Task.isCancelled,
+                          let pending = self?.takePendingRequest(requestID) else { return }
                     pending.completion(.failure(CodexAppServerClientError.timeout(method)))
+                }
+                if var pending = pendingRequests[requestID] {
+                    pending.timeoutTask = timeoutTask
+                    pendingRequests[requestID] = pending
+                } else {
+                    timeoutTask.cancel()
                 }
             }
         }
@@ -302,15 +316,19 @@ final class CodexAppServerClient {
         }
     }
 
-    private func appendStderr(_ text: String, generation: UUID) {
+    private func appendStderr(_ data: Data, generation: UUID) {
         guard self.generation == generation else { return }
-        stderrBuffer.append(text)
+        stderrTail.append(data)
+        let excess = stderrTail.count - Self.maximumStderrDiagnosticBytes
+        if excess > 0 {
+            stderrTail.removeFirst(excess)
+        }
     }
 
     private func route(_ object: JSONObject) {
         if let requestID = Self.jsonRPCRequestID(object["id"]),
            object["method"] == nil,
-           let pending = pendingRequests.removeValue(forKey: requestID) {
+           let pending = takePendingRequest(requestID) {
             if let rpcError = object["error"] as? JSONObject {
                 let code = (rpcError["code"] as? NSNumber)?.intValue
                 let message = rpcError.string("message") ?? "Codex request failed."
@@ -403,21 +421,35 @@ final class CodexAppServerClient {
         capabilities = .unavailable
         inboundServerRoutes.removeAll()
 
-        let detail = stderrBuffer
+        let detail = String(decoding: stderrTail, as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .split(separator: "\n")
             .suffix(3)
             .joined(separator: "\n")
             .nilIfEmpty
+        stderrTail.removeAll(keepingCapacity: false)
         let message = stoppedIntentionally
             ? nil
             : (detail ?? "Codex exited with status \(status).")
 
         let error = CodexAppServerClientError.processUnavailable(message ?? "Codex stopped.")
-        let completions = pendingRequests.values.map(\.completion)
-        pendingRequests.removeAll()
-        completions.forEach { $0(.failure(error)) }
+        completeAllPendingRequests(with: error)
         terminationHandler?(message)
+    }
+
+    private func takePendingRequest(_ requestID: Int) -> PendingClientRequest? {
+        guard let pending = pendingRequests.removeValue(forKey: requestID) else { return nil }
+        pending.timeoutTask?.cancel()
+        return pending
+    }
+
+    private func completeAllPendingRequests(with error: Error) {
+        let pending = Array(pendingRequests.values)
+        pendingRequests.removeAll()
+        for request in pending {
+            request.timeoutTask?.cancel()
+            request.completion(.failure(error))
+        }
     }
 
     private static func jsonRPCRequestID(_ value: Any?) -> Int? {

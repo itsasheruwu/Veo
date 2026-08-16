@@ -21,6 +21,7 @@ enum DesktopContextWindowUsageStyle: String, CaseIterable, Identifiable {
 }
 
 enum DesktopComposerPreferences {
+    static let showsTurnStatusKey = "VeoDesktop.showsTurnStatus"
     static let showsContextWindowUsageKey = "VeoDesktop.showsContextWindowUsage"
     static let contextWindowUsageStyleKey = "VeoDesktop.contextWindowUsageStyle"
 }

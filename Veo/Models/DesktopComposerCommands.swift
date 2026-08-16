@@ -21,7 +21,9 @@ enum DesktopComposerCommandAction: Hashable {
     case rename
     case archive
     case fork
+    case agentic
     case plan
+    case debug
     case goal
     case mention
     case status
@@ -78,7 +80,9 @@ struct DesktopComposerCommand: Identifiable, Hashable {
         .init(name: "fork", description: "Fork the current chat at a chosen point", action: .fork, systemImage: "arrow.triangle.branch"),
         .init(name: "init", description: "Create an AGENTS.md for this project", action: .initAgents, systemImage: "doc.badge.plus"),
         .init(name: "compact", description: "Summarize history and free context", action: .compact, systemImage: "arrow.down.right.and.arrow.up.left"),
+        .init(name: "agentic", description: "Switch to Agentic mode", action: .agentic, systemImage: "sparkles"),
         .init(name: "plan", description: "Switch to Plan mode", action: .plan, systemImage: "list.bullet.clipboard", supportsInlineArguments: true),
+        .init(name: "debug", description: "Switch to evidence-first Debug mode", action: .debug, systemImage: "ladybug", supportsInlineArguments: true),
         .init(name: "goal", description: "Set or view a long-running goal", action: .goal, systemImage: "target", supportsInlineArguments: true),
         .init(name: "copy", description: "Copy the last response as Markdown", action: .copyLastResponse, systemImage: "doc.on.doc"),
         .init(name: "diff", description: "Open Veo's Changes view", action: .changes, systemImage: "arrow.left.arrow.right"),

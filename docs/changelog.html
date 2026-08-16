@@ -35,24 +35,56 @@
 
 <div class="wrap" style="padding-bottom:40px">
 
-  <article class="release" id="v1-8-0">
+  <article class="release" id="v1-9-0">
     <div class="side">
-      <div class="ver">1.8</div>
-      <div class="date">13 Aug 2026</div>
+      <div class="ver">1.9</div>
+      <div class="date">15 Aug 2026</div>
       <div style="margin-top:10px"><span class="tag">Latest</span></div>
     </div>
     <div>
       <div class="block">
-        <h3>Updates that stay in Veo</h3>
-        <p>Install no longer opens GitHub. Veo downloads the disk image in the background, shows progress in the sidebar, and replaces the app after verifying its signature. If the running copy can’t be overwritten, the new build goes into Applications instead.</p>
+        <h3>GPT-5.6 Auto routing</h3>
+        <p>A new Auto route coordinates GPT-5.6 Sol, Luna, and Terra across architecture, implementation, escalation, verification, and independent review. The route records the plan used for each turn and falls back explicitly when multi-agent support or a requested model is unavailable.</p>
       </div>
       <div class="block">
-        <h3>A workspace that doesn’t freeze mid-download</h3>
-        <p>The transfer and install run off the main thread, so chats, the terminal, and the rest of the window keep responding while an update comes in.</p>
+        <h3>Agentic, Plan, and Debug modes</h3>
+        <p>The composer now provides three distinct interaction modes. Plan remains non-mutating, Debug adds an evidence-first diagnostic policy, and Agentic preserves the standard implementation workflow. Mode and route selections persist per thread, with migration support for existing Plan-mode preferences.</p>
       </div>
       <div class="block">
-        <h3>A tighter settings path</h3>
-        <p>The sidebar gear spins on press, Back in Settings nudges the chevron, and the update and runtime rows share the same alignment.</p>
+        <h3>Live workflow and subagent visibility</h3>
+        <p>A compact turn-status surface reports plan progress, changed files, Auto workflow stages, review verdicts, and active subagents. The new Subagents utility tab provides agent summaries and item-scoped transcripts, with direct navigation from collaboration activity.</p>
+      </div>
+      <div class="block">
+        <h3>Durable usage-limit continuation</h3>
+        <p>Interrupted turns can resume automatically after the runtime’s reported reset window. Pending jobs are stored locally and can resume on the next launch or, with explicit macOS Login Items approval, wake Veo quietly through the bundled background helper.</p>
+      </div>
+      <div class="block">
+        <h3>Runtime and interface performance</h3>
+        <p>Timeline deltas are coalesced and indexed, terminal and runtime diagnostics are bounded, file browsing and saves move off the main thread, minimap work is reused, and streamed Markdown and inline images retain stable identities. Inference cancellation and inactive-thread cleanup also receive stricter lifecycle handling.</p>
+      </div>
+      <div class="block">
+        <p class="faint"><a href="downloads.html" style="color:var(--accent)">Download 1.9</a> · <a href="https://github.com/itsasheruwu/Veo/releases/tag/v1.9.0" style="color:var(--accent)">Tag v1.9.0</a></p>
+      </div>
+    </div>
+  </article>
+
+  <article class="release" id="v1-8-0">
+    <div class="side">
+      <div class="ver">1.8</div>
+      <div class="date">13 Aug 2026</div>
+    </div>
+    <div>
+      <div class="block">
+        <h3>In-app update installation</h3>
+        <p>Veo downloads release disk images in the background, reports progress in the sidebar, verifies the app signature, and installs the update without redirecting to GitHub. If the running copy cannot be replaced in place, Veo installs the verified build in Applications.</p>
+      </div>
+      <div class="block">
+        <h3>Responsive background transfers</h3>
+        <p>Download and installation work now runs away from the main thread, keeping chats, the terminal, and the rest of the workspace responsive throughout an update.</p>
+      </div>
+      <div class="block">
+        <h3>Settings refinements</h3>
+        <p>Settings navigation gains clearer interaction feedback, and the update and runtime status rows now use consistent alignment.</p>
       </div>
       <div class="block">
         <p class="faint"><a href="downloads.html" style="color:var(--accent)">Download 1.8</a> · <a href="https://github.com/itsasheruwu/Veo/releases/tag/v1.8.0" style="color:var(--accent)">Tag v1.8.0</a></p>
@@ -67,19 +99,19 @@
     </div>
     <div>
       <div class="block">
-        <h3>A browser that behaves like a browser</h3>
+        <h3>Browser defaults and controls</h3>
         <p>New tabs open a native start page on the right-sidebar material. Pages identify as current Safari, request a desktop layout, and keep search, JavaScript, desktop-site, and fraud-warning preferences in Settings → Browser.</p>
       </div>
       <div class="block">
-        <h3>ChatGPT stays signed in here</h3>
+        <h3>Integrated ChatGPT authentication</h3>
         <p>Account Sign In and Device Code open in Veo’s WebKit view instead of Safari or the ChatGPT Mac app. After Codex login finishes, the same tab continues to chatgpt.com so the website session and Veo’s account row stay in sync.</p>
       </div>
       <div class="block">
-        <h3>Passwords and passkeys</h3>
+        <h3>Credential and passkey support</h3>
         <p>The in-app browser can save and fill iCloud Keychain logins, handle HTTP authentication, and request passkey access. A Keychain control sits in the browser toolbar when AutoFill is on.</p>
       </div>
       <div class="block">
-        <h3>A panel that gets out of the way</h3>
+        <h3>Utility panel behavior</h3>
         <p>Closing the last utility tab hides the right panel instead of spawning a Review tab. The composer keeps a usable bar when that panel is wide, dropping the send hint and shortening the model label instead of wrapping into a column.</p>
       </div>
       <div class="block">
@@ -95,19 +127,19 @@
     </div>
     <div>
       <div class="block">
-        <h3>One utility panel, three kinds of work</h3>
+        <h3>Unified utility panel</h3>
         <p>The old Inspector and modal Changes view are replaced by a resizable right panel with Safari-style Review, Browser, and Files tabs. Add, close, and reorder tabs from one strip, then focus the panel full-screen without losing its loaded state.</p>
       </div>
       <div class="block">
-        <h3>Review real diffs where you work</h3>
+        <h3>Integrated change review</h3>
         <p>Navigate staged, unstaged, conflicted, and untracked files; switch between unified and split layouts; hide whitespace-only changes; stage files or checked hunks; discard with recovery; commit; create branches; and configure an AI review inline.</p>
       </div>
       <div class="block">
-        <h3>A browser and file editor built in</h3>
+        <h3>Embedded browser and file editing</h3>
         <p>Workspace-scoped browser tabs support navigation, downloads, popups, uploads, viewport presets, console capture, JavaScript evaluation, and optional restoration. Files adds a searchable Git-aware tree, Quick Look previews, safe workspace HTML handoff, and native editing with autosave and external-change protection.</p>
       </div>
       <div class="block">
-        <h3>Faster, more cohesive chrome</h3>
+        <h3>Persistent workspace state</h3>
         <p>Settings and Workspace now remain mounted while you move between them, avoiding expensive reconstruction of timelines, terminals, web views, and editors. Appearance settings separately control the left and right sidebar materials, including the right titlebar strip.</p>
       </div>
       <div class="block">
@@ -123,19 +155,19 @@
     </div>
     <div>
       <div class="block">
-        <h3>Notifications that match your workspace</h3>
+        <h3>Notification materials</h3>
         <p>Choose Solid, Mica, or Liquid Glass for notifications. The Notifications page now links straight to that Appearance control with a focused portal transition, so the material is easy to find and change.</p>
       </div>
       <div class="block">
-        <h3>Faster chat history</h3>
+        <h3>Progressive chat-history loading</h3>
         <p>Codex CLI chats now hydrate from the local state database in larger, progressive pages. The sidebar begins filling immediately, avoids stale overlapping refreshes, and shows its loading state on startup.</p>
       </div>
       <div class="block">
-        <h3>A more deliberate model and command picker</h3>
+        <h3>Model and command selection</h3>
         <p>The model picker gives the GPT-5.6 family its own focused controls and moves the rest of the catalog to a second page. In the command palette, Tab and the arrow keys move through suggestions, Return uses the selected command, and Escape closes the palette.</p>
       </div>
       <div class="block">
-        <h3>Sidebar options that read clearly</h3>
+        <h3>Sidebar state indicators</h3>
         <p>Show Codex threads and Browse Archived Chats now use native checkmarks when enabled.</p>
       </div>
       <div class="block">
@@ -151,19 +183,19 @@
     </div>
     <div>
       <div class="block">
-        <h3>Notifications, in Veo's voice</h3>
+        <h3>Notification controls</h3>
         <p>A new Notifications settings page controls macOS turn alerts, warning banners inside Veo, a menu bar item, and completion sounds. Use the built-in sound, import one of your own, preview it before committing, or keep Veo quiet.</p>
       </div>
       <div class="block">
-        <h3>Account details that arrive on time</h3>
+        <h3>Independent account loading</h3>
         <p>Account identity, plan, limits, and usage now load on their own fast path instead of waiting for the full skills, plugins, apps, and MCP inventory. Refreshing Account no longer kicks off that heavier integration scan.</p>
       </div>
       <div class="block">
-        <h3>Commands with clearer landmarks</h3>
+        <h3>Slash-command navigation</h3>
         <p>Native slash commands now use purposeful glyphs at the same compact size as the existing command icon. The new <code>/temporary</code> command marks a fresh projectless chat as disposable before its first turn.</p>
       </div>
       <div class="block">
-        <h3>Updates that can replace installer-owned copies</h3>
+        <h3>Installer-owned app updates</h3>
         <p>The updater now replaces the installed app through a same-folder rename, allowing Veo copies installed by PKG to update themselves without requiring direct write access to the existing bundle.</p>
       </div>
       <div class="block">
@@ -179,16 +211,16 @@
     </div>
     <div>
       <div class="block">
-        <h3>New chats no longer linger</h3>
-        <p>A chat that never started a turn is discarded the moment you leave it — no runtime thread, no timeline content, no queued or unsent draft, no forked children, not pinned. Its app-managed scratch workspace goes with it. Anything holding real content, a typed draft, or a running turn is kept.</p>
+        <h3>Automatic cleanup of empty chats</h3>
+        <p>Veo discards a new chat when the user leaves it if the chat has no started turn, timeline content, queued or unsent draft, forked children, or pinned state. Its app-managed scratch workspace is removed at the same time, while chats with meaningful state are retained.</p>
       </div>
       <div class="block">
-        <h3>Theme materials</h3>
+        <h3>Main-canvas materials</h3>
         <p>Appearance settings gain a Theme material control beneath the theme picker, offering the same Solid, Mica, and Liquid Glass options as the sidebar and composer. It drives the main window canvas behind both the conversation and settings panes. Solid stays the default, and Liquid Glass falls back to Mica below macOS 26.</p>
       </div>
       <div class="block">
-        <h3>Tighter sidebar search</h3>
-        <p>The dead space between the Search button and the expanded search field is gone; the field now sits directly beneath the button.</p>
+        <h3>Sidebar search layout</h3>
+        <p>The expanded search field now sits directly beneath the Search button, removing unnecessary vertical space.</p>
       </div>
       <div class="block">
         <p class="faint"><a href="downloads.html" style="color:var(--accent)">Download 1.3</a> · <a href="https://github.com/itsasheruwu/Veo/releases/tag/v1.3.0" style="color:var(--accent)">Tag v1.3.0</a></p>
@@ -203,11 +235,11 @@
     </div>
     <div>
       <div class="block">
-        <h3>Temporary chats that delete themselves</h3>
+        <h3>Temporary-chat lifecycle</h3>
         <p>A chat marked temporary now removes itself once it stops being the selected chat — SQLite rows, forked children, and the app-managed scratch folder go together. Deletion defers while a turn is running or drafts are queued, and retries from <code>turn/completed</code>.</p>
       </div>
       <div class="block">
-        <h3>In-app updates</h3>
+        <h3>In-app update service</h3>
         <p>A GitHub-backed update service with a sidebar status row above the runtime state, plus a new Updates settings category. Automatic checks are on by default; automatic installs stay opt-in and are unavailable when the running bundle is not replaceable. Downloads are code-signature verified before atomically replacing the installed app.</p>
       </div>
       <div class="block">
@@ -223,11 +255,11 @@
     </div>
     <div>
       <div class="block">
-        <h3>Projectless chats</h3>
+        <h3>Projectless workspaces</h3>
         <p>Start a chat immediately without picking a repository. It runs in an isolated, app-managed workspace, and can be marked temporary before its first turn. Opening a project stays the explicit route to project-backed work, and never filters the rest of the sidebar away.</p>
       </div>
       <div class="block">
-        <h3>Release installers</h3>
+        <h3>Universal installers</h3>
         <p>Builds now ship as a drag-to-Applications DMG and a standard macOS PKG, both universal for Apple silicon and Intel.</p>
       </div>
       <div class="block">
@@ -267,7 +299,7 @@
       <h2>Update from inside the app.</h2>
       <p>Veo 1.2 and later check for releases themselves and verify the signature before installing.</p>
       <div class="hero-actions" style="margin-bottom:0">
-        <a class="btn btn-primary btn-lg" href="downloads.html">Get Veo 1.8</a>
+        <a class="btn btn-primary btn-lg" href="downloads.html">Get Veo 1.9</a>
       </div>
     </div>
   </div>

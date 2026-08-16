@@ -12,12 +12,13 @@ struct DesktopFilesPanelView: View {
     let openInBrowser: (URL, URL) -> Void
 
     var body: some View {
+        let gitBadges = DesktopFileGitBadgeIndex(repository: repository)
         VStack(spacing: 0) {
             filesToolbar
             Divider()
 
             HSplitView {
-                fileTree
+                fileTree(gitBadges: gitBadges)
                     .frame(minWidth: 170, idealWidth: 210, maxWidth: 280)
                 fileContent
                     .frame(minWidth: 250, maxWidth: .infinity, maxHeight: .infinity)
@@ -50,35 +51,15 @@ struct DesktopFilesPanelView: View {
         .frame(height: 38)
     }
 
-    private var fileTree: some View {
+    private func fileTree(gitBadges: DesktopFileGitBadgeIndex) -> some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
-                if files.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    ForEach(files.filteredRootEntries) { entry in
-                        DesktopFileTreeRow(files: files, repository: repository, entry: entry, depth: 0)
-                    }
-                } else {
-                    ForEach(files.filteredRootEntries) { entry in
-                        Button { files.select(entry) } label: {
-                            HStack(spacing: 7) {
-                                Image(systemName: fileIcon(entry))
-                                Text(entry.relativePath)
-                                    .font(.system(size: 11, design: .monospaced))
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                                Spacer()
-                                if let badge = gitBadge(entry) {
-                                    Text(badge)
-                                        .font(.system(size: 9, weight: .bold, design: .monospaced))
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                            .padding(.horizontal, 8)
-                            .frame(height: 27)
-                            .background(selectionBackground(entry))
-                        }
-                        .buttonStyle(.plain)
-                    }
+                ForEach(files.visibleRows) { row in
+                    DesktopFileTreeRow(
+                        files: files,
+                        row: row,
+                        gitBadge: gitBadges.badge(for: row.entry)
+                    )
                 }
             }
             .padding(.vertical, 4)
@@ -163,110 +144,113 @@ struct DesktopFilesPanelView: View {
         }
     }
 
-    private func selectionBackground(_ entry: DesktopWorkspaceFileEntry) -> some View {
-        RoundedRectangle(cornerRadius: 5)
-            .fill(files.selectedEntry?.id == entry.id ? Color.accentColor.opacity(0.18) : .clear)
-            .padding(.horizontal, 3)
-    }
-
-    private func fileIcon(_ entry: DesktopWorkspaceFileEntry) -> String {
-        if entry.isDirectory { return "folder" }
-        if entry.isSymbolicLink { return "link" }
-        if entry.contentType?.conforms(to: .image) == true { return "photo" }
-        if entry.contentType?.conforms(to: .pdf) == true { return "doc.richtext" }
-        if entry.contentType?.conforms(to: .audio) == true { return "waveform" }
-        if entry.contentType?.conforms(to: .movie) == true { return "film" }
-        if entry.isEditableText { return "doc.text" }
-        return "doc"
-    }
-
-    private func gitBadge(_ entry: DesktopWorkspaceFileEntry) -> String? {
-        guard let repository else { return nil }
-        let repositoryPath = repository.workspaceRelativePath.map { "\($0)/\(entry.relativePath)" }
-            ?? entry.relativePath
-        let change = repository.files.first(where: { $0.path == repositoryPath })
-        if change?.isUnmerged == true { return "!" }
-        if change?.isUntracked == true { return "U" }
-        if change?.indexStatus == .added { return "A" }
-        if change?.indexStatus == .deleted || change?.worktreeStatus == .deleted { return "D" }
-        return change == nil ? nil : "M"
-    }
 }
 
 private struct DesktopFileTreeRow: View {
     @ObservedObject var files: DesktopFilesModel
-    let repository: DesktopGitRepositorySnapshot?
-    let entry: DesktopWorkspaceFileEntry
-    let depth: Int
+    let row: DesktopWorkspaceVisibleFileRow
+    let gitBadge: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Button { files.select(entry) } label: {
-                HStack(spacing: 6) {
-                    if entry.isDirectory {
-                        Image(systemName: files.expandedPaths.contains(entry.relativePath) ? "chevron.down" : "chevron.right")
-                            .font(.system(size: 8.5, weight: .semibold))
-                            .frame(width: 10)
-                    } else {
-                        Color.clear.frame(width: 10, height: 1)
-                    }
-                    Image(systemName: fileIcon)
-                        .foregroundStyle(entry.isDirectory ? .secondary : .primary)
-                        .frame(width: 14)
-                    Text(entry.name)
-                        .font(.system(size: 11.5))
-                        .lineLimit(1)
-                    Spacer()
-                    if let badge = gitBadge {
-                        Text(badge)
-                            .font(.system(size: 9, weight: .bold, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                    }
+        Button { files.select(row.entry) } label: {
+            HStack(spacing: 6) {
+                if row.entry.isDirectory, !row.displaysRelativePath {
+                    Image(systemName: files.expandedPaths.contains(row.entry.relativePath) ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 8.5, weight: .semibold))
+                        .frame(width: 10)
+                } else {
+                    Color.clear.frame(width: 10, height: 1)
                 }
-                .padding(.leading, CGFloat(depth * 13) + 6)
-                .padding(.trailing, 6)
-                .frame(height: 27)
-                .background(
-                    RoundedRectangle(cornerRadius: 5)
-                        .fill(files.selectedEntry?.id == entry.id ? Color.accentColor.opacity(0.18) : .clear)
-                        .padding(.horizontal, 3)
-                )
+                Image(systemName: desktopFileIcon(row.entry))
+                    .foregroundStyle(row.entry.isDirectory ? .secondary : .primary)
+                    .frame(width: 14)
+                Text(row.displaysRelativePath ? row.entry.relativePath : row.entry.name)
+                    .font(row.displaysRelativePath
+                        ? .system(size: 11, design: .monospaced)
+                        : .system(size: 11.5))
+                    .lineLimit(1)
+                    .truncationMode(row.displaysRelativePath ? .middle : .tail)
+                Spacer()
+                if let gitBadge {
+                    Text(gitBadge)
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                }
             }
-            .buttonStyle(.plain)
+            .padding(.leading, row.displaysRelativePath ? 8 : CGFloat(row.depth * 13) + 6)
+            .padding(.trailing, 6)
+            .frame(height: 27)
+            .background(
+                RoundedRectangle(cornerRadius: 5)
+                    .fill(files.selectedEntry?.id == row.entry.id ? Color.accentColor.opacity(0.18) : .clear)
+                    .padding(.horizontal, 3)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
 
-            if entry.isDirectory, files.expandedPaths.contains(entry.relativePath) {
-                ForEach(files.childrenByPath[entry.relativePath] ?? []) { child in
-                    DesktopFileTreeRow(files: files, repository: repository, entry: child, depth: depth + 1)
-                }
+private struct DesktopFileGitBadgeIndex {
+    private let changesByRelativePath: [String: DesktopGitFileChange]
+    private let changedDirectoryPaths: Set<String>
+
+    init(repository: DesktopGitRepositorySnapshot?) {
+        guard let repository else {
+            changesByRelativePath = [:]
+            changedDirectoryPaths = []
+            return
+        }
+
+        let rawWorkspacePrefix = repository.workspaceRelativePath?
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/")) ?? ""
+        let workspacePrefix = rawWorkspacePrefix == "." ? "" : rawWorkspacePrefix
+        var changes: [String: DesktopGitFileChange] = [:]
+        var directories = Set<String>()
+        for change in repository.files where change.isInWorkspace {
+            let relativePath: String
+            if workspacePrefix.isEmpty {
+                relativePath = change.path
+            } else {
+                let prefix = workspacePrefix + "/"
+                guard change.path.hasPrefix(prefix) else { continue }
+                relativePath = String(change.path.dropFirst(prefix.count))
+            }
+            changes[relativePath] = change
+
+            let components = relativePath.split(separator: "/")
+            guard components.count > 1 else { continue }
+            var directory = ""
+            for component in components.dropLast() {
+                directory = directory.isEmpty ? String(component) : directory + "/" + component
+                directories.insert(directory)
             }
         }
+        changesByRelativePath = changes
+        changedDirectoryPaths = directories
     }
 
-    private var fileIcon: String {
-        if entry.isDirectory { return "folder" }
-        if entry.isSymbolicLink { return "link" }
-        if entry.contentType?.conforms(to: .image) == true { return "photo" }
-        if entry.contentType?.conforms(to: .pdf) == true { return "doc.richtext" }
-        if entry.contentType?.conforms(to: .audio) == true { return "waveform" }
-        if entry.contentType?.conforms(to: .movie) == true { return "film" }
-        if entry.isEditableText { return "doc.text" }
-        return "doc"
-    }
-
-    private var gitBadge: String? {
-        guard let repository else { return nil }
-        let path = repository.workspaceRelativePath.map { "\($0)/\(entry.relativePath)" }
-            ?? entry.relativePath
+    func badge(for entry: DesktopWorkspaceFileEntry) -> String? {
         if entry.isDirectory {
-            return repository.files.contains(where: { $0.path.hasPrefix(path + "/") }) ? "•" : nil
+            return changedDirectoryPaths.contains(entry.relativePath) ? "•" : nil
         }
-        guard let change = repository.files.first(where: { $0.path == path }) else { return nil }
+        guard let change = changesByRelativePath[entry.relativePath] else { return nil }
         if change.isUnmerged { return "!" }
         if change.isUntracked { return "U" }
         if change.indexStatus == .added { return "A" }
         if change.indexStatus == .deleted || change.worktreeStatus == .deleted { return "D" }
         return "M"
     }
+}
+
+private func desktopFileIcon(_ entry: DesktopWorkspaceFileEntry) -> String {
+    if entry.isDirectory { return "folder" }
+    if entry.isSymbolicLink { return "link" }
+    if entry.contentType?.conforms(to: .image) == true { return "photo" }
+    if entry.contentType?.conforms(to: .pdf) == true { return "doc.richtext" }
+    if entry.contentType?.conforms(to: .audio) == true { return "waveform" }
+    if entry.contentType?.conforms(to: .movie) == true { return "film" }
+    if entry.isEditableText { return "doc.text" }
+    return "doc"
 }
 
 private struct DesktopQuickLookPreview: NSViewRepresentable {

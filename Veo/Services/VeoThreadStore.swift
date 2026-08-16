@@ -91,6 +91,25 @@ actor VeoThreadStore {
         return rows
     }
 
+    func threadIDsWithStartedAutoTurns() throws -> Set<String> {
+        try openIfNeeded()
+        let sql = """
+        SELECT DISTINCT veo_id
+        FROM items
+        WHERE turn_id IS NOT NULL
+          AND (client_id LIKE 'veo-auto-%' OR client_id LIKE 'auto-continue-veo-auto-%');
+        """
+        let statement = try prepare(sql)
+        defer { sqlite3_finalize(statement) }
+        var threadIDs = Set<String>()
+        while sqlite3_step(statement) == SQLITE_ROW {
+            if let bareID = columnText(statement, 0) {
+                threadIDs.insert(DesktopThreadSelection.veo(bareID).storageKey)
+            }
+        }
+        return threadIDs
+    }
+
     func thread(veoID: String) throws -> DesktopThread? {
         try openIfNeeded()
         let bare = DesktopThreadSelection.parse(veoID).bareID

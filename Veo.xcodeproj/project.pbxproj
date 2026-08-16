@@ -72,6 +72,7 @@
 				A1000000000000000000000A /* Sources */,
 				A10000000000000000000004 /* Frameworks */,
 				A1000000000000000000000B /* Resources */,
+				A10000000000000000000025 /* Package Auto Continue Helper */,
 			);
 			buildRules = (
 			);
@@ -145,6 +146,32 @@
 		};
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		A10000000000000000000025 /* Package Auto Continue Helper */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/BuildSupport/VeoAutoContinueAgent.swift",
+				"$(SRCROOT)/BuildSupport/com.ash.Veo.AutoContinue.plist",
+				"$(SRCROOT)/BuildSupport/package-auto-continue-helper.sh",
+			);
+			name = "Package Auto Continue Helper";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/VeoAutoContinueAgent",
+				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Library/LaunchAgents/com.ash.Veo.AutoContinue.plist",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"$SRCROOT/BuildSupport/package-auto-continue-helper.sh\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin XCBuildConfiguration section */
 		A1000000000000000000000E /* Debug */ = {
 			isa = XCBuildConfiguration;
@@ -189,11 +216,11 @@
 				CODE_SIGN_ENTITLEMENTS = "BuildSupport/Veo.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 9;
+				CURRENT_PROJECT_VERSION = 10;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "BuildSupport/Veo-Info.plist";
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
-				MARKETING_VERSION = 1.8;
+				MARKETING_VERSION = 1.9;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ash.Veo;
 				PRODUCT_NAME = Veo;
 				SDKROOT = macosx;
@@ -210,11 +237,11 @@
 				CODE_SIGN_ENTITLEMENTS = "BuildSupport/Veo.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 9;
+				CURRENT_PROJECT_VERSION = 10;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "BuildSupport/Veo-Info.plist";
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
-				MARKETING_VERSION = 1.8;
+				MARKETING_VERSION = 1.9;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ash.Veo;
 				PRODUCT_NAME = Veo;
 				SDKROOT = macosx;

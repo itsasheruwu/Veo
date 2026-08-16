@@ -486,6 +486,7 @@ struct DesktopWorkspaceView: View {
         }
         .onAppear {
             store.prepareForWorkspaceChange = utilityPanel.prepareForWorkspaceChange
+            store.cancelDeferredWorkspaceChange = utilityPanel.cancelDeferredWorkspaceChange
             utilityPanel.didCloseLastTab = {
                 inspectorVisible = false
                 utilityPanelExpanded = false
@@ -499,6 +500,7 @@ struct DesktopWorkspaceView: View {
                 store.openInEmbeddedBrowser?(pending.url, pending.accountLogin)
             }
             utilityPanel.switchWorkspace(to: store.hasExplicitWorkspace ? store.effectiveWorkspaceURL : nil)
+            utilityPanel.setSubagentsAvailable(!store.selectedSubagents.isEmpty)
         }
         .onOpenURL { url in
             guard let scheme = url.scheme?.lowercased(), ["http", "https"].contains(scheme) else { return }
@@ -508,6 +510,9 @@ struct DesktopWorkspaceView: View {
         }
         .onChange(of: store.effectiveWorkspaceURL.path) { _, _ in
             utilityPanel.switchWorkspace(to: store.hasExplicitWorkspace ? store.effectiveWorkspaceURL : nil)
+        }
+        .onChange(of: store.selectedSubagents) { _, agents in
+            utilityPanel.setSubagentsAvailable(!agents.isEmpty)
         }
         .background {
             if navigation.page == .workspace {
@@ -609,7 +614,7 @@ struct DesktopWorkspaceView: View {
                 } label: {
                     Label("Utility Panel", systemImage: "sidebar.trailing")
                 }
-                .help("Toggle Review, Browser, and Files (⌘⌥I)")
+            .help("Toggle utility panel (⌘⌥I)")
                 .keyboardShortcut("i", modifiers: [.command, .option])
             }
         }
@@ -626,7 +631,14 @@ struct DesktopWorkspaceView: View {
                 DesktopConversationView(
                     store: store,
                     terminalHub: terminalHub,
-                    showsInteractiveTerminal: $showsInteractiveTerminal
+                    showsInteractiveTerminal: $showsInteractiveTerminal,
+                    onOpenSubagent: { id in
+                        utilityPanel.showSubagent(id)
+                        if utilityPanelExpanded {
+                            utilityPanelExpanded = false
+                        }
+                        inspectorVisible = true
+                    }
                 )
                 .padding(.trailing, panelIsVisible && !utilityPanelExpanded ? panelWidth : 0)
                 .opacity(utilityPanelExpanded ? 0 : 1)
@@ -1459,6 +1471,7 @@ private struct DesktopSidebarView: View {
             ForEach(entries) { entry in
                 DesktopThreadRow(
                     thread: entry.thread,
+                    showsAutoIndicator: store.shouldShowAutoIndicator(for: entry.thread.id),
                     showsWorkspace: true,
                     pendingRequestCount: store.pendingRequestCount(for: entry.thread.id),
                     agentState: store.agentState(for: entry.thread.id),
@@ -1483,6 +1496,7 @@ private struct DesktopSidebarView: View {
                     ForEach(pinnedThreads) { thread in
                         DesktopThreadRow(
                             thread: thread,
+                            showsAutoIndicator: store.shouldShowAutoIndicator(for: thread.id),
                             showsWorkspace: true,
                             pendingRequestCount: store.pendingRequestCount(for: thread.id),
                             agentState: store.agentState(for: thread.id),
@@ -1508,6 +1522,7 @@ private struct DesktopSidebarView: View {
                         ForEach(entries) { entry in
                             DesktopThreadRow(
                                 thread: entry.thread,
+                                showsAutoIndicator: store.shouldShowAutoIndicator(for: entry.thread.id),
                                 pendingRequestCount: store.pendingRequestCount(for: entry.thread.id),
                                 agentState: store.agentState(for: entry.thread.id),
                                 searchSnippet: store.searchSnippet(for: entry.thread.id),
@@ -1565,6 +1580,7 @@ private struct DesktopSidebarView: View {
                         ForEach(entries) { entry in
                             DesktopThreadRow(
                                 thread: entry.thread,
+                                showsAutoIndicator: store.shouldShowAutoIndicator(for: entry.thread.id),
                                 pendingRequestCount: store.pendingRequestCount(for: entry.thread.id),
                                 agentState: store.agentState(for: entry.thread.id),
                                 searchSnippet: store.searchSnippet(for: entry.thread.id),
@@ -2125,6 +2141,7 @@ private struct DesktopSidebarView: View {
     ) -> some View {
         DesktopThreadRow(
             thread: entry.thread,
+            showsAutoIndicator: store.shouldShowAutoIndicator(for: entry.thread.id),
             showsWorkspace: showsWorkspace,
             pendingRequestCount: store.pendingRequestCount(for: entry.thread.id),
             agentState: store.agentState(for: entry.thread.id),
@@ -2460,6 +2477,7 @@ private struct DesktopThreadTreeEntry: Identifiable {
 private struct DesktopThreadRow: View {
     @Environment(\.veoAccent) private var veoAccent
     let thread: DesktopThread
+    var showsAutoIndicator = false
     var showsWorkspace = false
     var pendingRequestCount = 0
     var agentState: DesktopAgentState?
@@ -2501,13 +2519,25 @@ private struct DesktopThreadRow: View {
                     .frame(width: 5, height: 5)
             }
             VStack(alignment: .leading, spacing: 1) {
-                DesktopShimmerText(
-                    text: thread.title,
-                    font: .system(size: 12.5, weight: .regular),
-                    baseStyle: AnyShapeStyle(.primary),
-                    isActive: showsActiveTurn
-                )
-                .lineLimit(1)
+                HStack(spacing: 5) {
+                    DesktopShimmerText(
+                        text: thread.title,
+                        font: .system(size: 12.5, weight: .regular),
+                        baseStyle: AnyShapeStyle(.primary),
+                        isActive: showsActiveTurn
+                    )
+                    .lineLimit(1)
+
+                    if showsAutoIndicator {
+                        Text("AUTO")
+                            .font(.system(size: 7.5, weight: .bold, design: .rounded))
+                            .foregroundStyle(veoAccent)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1.5)
+                            .background(veoAccent.opacity(0.1), in: Capsule())
+                            .accessibilityLabel("GPT-5.6 Auto")
+                    }
+                }
                 if let searchSnippet, !searchSnippet.isEmpty {
                     Text(searchSnippet)
                         .font(.system(size: 9.5))
@@ -2675,6 +2705,7 @@ private struct DesktopConversationView: View {
     @ObservedObject var store: DesktopCodexStore
     @ObservedObject var terminalHub: DesktopLocalTerminalHub
     @Binding var showsInteractiveTerminal: Bool
+    let onOpenSubagent: (String) -> Void
     @AppStorage(DesktopAppearancePreferences.composerMaterialKey) private var composerMaterialRaw =
         DesktopComposerMaterial.liquidGlass.rawValue
     @AppStorage(DesktopAppearancePreferences.threadMinimapVisibleKey) private var showsThreadMinimap = true
@@ -2688,6 +2719,11 @@ private struct DesktopConversationView: View {
     @State private var pendingAutoScrollAnimation = false
     @State private var activeMinimapTurnID: String?
     @State private var minimapHover: DesktopThreadMinimapHover?
+    @State private var minimapSnapshot = DesktopThreadMinimapSnapshot.empty
+    @State private var minimapSnapshotThreadID: String?
+    @State private var minimapSnapshotRevision = -1
+    @State private var minimapTurns: [DesktopThreadMinimapTurn] = []
+    @State private var minimapAnalysisRequest: DesktopThreadMinimapAnalysisRequest?
     @Namespace private var composerTransitionNamespace
 
     var body: some View {
@@ -2722,7 +2758,8 @@ private struct DesktopConversationView: View {
                    store.selectedThreadID != nil || !store.timeline.isEmpty {
                     DesktopComposerView(
                         store: store,
-                        transitionNamespace: composerTransitionNamespace
+                        transitionNamespace: composerTransitionNamespace,
+                        onOpenSubagent: onOpenSubagent
                     )
                 }
             }
@@ -2763,20 +2800,32 @@ private struct DesktopConversationView: View {
         GeometryReader { viewport in
             ScrollViewReader { proxy in
                 let timelineEntries = DesktopTimelineEntry.make(from: store.timeline)
-                let minimapAnalysisRequest = DesktopThreadMinimapTurn.analysisRequest(from: store.timeline)
-                let minimapTurns = DesktopThreadMinimapTurn.make(
-                    from: store.timeline,
-                    modelTopicStartIDs: store.threadMinimapTopicStartIDs
-                )
+                let hasCurrentMinimapSnapshot = showsThreadMinimap
+                    && minimapSnapshotThreadID == store.selectedThreadID
+                    // Keep the last settled map visible while a turn streams. Rebuilding
+                    // an entire long conversation for every output batch adds no useful
+                    // navigation signal until the turn settles.
+                    && (minimapSnapshotRevision == store.timelineRevision || store.isBusyTurn)
+                let visibleMinimapTurns = hasCurrentMinimapSnapshot ? minimapTurns : []
+                let visibleMinimapAnalysisRequest = hasCurrentMinimapSnapshot && !store.isBusyTurn
+                    ? minimapAnalysisRequest
+                    : nil
+                let minimapSnapshotTaskID = [
+                    store.selectedThreadID ?? "new",
+                    String(store.timelineRevision),
+                    store.isBusyTurn ? "streaming" : "idle",
+                    showsThreadMinimap ? "visible" : "hidden",
+                ].joined(separator: "|")
                 let minimapAnalysisTaskID = [
                     store.selectedThreadID ?? "new",
-                    minimapAnalysisRequest?.fingerprint ?? "unavailable",
+                    visibleMinimapAnalysisRequest?.fingerprint ?? "unavailable",
                     String(store.utilityModelPreferenceRevision),
+                    store.isBusyTurn ? "streaming" : "idle",
                     showsThreadMinimap ? "visible" : "hidden",
                 ].joined(separator: "|")
                 let minimapMaterial = DesktopMinimapMaterial(rawValue: threadMinimapMaterialRaw) ?? .liquidGlass
                 let minimapHeight = min(
-                    max(56, CGFloat(minimapTurns.count) * 14 + 24),
+                    max(56, CGFloat(visibleMinimapTurns.count) * 14 + 24),
                     max(56, viewport.size.height - 390)
                 )
 
@@ -2793,22 +2842,39 @@ private struct DesktopConversationView: View {
                                     DesktopTimelineRow(
                                         item: item,
                                         workspaceURL: store.effectiveWorkspaceURL,
-                                        isTurnRunning: store.isBusyTurn
+                                        isTurnRunning: store.isBusyTurn,
+                                        autoContinuationJob: item.kind == .error
+                                            ? store.autoContinuationJob(for: store.selectedThreadID)
+                                            : nil,
+                                        onAutoContinuationEnabled: { enabled in
+                                            guard let threadID = store.selectedThreadID else { return }
+                                            store.setAutoContinuationEnabled(enabled, threadID: threadID)
+                                        },
+                                        onRetryAutoContinuation: {
+                                            guard let threadID = store.selectedThreadID else { return }
+                                            store.retryAutoContinuation(threadID: threadID)
+                                        }
                                     )
                                     .id(item.id)
                                     .background {
-                                        timelineBoundsReader(itemIDs: [item.id])
+                                        if showsThreadMinimap, !store.isBusyTurn {
+                                            timelineBoundsReader(itemIDs: [item.id])
+                                        }
                                     }
 
                                 case .activity(let group):
                                     DesktopActivityGroupView(
                                         group: group,
                                         workspaceURL: store.effectiveWorkspaceURL,
-                                        isTurnRunning: store.isBusyTurn
+                                        isTurnRunning: store.isBusyTurn,
+                                        subagents: store.subagents(in: group.items),
+                                        onOpenSubagent: onOpenSubagent
                                     )
                                     .id(group.id)
                                     .background {
-                                        timelineBoundsReader(itemIDs: group.itemIDs)
+                                        if showsThreadMinimap, !store.isBusyTurn {
+                                            timelineBoundsReader(itemIDs: group.itemIDs)
+                                        }
                                     }
                                 }
                             }
@@ -2857,9 +2923,9 @@ private struct DesktopConversationView: View {
                             }
                         }
 
-                        if showsThreadMinimap, minimapTurns.count > 1 {
+                        if showsThreadMinimap, visibleMinimapTurns.count > 1 {
                             DesktopThreadMinimapView(
-                                turns: minimapTurns,
+                                turns: visibleMinimapTurns,
                                 activeTurnID: activeMinimapTurnID,
                                 material: minimapMaterial,
                                 onSelect: { turn in
@@ -2878,7 +2944,7 @@ private struct DesktopConversationView: View {
                     }
 
                     if showsThreadMinimap,
-                       minimapTurns.count > 1,
+                       visibleMinimapTurns.count > 1,
                        let minimapHover,
                        viewport.size.width >= 242,
                        viewport.size.height >= 120 {
@@ -2905,15 +2971,19 @@ private struct DesktopConversationView: View {
                     await Task.yield()
                     scheduleScrollToEndIfPinned(proxy, animated: false)
                 }
+                .task(id: minimapSnapshotTaskID) {
+                    refreshMinimapPresentation()
+                }
                 .task(id: minimapAnalysisTaskID) {
                     store.requestThreadMinimapAnalysis(
-                        showsThreadMinimap ? minimapAnalysisRequest : nil
+                        visibleMinimapAnalysisRequest,
+                        isVisible: showsThreadMinimap
                     )
                 }
                 .onPreferenceChange(TimelineItemBoundsKey.self) { bounds in
                     updateActiveMinimapTurn(
                         bounds: bounds,
-                        turns: minimapTurns,
+                        turns: visibleMinimapTurns,
                         viewportHeight: viewport.size.height
                     )
                 }
@@ -2935,10 +3005,19 @@ private struct DesktopConversationView: View {
                     isPinnedToBottom = true
                     activeMinimapTurnID = nil
                     minimapHover = nil
+                    clearMinimapPresentation()
                     scheduleScrollToEndIfPinned(proxy, animated: false)
                 }
                 .onChange(of: showsThreadMinimap) { _, isVisible in
-                    if !isVisible { minimapHover = nil }
+                    if !isVisible {
+                        minimapHover = nil
+                        activeMinimapTurnID = nil
+                        clearMinimapPresentation()
+                        store.requestThreadMinimapAnalysis(nil, isVisible: false)
+                    }
+                }
+                .onChange(of: store.threadMinimapTopicStartIDs) { _, _ in
+                    refreshMinimapTopicTurns()
                 }
                 .onChange(of: store.timelineNavigationItemID) { _, itemID in
                     guard let itemID else { return }
@@ -2971,6 +3050,57 @@ private struct DesktopConversationView: View {
                 .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: minimapHover?.turn.id)
             }
         }
+    }
+
+    private func refreshMinimapPresentation() {
+        guard showsThreadMinimap else {
+            clearMinimapPresentation()
+            return
+        }
+
+        let threadID = store.selectedThreadID
+        let revision = store.timelineRevision
+        if store.isBusyTurn {
+            minimapAnalysisRequest = nil
+            return
+        }
+        if minimapSnapshotThreadID == threadID,
+           minimapSnapshotRevision == revision {
+            if minimapAnalysisRequest == nil {
+                minimapAnalysisRequest = minimapSnapshot.makeAnalysisRequest()
+            }
+            refreshMinimapTopicTurns()
+            return
+        }
+
+        let snapshot = DesktopThreadMinimapSnapshot(items: store.timeline)
+        guard !Task.isCancelled,
+              showsThreadMinimap,
+              store.selectedThreadID == threadID,
+              store.timelineRevision == revision else { return }
+
+        let analysisRequest = snapshot.makeAnalysisRequest()
+        minimapSnapshotThreadID = nil
+        minimapSnapshot = snapshot
+        minimapTurns = snapshot.topicTurns(modelTopicStartIDs: store.threadMinimapTopicStartIDs)
+        minimapAnalysisRequest = analysisRequest
+        minimapSnapshotRevision = revision
+        minimapSnapshotThreadID = threadID
+    }
+
+    private func refreshMinimapTopicTurns() {
+        guard showsThreadMinimap,
+              minimapSnapshotThreadID == store.selectedThreadID,
+              minimapSnapshotRevision == store.timelineRevision else { return }
+        minimapTurns = minimapSnapshot.topicTurns(modelTopicStartIDs: store.threadMinimapTopicStartIDs)
+    }
+
+    private func clearMinimapPresentation() {
+        minimapSnapshotThreadID = nil
+        minimapSnapshotRevision = -1
+        minimapSnapshot = .empty
+        minimapTurns = []
+        minimapAnalysisRequest = nil
     }
 
     private static let scrollSpace = "veo.timeline.scroll"
@@ -3158,6 +3288,9 @@ private struct DesktopTimelineRow: View {
     let item: DesktopTimelineItem
     let workspaceURL: URL?
     var isTurnRunning = false
+    var autoContinuationJob: DesktopAutoContinuationJob?
+    var onAutoContinuationEnabled: (Bool) -> Void = { _ in }
+    var onRetryAutoContinuation: () -> Void = {}
     @State private var isDetailExpanded = false
     @State private var showsFullCommandOutput = false
     @State private var blockedArtifactURLMessage: String?
@@ -3422,6 +3555,11 @@ private struct DesktopTimelineRow: View {
     }
 
     private var errorRow: some View {
+        Group {
+            if let autoContinuationJob,
+               item.turnID == autoContinuationJob.failedTurnID {
+                usageLimitRow(autoContinuationJob)
+            } else {
         Label {
             VStack(alignment: .leading, spacing: 3) {
                 Text(item.title).fontWeight(.semibold)
@@ -3434,6 +3572,47 @@ private struct DesktopTimelineRow: View {
         .foregroundStyle(.red)
         .padding(12)
         .background(.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+        }
+    }
+
+    private func usageLimitRow(_ job: DesktopAutoContinuationJob) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Label("Usage limit reached", systemImage: "gauge.with.dots.needle.100percent")
+                .font(.system(size: 12.5, weight: .semibold))
+                .foregroundStyle(.orange)
+            Text(usageLimitDetail(job))
+                .font(.system(size: 11.5))
+                .foregroundStyle(.secondary)
+            HStack(spacing: 10) {
+                Toggle(
+                    "Auto-continue when limits reset",
+                    isOn: Binding(
+                        get: { job.isEnabled && job.status != .completed },
+                        set: onAutoContinuationEnabled
+                    )
+                )
+                .toggleStyle(.checkbox)
+                .font(.system(size: 11.5))
+                Spacer()
+                Button("Try Again", action: onRetryAutoContinuation)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
+        }
+        .padding(12)
+        .background(.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private func usageLimitDetail(_ job: DesktopAutoContinuationJob) -> String {
+        if job.status == .dispatching { return "Continuing the interrupted task now…" }
+        if job.status == .blocked, let detail = job.detail { return detail }
+        guard let dispatchAt = job.dispatchAt else {
+            return "Veo is waiting for Codex to report when the limit resets."
+        }
+        return job.isEnabled
+            ? "Auto-resuming \(dispatchAt.formatted(.relative(presentation: .named)))."
+            : "Turn on auto-continue to resume after the limit resets."
     }
 
     private var activitySymbol: String {
@@ -3476,6 +3655,7 @@ private struct DesktopComposerView: View {
     @ObservedObject var store: DesktopCodexStore
     var isWelcome = false
     var transitionNamespace: Namespace.ID?
+    var onOpenSubagent: (String) -> Void = { _ in }
     @AppStorage(DesktopAppearancePreferences.composerMaterialKey) private var composerMaterialRaw =
         DesktopComposerMaterial.liquidGlass.rawValue
     @AppStorage(DesktopComposerPreferences.showsContextWindowUsageKey) private var showsContextWindowUsage = false
@@ -3492,7 +3672,10 @@ private struct DesktopComposerView: View {
             if isWelcome {
                 composerCard
             } else {
-                composerCard
+                VStack(spacing: 10) {
+                    DesktopTurnStatusView(store: store, onOpenSubagent: onOpenSubagent)
+                    composerCard
+                }
                     .padding(.horizontal, 16)
                     .padding(.bottom, 18)
                     .frame(maxWidth: .infinity)
@@ -3969,6 +4152,7 @@ private struct DesktopComposerView: View {
         if store.hasExplicitWorkspace,
            !store.isRunningTurn,
            !store.isPlanModeEnabled,
+           !store.isDebugModeEnabled,
            !store.isGoalModeEnabled {
             ViewThatFits(in: .horizontal) {
                 Text("↩ send · ⇧↩ newline")

@@ -702,28 +702,84 @@ private struct SafeToolArtifactRow: View {
 
 private struct SafeInlineArtifactImage: View {
     let artifact: DesktopToolArtifact
+    @State private var image: NSImage?
+    @State private var didDecode = false
 
     var body: some View {
-        if let image = decodedImage {
-            Image(nsImage: image)
-                .resizable()
-                .interpolation(.high)
-                .scaledToFit()
-                .frame(maxWidth: 520, maxHeight: 300)
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        } else {
-            Label("Inline image data was invalid or exceeded the 8 MiB preview limit.", systemImage: "exclamationmark.triangle")
-                .font(.system(size: 10.5))
-                .foregroundStyle(.orange)
+        Group {
+            if let image {
+                Image(nsImage: image)
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+                    .frame(maxWidth: 520, maxHeight: 300)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            } else if didDecode {
+                Label("Inline image data was invalid or exceeded the 8 MiB preview limit.", systemImage: "exclamationmark.triangle")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.orange)
+            } else {
+                ProgressView()
+                    .controlSize(.small)
+                    .frame(maxWidth: 520, minHeight: 40)
+            }
+        }
+        // Artifacts are immutable by ID once the timeline item has merged. Decode
+        // after the initial body pass, then retain the result in view state so a
+        // parent invalidation never base64-decodes the same preview again.
+        .task(id: artifact.id) {
+            image = nil
+            didDecode = false
+            image = SafeInlineArtifactImageCache.image(for: artifact)
+            didDecode = true
         }
     }
+}
 
-    private var decodedImage: NSImage? {
+private final class SafeInlineArtifactImageCacheEntry {
+    let data: Data?
+
+    init(data: Data?) {
+        self.data = data
+    }
+}
+
+private enum SafeInlineArtifactImageCache {
+    private static let maximumEncodedBytes = 12_000_000
+    private static let maximumDecodedBytes = 8 * 1_024 * 1_024
+    private static let cache: NSCache<NSString, SafeInlineArtifactImageCacheEntry> = {
+        let cache = NSCache<NSString, SafeInlineArtifactImageCacheEntry>()
+        cache.countLimit = 12
+        cache.totalCostLimit = 24 * 1_024 * 1_024
+        return cache
+    }()
+
+    static func image(for artifact: DesktopToolArtifact) -> NSImage? {
+        let key = "\(artifact.id)|\(artifact.mimeType?.lowercased() ?? "")" as NSString
+        if let cached = cache.object(forKey: key) {
+            return cached.data.flatMap { decodedImage(from: $0) }
+        }
+
         guard artifact.mimeType?.lowercased().hasPrefix("image/") != false,
-              artifact.source.utf8.count <= 12_000_000,
+              artifact.source.utf8.count <= maximumEncodedBytes,
               let data = Data(base64Encoded: artifact.source, options: [.ignoreUnknownCharacters]),
-              data.count <= 8 * 1_024 * 1_024 else { return nil }
-        return NSImage(data: data)
+              data.count <= maximumDecodedBytes,
+              let image = decodedImage(from: data) else {
+            cache.setObject(SafeInlineArtifactImageCacheEntry(data: nil), forKey: key)
+            return nil
+        }
+
+        cache.setObject(
+            SafeInlineArtifactImageCacheEntry(data: data),
+            forKey: key,
+            cost: max(data.count, 1)
+        )
+        return image
+    }
+
+    private static func decodedImage(from data: Data) -> NSImage? {
+        guard let image = NSImage(data: data), image.isValid else { return nil }
+        return image
     }
 }
 

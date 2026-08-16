@@ -8,6 +8,7 @@ enum DesktopUtilityPanelTab: String, CaseIterable, Identifiable {
     case review
     case browser
     case files
+    case subagents
 
     var id: Self { self }
 
@@ -18,6 +19,7 @@ enum DesktopUtilityPanelTab: String, CaseIterable, Identifiable {
         case .review: return "arrow.left.arrow.right"
         case .browser: return "globe"
         case .files: return "folder"
+        case .subagents: return "person.2.wave.2"
         }
     }
 }
@@ -27,12 +29,14 @@ struct DesktopUtilityPanelItem: Identifiable, Hashable {
         case review
         case browser(UUID)
         case files
+        case subagents
 
         var kind: DesktopUtilityPanelTab {
             switch self {
             case .review: return .review
             case .browser: return .browser
             case .files: return .files
+            case .subagents: return .subagents
             }
         }
     }
@@ -66,6 +70,8 @@ final class DesktopUtilityPanelModel: ObservableObject {
     @Published private(set) var tabs: [DesktopUtilityPanelItem] = []
     @Published private(set) var selectedTabID: UUID?
     @Published var presentsAIReview = false
+    @Published private(set) var subagentsAvailable = false
+    @Published var selectedSubagentID: String?
 
     let files: DesktopFilesModel
     let browser: DesktopBrowserModel
@@ -118,8 +124,38 @@ final class DesktopUtilityPanelModel: ObservableObject {
             let item = DesktopUtilityPanelItem(content: .files)
             tabs.append(item)
             selectTab(item.id)
+        case .subagents:
+            guard subagentsAvailable else { return }
+            let item = DesktopUtilityPanelItem(content: .subagents)
+            tabs.append(item)
+            selectTab(item.id)
         }
         cacheCurrentWorkspace()
+    }
+
+    func showSubagent(_ id: String?) {
+        setSubagentsAvailable(true)
+        show(.subagents)
+        selectedSubagentID = id
+    }
+
+    func setSubagentsAvailable(_ available: Bool) {
+        guard subagentsAvailable != available else { return }
+        subagentsAvailable = available
+        if available {
+            guard !tabs.contains(where: { $0.content.kind == .subagents }) else { return }
+            let item = DesktopUtilityPanelItem(content: .subagents)
+            if let filesIndex = tabs.firstIndex(where: { $0.content.kind == .files }) {
+                tabs.insert(item, at: filesIndex)
+            } else {
+                tabs.append(item)
+            }
+            cacheCurrentWorkspace()
+        } else {
+            selectedSubagentID = nil
+            let ids = tabs.filter { $0.content.kind == .subagents }.map(\.id)
+            for id in ids { removeUtilityTab(id) }
+        }
     }
 
     func ensureOpenTab() {
@@ -168,6 +204,7 @@ final class DesktopUtilityPanelModel: ObservableObject {
         let validBrowserIDs = Set(browser.tabs.map(\.id))
         if let savedTabs = tabsByWorkspace[workspaceKey] {
             tabs = savedTabs.filter { item in
+                if item.content.kind == .subagents { return subagentsAvailable }
                 guard case .browser(let id) = item.content else { return true }
                 return validBrowserIDs.contains(id)
             }
@@ -205,8 +242,12 @@ final class DesktopUtilityPanelModel: ObservableObject {
         }
     }
 
-    func prepareForWorkspaceChange() -> Bool {
-        files.flushPendingSave()
+    func prepareForWorkspaceChange(then action: @escaping () -> Void) -> Bool {
+        files.prepareForWorkspaceChange(then: action)
+    }
+
+    func cancelDeferredWorkspaceChange() {
+        files.cancelDeferredWorkspaceChange()
     }
 
     private func insertBrowserTab(_ browserTabID: UUID, selecting: Bool = true) {

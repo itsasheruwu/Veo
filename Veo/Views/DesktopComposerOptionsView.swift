@@ -53,18 +53,24 @@ struct DesktopComposerOptionsView: View {
                 Divider()
             }
 
-            optionToggle(
-                title: "Plan",
-                detail: "Plan the approach before implementation.",
-                systemImage: "list.bullet.clipboard",
-                color: .orange,
-                isOn: Binding(
-                    get: { store.isPlanModeEnabled },
-                    set: { store.setPlanModeEnabled($0) }
-                )
-            )
-            .disabled(!store.hasExplicitWorkspace || !store.supportsPlanMode)
-            .help(store.supportsPlanMode ? "Use Codex Plan mode" : "Plan mode is unavailable")
+            Text("Mode")
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(.secondary)
+
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(DesktopInteractionMode.allCases) { mode in
+                    Button {
+                        store.setInteractionMode(mode)
+                    } label: {
+                        modeOptionLabel(mode)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!canSelect(mode))
+                    .help(modeHelp(mode))
+                }
+            }
+
+            Divider()
 
             optionToggle(
                 title: "Goal",
@@ -114,6 +120,69 @@ struct DesktopComposerOptionsView: View {
         .accessibilityHint(detail)
     }
 
+    private func modeOptionLabel(_ mode: DesktopInteractionMode) -> some View {
+        HStack(alignment: .top, spacing: 9) {
+            Image(systemName: mode.systemImage)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(modeColor(mode))
+                .frame(width: 16, height: 18)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(mode.title)
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundStyle(.primary)
+
+                Text(mode.detail)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 8)
+
+            Image(systemName: store.interactionMode == mode ? "checkmark.circle.fill" : "circle")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(store.interactionMode == mode ? modeColor(mode) : .secondary.opacity(0.55))
+        }
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(mode.title)
+        .accessibilityValue(store.interactionMode == mode ? "Selected" : "Not selected")
+        .accessibilityHint(mode.detail)
+    }
+
+    private func canSelect(_ mode: DesktopInteractionMode) -> Bool {
+        switch mode {
+        case .agentic:
+            return true
+        case .plan:
+            return store.hasExplicitWorkspace && store.supportsPlanMode
+        case .debug:
+            return store.hasExplicitWorkspace && store.supportsDebugMode
+        }
+    }
+
+    private func modeHelp(_ mode: DesktopInteractionMode) -> String {
+        switch mode {
+        case .agentic:
+            return mode.detail
+        case .plan where !store.supportsPlanMode:
+            return "Plan mode is unavailable in this Codex runtime"
+        case .debug where !store.supportsDebugMode:
+            return "Debug mode requires collaboration-mode support in the Codex runtime"
+        default:
+            return mode.detail
+        }
+    }
+
+    private func modeColor(_ mode: DesktopInteractionMode) -> Color {
+        switch mode {
+        case .agentic: return .accentColor
+        case .plan: return .orange
+        case .debug: return .purple
+        }
+    }
+
     private func optionLabel(
         title: String,
         detail: String,
@@ -154,6 +223,15 @@ struct DesktopComposerModePills: View {
                     systemImage: "list.bullet.clipboard",
                     color: .orange,
                     onDismiss: { store.setPlanModeEnabled(false) }
+                )
+            }
+
+            if store.isDebugModeEnabled {
+                DesktopComposerModePill(
+                    title: "Debug",
+                    systemImage: "ladybug",
+                    color: .purple,
+                    onDismiss: { store.setInteractionMode(.agentic) }
                 )
             }
 

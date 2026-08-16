@@ -134,12 +134,14 @@ private struct CodeBlockView: View {
 }
 
 struct MarkdownBlock: Identifiable {
-    enum Kind {
+    enum Kind: String {
         case prose
         case code
     }
 
-    let id = UUID()
+    /// A source-position identity keeps completed leading blocks mounted while a
+    /// streamed tail changes. UUIDs caused every parsed block to be recreated.
+    let id: String
     let kind: Kind
     let text: String
     let language: String?
@@ -147,6 +149,7 @@ struct MarkdownBlock: Identifiable {
     static func parse(_ source: String) -> [MarkdownBlock] {
         var blocks: [MarkdownBlock] = []
         var buffer: [String] = []
+        var bufferStartLine: Int?
         var isInFence = false
         var fenceLanguage: String?
 
@@ -155,11 +158,21 @@ struct MarkdownBlock: Identifiable {
                 .joined(separator: "\n")
                 .trimmingCharacters(in: kind == .code ? .newlines : .whitespacesAndNewlines)
             buffer.removeAll()
+            defer { bufferStartLine = nil }
             guard !text.isEmpty else { return }
-            blocks.append(MarkdownBlock(kind: kind, text: text, language: language))
+            let normalizedLanguage = language?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            let startLine = bufferStartLine ?? 0
+            blocks.append(MarkdownBlock(
+                id: "\(kind.rawValue):\(normalizedLanguage ?? "plain"):\(startLine)",
+                kind: kind,
+                text: text,
+                language: language
+            ))
         }
 
-        for line in source.components(separatedBy: .newlines) {
+        for (lineNumber, line) in source.components(separatedBy: .newlines).enumerated() {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             if trimmed.hasPrefix("```") {
                 if isInFence {
@@ -172,6 +185,9 @@ struct MarkdownBlock: Identifiable {
                     isInFence = true
                 }
                 continue
+            }
+            if buffer.isEmpty {
+                bufferStartLine = lineNumber
             }
             buffer.append(line)
         }

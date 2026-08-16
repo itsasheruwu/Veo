@@ -7,7 +7,7 @@ import Darwin
 import Foundation
 import UniformTypeIdentifiers
 
-struct DesktopWorkspaceFileEntry: Identifiable, Hashable {
+struct DesktopWorkspaceFileEntry: Identifiable, Hashable, Sendable {
     let url: URL
     let relativePath: String
     let name: String
@@ -28,24 +28,24 @@ struct DesktopWorkspaceFileEntry: Identifiable, Hashable {
     }
 }
 
-enum DesktopWorkspaceTextEncoding: String, Hashable {
+enum DesktopWorkspaceTextEncoding: String, Hashable, Sendable {
     case utf8
     case utf8BOM
     case utf16LittleEndian
     case utf16BigEndian
 }
 
-enum DesktopWorkspaceNewline: String, Hashable {
+enum DesktopWorkspaceNewline: String, Hashable, Sendable {
     case lineFeed
     case carriageReturnLineFeed
 }
 
-struct DesktopWorkspaceFileFingerprint: Hashable {
+struct DesktopWorkspaceFileFingerprint: Hashable, Sendable {
     let digest: String
     let permissions: Int
 }
 
-struct DesktopWorkspaceTextDocument: Hashable {
+struct DesktopWorkspaceTextDocument: Hashable, Sendable {
     let url: URL
     let relativePath: String
     var text: String
@@ -54,7 +54,7 @@ struct DesktopWorkspaceTextDocument: Hashable {
     var fingerprint: DesktopWorkspaceFileFingerprint
 }
 
-enum DesktopWorkspaceFileError: LocalizedError {
+enum DesktopWorkspaceFileError: LocalizedError, Sendable {
     case noWorkspace
     case unsafePath
     case notDirectory
@@ -78,12 +78,117 @@ enum DesktopWorkspaceFileError: LocalizedError {
     }
 }
 
-struct DesktopWorkspaceFileService {
+struct DesktopWorkspaceFileTreeSnapshot: Sendable {
+    let rootEntries: [DesktopWorkspaceFileEntry]
+    let childrenByPath: [String: [DesktopWorkspaceFileEntry]]
+}
+
+/// Serializes filesystem work away from the main actor while retaining the same
+/// workspace-boundary and optimistic-concurrency checks as the editor surface.
+actor DesktopWorkspaceFileService {
     private static let maximumTextBytes = 8 * 1_024 * 1_024
     private let fileManager = FileManager.default
 
-    func listChildren(of directoryURL: URL, workspaceURL: URL) throws -> [DesktopWorkspaceFileEntry] {
+    func loadTree(
+        in workspaceURL: URL,
+        expandedPaths: Set<String>
+    ) throws -> DesktopWorkspaceFileTreeSnapshot {
+        try Task.checkCancellation()
         let workspace = try canonicalWorkspace(workspaceURL)
+        try Task.checkCancellation()
+        let rootEntries = try listChildren(of: workspace, workspace: workspace)
+        try Task.checkCancellation()
+        var childrenByPath: [String: [DesktopWorkspaceFileEntry]] = [:]
+        var entriesByPath = Dictionary(uniqueKeysWithValues: rootEntries.map { ($0.relativePath, $0) })
+
+        let orderedExpandedPaths = expandedPaths.sorted { lhs, rhs in
+            let lhsDepth = lhs.split(separator: "/").count
+            let rhsDepth = rhs.split(separator: "/").count
+            if lhsDepth != rhsDepth { return lhsDepth < rhsDepth }
+            return lhs.localizedStandardCompare(rhs) == .orderedAscending
+        }
+        for path in orderedExpandedPaths {
+            try Task.checkCancellation()
+            guard let directory = entriesByPath[path], directory.isDirectory else { continue }
+            let children = try listChildren(of: directory.url, workspace: workspace)
+            childrenByPath[path] = children
+            for child in children {
+                entriesByPath[child.relativePath] = child
+            }
+        }
+
+        return DesktopWorkspaceFileTreeSnapshot(
+            rootEntries: rootEntries,
+            childrenByPath: childrenByPath
+        )
+    }
+
+    func loadChildren(
+        of directoryURL: URL,
+        workspaceURL: URL
+    ) throws -> [DesktopWorkspaceFileEntry] {
+        let workspace = try canonicalWorkspace(workspaceURL)
+        try Task.checkCancellation()
+        return try listChildren(of: directoryURL, workspace: workspace)
+    }
+
+    func readText(
+        _ entry: DesktopWorkspaceFileEntry,
+        workspaceURL: URL
+    ) throws -> DesktopWorkspaceTextDocument {
+        guard entry.isEditableText else { throw DesktopWorkspaceFileError.unsupportedText }
+        let file = try validatedRegularFile(entry.url, workspaceURL: workspaceURL)
+        let data = try readData(at: file.url)
+        let decoded = try decode(data)
+        return DesktopWorkspaceTextDocument(
+            url: file.url,
+            relativePath: entry.relativePath,
+            text: decoded.text,
+            encoding: decoded.encoding,
+            newline: decoded.newline,
+            fingerprint: fingerprint(for: data, permissions: file.permissions)
+        )
+    }
+
+    func fingerprint(of url: URL, workspaceURL: URL) throws -> DesktopWorkspaceFileFingerprint {
+        let file = try validatedRegularFile(url, workspaceURL: workspaceURL)
+        return fingerprint(for: try readData(at: file.url), permissions: file.permissions)
+    }
+
+    func save(
+        _ document: DesktopWorkspaceTextDocument,
+        workspaceURL: URL,
+        overwrite: Bool
+    ) throws -> DesktopWorkspaceFileFingerprint {
+        let target = try validatedRegularFile(document.url, workspaceURL: workspaceURL)
+        let current = fingerprint(for: try readData(at: target.url), permissions: target.permissions)
+        guard overwrite || current.digest == document.fingerprint.digest else {
+            throw DesktopWorkspaceFileError.changedOnDisk
+        }
+        let normalized = document.newline == .carriageReturnLineFeed
+            ? document.text.replacingOccurrences(of: "\r\n", with: "\n")
+                .replacingOccurrences(of: "\n", with: "\r\n")
+            : document.text.replacingOccurrences(of: "\r\n", with: "\n")
+        guard let data = encode(normalized, as: document.encoding), data.count <= Self.maximumTextBytes else {
+            throw DesktopWorkspaceFileError.unsupportedText
+        }
+
+        let parent = target.url.deletingLastPathComponent()
+        let temporary = parent.appendingPathComponent(".veo-save-\(UUID().uuidString)", isDirectory: false)
+        do {
+            try data.write(to: temporary, options: [.withoutOverwriting])
+            try fileManager.setAttributes([.posixPermissions: target.permissions], ofItemAtPath: temporary.path)
+            _ = try fileManager.replaceItemAt(target.url, withItemAt: temporary, backupItemName: nil, options: [])
+        } catch {
+            try? fileManager.removeItem(at: temporary)
+            throw DesktopWorkspaceFileError.saveFailed(error.localizedDescription)
+        }
+        // The exact bytes just replaced the validated regular file, so avoid a second
+        // full-file read solely to derive the optimistic-concurrency fingerprint.
+        return fingerprint(for: data, permissions: target.permissions)
+    }
+
+    private func listChildren(of directoryURL: URL, workspace: URL) throws -> [DesktopWorkspaceFileEntry] {
         let directory = directoryURL.standardizedFileURL.resolvingSymlinksInPath()
         guard contains(directory, inside: workspace) else { throw DesktopWorkspaceFileError.unsafePath }
         var isDirectory: ObjCBool = false
@@ -118,60 +223,10 @@ struct DesktopWorkspaceFileService {
         }
     }
 
-    func readText(_ entry: DesktopWorkspaceFileEntry, workspaceURL: URL) throws -> DesktopWorkspaceTextDocument {
-        guard entry.isEditableText else { throw DesktopWorkspaceFileError.unsupportedText }
-        let (file, fingerprint) = try validatedRegularFile(entry.url, workspaceURL: workspaceURL)
-        let data = try Data(contentsOf: file, options: [.mappedIfSafe])
-        guard data.count <= Self.maximumTextBytes else { throw DesktopWorkspaceFileError.fileTooLarge }
-        let decoded = try decode(data)
-        return DesktopWorkspaceTextDocument(
-            url: file,
-            relativePath: entry.relativePath,
-            text: decoded.text,
-            encoding: decoded.encoding,
-            newline: decoded.newline,
-            fingerprint: fingerprint
-        )
-    }
-
-    func fingerprint(of url: URL, workspaceURL: URL) throws -> DesktopWorkspaceFileFingerprint {
-        try validatedRegularFile(url, workspaceURL: workspaceURL).fingerprint
-    }
-
-    func save(
-        _ document: DesktopWorkspaceTextDocument,
-        workspaceURL: URL,
-        overwrite: Bool
-    ) throws -> DesktopWorkspaceFileFingerprint {
-        let (target, current) = try validatedRegularFile(document.url, workspaceURL: workspaceURL)
-        guard overwrite || current.digest == document.fingerprint.digest else {
-            throw DesktopWorkspaceFileError.changedOnDisk
-        }
-        let normalized = document.newline == .carriageReturnLineFeed
-            ? document.text.replacingOccurrences(of: "\r\n", with: "\n")
-                .replacingOccurrences(of: "\n", with: "\r\n")
-            : document.text.replacingOccurrences(of: "\r\n", with: "\n")
-        guard let data = encode(normalized, as: document.encoding), data.count <= Self.maximumTextBytes else {
-            throw DesktopWorkspaceFileError.unsupportedText
-        }
-
-        let parent = target.deletingLastPathComponent()
-        let temporary = parent.appendingPathComponent(".veo-save-\(UUID().uuidString)", isDirectory: false)
-        do {
-            try data.write(to: temporary, options: [.withoutOverwriting])
-            try fileManager.setAttributes([.posixPermissions: current.permissions], ofItemAtPath: temporary.path)
-            _ = try fileManager.replaceItemAt(target, withItemAt: temporary, backupItemName: nil, options: [])
-        } catch {
-            try? fileManager.removeItem(at: temporary)
-            throw DesktopWorkspaceFileError.saveFailed(error.localizedDescription)
-        }
-        return try fingerprint(of: target, workspaceURL: workspaceURL)
-    }
-
     private func validatedRegularFile(
         _ rawURL: URL,
         workspaceURL: URL
-    ) throws -> (url: URL, fingerprint: DesktopWorkspaceFileFingerprint) {
+    ) throws -> (url: URL, permissions: Int) {
         let workspace = try canonicalWorkspace(workspaceURL)
         let raw = rawURL.standardizedFileURL
         var status = stat()
@@ -184,14 +239,21 @@ struct DesktopWorkspaceFileService {
         }
         let resolved = raw.resolvingSymlinksInPath()
         guard contains(resolved, inside: workspace) else { throw DesktopWorkspaceFileError.unsafePath }
-        let data = try Data(contentsOf: resolved, options: [.mappedIfSafe])
-        let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-        return (
-            resolved,
-            DesktopWorkspaceFileFingerprint(
-                digest: digest,
-                permissions: Int(status.st_mode & 0o7777)
-            )
+        return (resolved, Int(status.st_mode & 0o7777))
+    }
+
+    private func readData(at url: URL) throws -> Data {
+        let data = try Data(contentsOf: url, options: [.mappedIfSafe])
+        guard data.count <= Self.maximumTextBytes else {
+            throw DesktopWorkspaceFileError.fileTooLarge
+        }
+        return data
+    }
+
+    private func fingerprint(for data: Data, permissions: Int) -> DesktopWorkspaceFileFingerprint {
+        DesktopWorkspaceFileFingerprint(
+            digest: SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined(),
+            permissions: permissions
         )
     }
 

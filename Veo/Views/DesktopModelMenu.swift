@@ -14,7 +14,7 @@ struct DesktopModelMenu: View {
     }
 
     private var selectedVariant: DesktopGPT56Variant? {
-        store.selectedModel.flatMap(catalog.variant(for:))
+        store.routingMode == .auto ? .auto : store.selectedModel.flatMap(catalog.variant(for:))
     }
 
     private var collapsedModelTitle: String {
@@ -23,6 +23,7 @@ struct DesktopModelMenu: View {
     }
 
     private var isFastModeEnabled: Bool {
+        guard store.routingMode == .direct else { return false }
         guard let model = store.selectedModel,
               let fastTier = model.serviceTiers.first(where: \.isFastModeTier) else {
             return false
@@ -35,18 +36,20 @@ struct DesktopModelMenu: View {
             isPresented.toggle()
         } label: {
             ViewThatFits(in: .horizontal) {
-                modelLabel(showsReasoning: true)
+                modelLabel(showsReasoning: store.routingMode == .direct)
                 modelLabel(showsReasoning: false)
             }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(store.models.isEmpty)
-        .help(store.selectedModel?.description ?? "Codex model")
+        .help(store.routingMode == .auto ? "Veo routes work across the GPT-5.6 family." : (store.selectedModel?.description ?? "Codex model"))
         .accessibilityLabel("Model settings")
         .accessibilityValue(
-            "\(collapsedModelTitle), \(store.reasoningDisplayName) reasoning"
-                + (isFastModeEnabled ? ", Fast Mode on" : "")
+            store.routingMode == .auto
+                ? "GPT-5.6 Auto, Sol High orchestration"
+                : "\(collapsedModelTitle), \(store.reasoningDisplayName) reasoning"
+                    + (isFastModeEnabled ? ", Fast Mode on" : "")
         )
         .popover(isPresented: $isPresented, arrowEdge: .top) {
             DesktopModelStudioPicker(store: store, catalog: catalog)
@@ -99,11 +102,11 @@ private struct DesktopModelStudioPicker: View {
     }
 
     private var isGPT56Selected: Bool {
-        store.selectedModel.map(catalog.isGPT56) == true
+        store.routingMode == .auto || store.selectedModel.map(catalog.isGPT56) == true
     }
 
     private var selectedVariant: DesktopGPT56Variant? {
-        store.selectedModel.flatMap(catalog.variant(for:))
+        store.routingMode == .auto ? .auto : store.selectedModel.flatMap(catalog.variant(for:))
     }
 
     var body: some View {
@@ -119,7 +122,10 @@ private struct DesktopModelStudioPicker: View {
                             variantSection
                         }
 
-                        if let model = store.selectedModel {
+                        if store.routingMode == .auto {
+                            sectionDivider
+                            autoLaneSection
+                        } else if let model = store.selectedModel {
                             sectionDivider
                             reasoningSection(for: model)
 
@@ -277,6 +283,8 @@ private struct DesktopModelStudioPicker: View {
             sectionTitle("Variant")
 
             Picker("GPT-5.6 variant", selection: variantSelection) {
+                Text(DesktopGPT56Variant.auto.title)
+                    .tag(Optional(DesktopGPT56Variant.auto))
                 ForEach(catalog.variantModels, id: \.variant) { option in
                     Text(option.variant.title)
                         .tag(Optional(option.variant))
@@ -295,6 +303,40 @@ private struct DesktopModelStudioPicker: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
+    }
+
+    private var autoLaneSection: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            sectionTitle("Auto lane")
+
+            if let plan = store.resolvedAutoRoutePlan {
+                Label(plan.laneSummary, systemImage: "point.3.connected.trianglepath.dotted")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if plan.isDegraded {
+                    ForEach(plan.warnings, id: \.self) { warning in
+                        Label(warning, systemImage: "exclamationmark.triangle")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                } else {
+                    Text("Live routing with parent verification and fresh Sol review.")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } else {
+                Label(store.autoRouteErrorMessage ?? "Auto routing is unavailable.", systemImage: "exclamationmark.triangle")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("GPT-5.6 Auto route")
     }
 
     private func reasoningSection(for model: DesktopModelOption) -> some View {
@@ -335,8 +377,12 @@ private struct DesktopModelStudioPicker: View {
         Binding(
             get: { selectedVariant },
             set: { variant in
-                guard let variant,
-                      let model = catalog.variantModels.first(where: { $0.variant == variant })?.model else {
+                guard let variant else { return }
+                if variant == .auto {
+                    store.selectAutoRouting()
+                    return
+                }
+                guard let model = catalog.variantModels.first(where: { $0.variant == variant })?.model else {
                     return
                 }
                 store.selectModel(model.id)
@@ -346,6 +392,9 @@ private struct DesktopModelStudioPicker: View {
 
     private var selectedVariantDescription: String? {
         guard let selectedVariant else { return nil }
+        if selectedVariant == .auto {
+            return "Veo-owned orchestration: Sol leads, workers implement, the parent verifies, and fresh Sol review gates code changes."
+        }
         return catalog.variantModels.first(where: { $0.variant == selectedVariant })?.model.description
     }
 
@@ -365,6 +414,9 @@ private struct DesktopModelStudioPicker: View {
     }
 
     private func familyDescription(fallback: DesktopModelOption) -> String {
+        if store.routingMode == .auto {
+            return "Veo coordinates the GPT-5.6 family and keeps the exact route visible."
+        }
         guard isGPT56Selected, let selected = store.selectedModel, !selected.description.isEmpty else {
             return fallback.description
         }
@@ -389,9 +441,7 @@ private struct DesktopModelStudioPicker: View {
     }
 
     private func selectModelAndShowDetails(_ modelID: String) {
-        if store.selectedModelID != modelID {
-            store.selectModel(modelID)
-        }
+        store.selectModel(modelID)
         withAnimation(.easeInOut(duration: 0.2)) {
             page = .details
         }
@@ -477,6 +527,7 @@ private struct StudioSelectionRow: View {
 }
 
 private enum DesktopGPT56Variant: String, CaseIterable, Hashable {
+    case auto
     case luna
     case terra
     case sol
@@ -501,7 +552,7 @@ private struct DesktopModelCatalogPresentation {
     }
 
     var variantModels: [VariantModel] {
-        DesktopGPT56Variant.allCases.compactMap { variant in
+        DesktopGPT56Variant.allCases.filter { $0 != .auto }.compactMap { variant in
             let candidates = gpt56Models.filter { self.variant(for: $0) == variant }
             guard let model = canonicalModel(for: variant, from: candidates) else { return nil }
             return VariantModel(variant: variant, model: model)
@@ -523,7 +574,9 @@ private struct DesktopModelCatalogPresentation {
     func variant(for model: DesktopModelOption) -> DesktopGPT56Variant? {
         guard isGPT56(model) else { return nil }
         let text = modelSearchText(model)
-        return DesktopGPT56Variant.allCases.first(where: { text.contains("-\($0.rawValue)") })
+        return DesktopGPT56Variant.allCases
+            .filter { $0 != .auto }
+            .first(where: { text.contains("-\($0.rawValue)") })
     }
 
     private func canonicalModel(

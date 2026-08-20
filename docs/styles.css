@@ -422,8 +422,10 @@ section { padding: 88px 0; }
   position: relative;
   isolation: isolate;
   overflow: hidden;
-  margin: 8px 0 64px;
-  padding: 36px;
+  grid-template-columns: 150px 1fr;
+  gap: 26px;
+  margin: 8px 0 48px;
+  padding: 26px;
   border: 1px solid rgba(104, 169, 255, 0.3);
   border-radius: 28px;
   background:
@@ -450,7 +452,7 @@ section { padding: 88px 0; }
 
 .release-major .ver {
   margin: 5px 0 3px;
-  font-size: clamp(70px, 10vw, 116px);
+  font-size: clamp(64px, 7vw, 82px);
   line-height: 0.9;
   letter-spacing: -0.09em;
   background: linear-gradient(145deg, #fff 15%, #70b2ff 72%, #2e8cfa);
@@ -468,41 +470,41 @@ section { padding: 88px 0; }
 }
 
 .major-kicker { color: #74b6ff; font-size: 10px; font-weight: 700; }
-.major-overline { display: block; color: #74b6ff; font-size: 11px; margin-bottom: 14px; }
-.major-rule { width: 44px; height: 1px; margin: 21px 0 18px; background: linear-gradient(90deg, #70b2ff, transparent); }
+.major-overline { display: block; color: #74b6ff; font-size: 10px; margin-bottom: 9px; }
+.major-rule { width: 40px; height: 1px; margin: 16px 0 14px; background: linear-gradient(90deg, #70b2ff, transparent); }
 
 .major-intro { max-width: 690px; }
-.major-intro h2 { font-size: clamp(34px, 5vw, 56px); letter-spacing: -0.055em; }
-.major-intro p { margin-top: 22px; font-size: 17px; line-height: 1.7; color: #b6c0ce; }
+.major-intro h2 { font-size: clamp(31px, 4vw, 42px); letter-spacing: -0.05em; }
+.major-intro p { margin-top: 13px; font-size: 15px; line-height: 1.55; color: #b6c0ce; }
 
 .major-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 1px;
-  margin-top: 38px;
+  margin-top: 24px;
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.09);
   border-radius: 17px;
   background: rgba(255, 255, 255, 0.09);
 }
 
-.major-feature { min-height: 230px; padding: 25px; background: rgba(10, 14, 20, 0.94); }
-.major-feature h3 { margin: 19px 0 10px; font-size: 18px; }
-.major-feature p { font-size: 14px; line-height: 1.65; }
+.major-feature { min-height: 154px; padding: 17px 18px; background: rgba(10, 14, 20, 0.94); }
+.major-feature h3 { margin: 11px 0 6px; font-size: 16px; }
+.major-feature p { font-size: 13px; line-height: 1.5; }
 .major-number { color: #5ca8ff; font-size: 10px; }
 
 .major-strip {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 1px;
-  margin-top: 18px;
+  margin-top: 13px;
   border-block: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-.major-strip div { padding: 18px 18px 18px 0; }
+.major-strip div { padding: 12px 14px 12px 0; }
 .major-strip b { display: block; margin-bottom: 4px; color: var(--text); font-size: 12px; }
-.major-strip span { display: block; color: var(--faint); font-size: 12px; line-height: 1.5; }
-.major-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 26px; }
+.major-strip span { display: block; color: var(--faint); font-size: 11.5px; line-height: 1.4; }
+.major-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
 
 /* ---------- FAQ ---------- */
 
@@ -560,10 +562,10 @@ details p { color: var(--muted); font-size: 14.5px; margin-top: 10px; }
   .grid-3, .keys { grid-template-columns: repeat(2, 1fr); }
   .release { grid-template-columns: 1fr; gap: 14px; padding: 30px 0; }
   .release .side { position: static; }
-  .release-major { padding: 28px; }
+  .release-major { padding: 24px; }
   .release-major .side { display: grid; grid-template-columns: auto 1fr auto; align-items: end; column-gap: 14px; }
   .release-major .major-kicker { grid-column: 1 / -1; }
-  .release-major .ver { font-size: 72px; }
+  .release-major .ver { font-size: 62px; }
   .release-major .date { padding-bottom: 8px; }
   .release-major .major-rule { display: none; }
   .release-major .tag { align-self: center; }
@@ -576,7 +578,8 @@ details p { color: var(--muted); font-size: 14.5px; margin-top: 10px; }
   .nav-links .hide-sm { display: none; }
   .hero { padding: 56px 0 30px; }
   .dl-hero { padding: 22px; }
-  .release-major { margin-inline: -8px; padding: 22px; border-radius: 22px; }
+  .release-major { margin-inline: -8px; padding: 20px; border-radius: 22px; }
   .major-grid, .major-strip { grid-template-columns: 1fr; }
-  .major-feature { min-height: 0; }
+  .major-feature { min-height: 0; padding: 15px 17px; }
+  .major-feature h3 { margin-top: 8px; }
 }

@@ -261,6 +261,77 @@ actor VeoThreadStore {
             try bindText(statement, 1, bare)
             try stepDone(statement)
         }
+        try deletePlanArtifacts(threadID: veoID)
+    }
+
+    func loadPlanArtifacts(threadID: String) throws -> [DesktopPlanArtifact] {
+        try openIfNeeded()
+        let sql = """
+        SELECT item_id, turn_id, original_markdown, edited_markdown, lifecycle,
+               implementation_client_id, implementation_turn_id, updated_at
+        FROM plan_artifacts
+        WHERE thread_key = ?
+        ORDER BY updated_at ASC;
+        """
+        let statement = try prepare(sql)
+        defer { sqlite3_finalize(statement) }
+        try bindText(statement, 1, threadID)
+        var artifacts: [DesktopPlanArtifact] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            guard let itemID = columnText(statement, 0),
+                  let originalMarkdown = columnText(statement, 2) else { continue }
+            let lifecycle = columnText(statement, 4)
+                .flatMap(DesktopPlanArtifact.Lifecycle.init(rawValue:)) ?? .ready
+            artifacts.append(DesktopPlanArtifact(
+                reference: DesktopPlanReference(threadID: threadID, itemID: itemID),
+                turnID: columnText(statement, 1),
+                originalMarkdown: originalMarkdown,
+                editedMarkdown: columnText(statement, 3),
+                lifecycle: lifecycle,
+                implementationClientID: columnText(statement, 5),
+                implementationTurnID: columnText(statement, 6),
+                updatedAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 7))
+            ))
+        }
+        return artifacts
+    }
+
+    func upsertPlanArtifact(_ artifact: DesktopPlanArtifact) throws {
+        try openIfNeeded()
+        let sql = """
+        INSERT INTO plan_artifacts (
+            thread_key, item_id, turn_id, original_markdown, edited_markdown, lifecycle,
+            implementation_client_id, implementation_turn_id, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(thread_key, item_id) DO UPDATE SET
+            turn_id = excluded.turn_id,
+            original_markdown = excluded.original_markdown,
+            edited_markdown = excluded.edited_markdown,
+            lifecycle = excluded.lifecycle,
+            implementation_client_id = excluded.implementation_client_id,
+            implementation_turn_id = excluded.implementation_turn_id,
+            updated_at = excluded.updated_at;
+        """
+        let statement = try prepare(sql)
+        defer { sqlite3_finalize(statement) }
+        try bindText(statement, 1, artifact.reference.threadID)
+        try bindText(statement, 2, artifact.reference.itemID)
+        try bindOptionalText(statement, 3, artifact.turnID)
+        try bindText(statement, 4, artifact.originalMarkdown)
+        try bindOptionalText(statement, 5, artifact.editedMarkdown)
+        try bindText(statement, 6, artifact.lifecycle.rawValue)
+        try bindOptionalText(statement, 7, artifact.implementationClientID)
+        try bindOptionalText(statement, 8, artifact.implementationTurnID)
+        sqlite3_bind_double(statement, 9, artifact.updatedAt.timeIntervalSince1970)
+        try stepDone(statement)
+    }
+
+    func deletePlanArtifacts(threadID: String) throws {
+        try openIfNeeded()
+        let statement = try prepare("DELETE FROM plan_artifacts WHERE thread_key = ?;")
+        defer { sqlite3_finalize(statement) }
+        try bindText(statement, 1, threadID)
+        try stepDone(statement)
     }
 
     func appManagedWorkspacePaths() throws -> Set<String> {
@@ -288,6 +359,7 @@ actor VeoThreadStore {
     func replaceTimeline(veoID: String, turns: [[String: Any]]) throws {
         try openIfNeeded()
         let bare = DesktopThreadSelection.parse(veoID).bareID
+        let localPresentationItems = try loadLocalPresentationItems(veoID: bare)
         try exec("BEGIN IMMEDIATE;")
         do {
             for table in ["items", "turns"] {
@@ -321,6 +393,19 @@ actor VeoThreadStore {
                         updatedAt: Date()
                     )
                 }
+            }
+            for item in localPresentationItems {
+                try upsertItem(
+                    veoID: bare,
+                    itemID: item.itemID,
+                    turnID: item.turnID,
+                    type: item.type,
+                    clientID: item.clientID,
+                    status: item.status,
+                    rawJSON: item.rawJSON,
+                    sortIndex: max(item.sortIndex, 1_000_000),
+                    updatedAt: item.updatedAt
+                )
             }
             try exec("COMMIT;")
         } catch {
@@ -389,6 +474,36 @@ actor VeoThreadStore {
 
     // MARK: - Private
 
+    private func loadLocalPresentationItems(veoID: String) throws -> [PersistedItem] {
+        let sql = """
+        SELECT item_id, turn_id, type, client_id, status, raw_json, sort_index, updated_at
+        FROM items
+        WHERE veo_id = ? AND type = 'veoUserInputAnswer'
+        ORDER BY sort_index ASC, updated_at ASC;
+        """
+        let statement = try prepare(sql)
+        defer { sqlite3_finalize(statement) }
+        try bindText(statement, 1, veoID)
+        var items: [PersistedItem] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            guard let itemID = columnText(statement, 0),
+                  let rawJSON = columnText(statement, 5) else { continue }
+            items.append(
+                PersistedItem(
+                    itemID: itemID,
+                    turnID: columnText(statement, 1),
+                    type: columnText(statement, 2),
+                    clientID: columnText(statement, 3),
+                    status: columnText(statement, 4),
+                    rawJSON: rawJSON,
+                    sortIndex: Int(sqlite3_column_int(statement, 6)),
+                    updatedAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 7))
+                )
+            )
+        }
+        return items
+    }
+
     private func migrate() throws {
         try exec("""
         CREATE TABLE IF NOT EXISTS threads (
@@ -443,9 +558,24 @@ actor VeoThreadStore {
             FOREIGN KEY (veo_id) REFERENCES threads(veo_id) ON DELETE CASCADE
         );
         """)
+        try exec("""
+        CREATE TABLE IF NOT EXISTS plan_artifacts (
+            thread_key TEXT NOT NULL,
+            item_id TEXT NOT NULL,
+            turn_id TEXT,
+            original_markdown TEXT NOT NULL,
+            edited_markdown TEXT,
+            lifecycle TEXT NOT NULL DEFAULT 'ready',
+            implementation_client_id TEXT,
+            implementation_turn_id TEXT,
+            updated_at REAL NOT NULL,
+            PRIMARY KEY (thread_key, item_id)
+        );
+        """)
         try exec("CREATE INDEX IF NOT EXISTS idx_threads_archived_updated ON threads(is_archived, updated_at DESC);")
         try exec("CREATE INDEX IF NOT EXISTS idx_items_veo_sort ON items(veo_id, sort_index);")
         try exec("CREATE INDEX IF NOT EXISTS idx_threads_codex ON threads(codex_thread_id);")
+        try exec("CREATE INDEX IF NOT EXISTS idx_plan_artifacts_thread ON plan_artifacts(thread_key, updated_at);")
     }
 
     private func upsertTurn(
@@ -545,7 +675,7 @@ actor VeoThreadStore {
             agentNickname: meta.string("agentNickname"),
             agentRole: meta.string("agentRole"),
             canAcceptDirectInput: meta["canAcceptDirectInput"] as? Bool,
-            activeFlags: meta.stringArray("activeFlags") ?? [],
+            activeFlags: meta.stringArray("activeFlags"),
             agentDepth: meta.number("agentDepth").map(Int.init),
             sessionID: meta.string("sessionId"),
             workspaceKind: workspaceKind

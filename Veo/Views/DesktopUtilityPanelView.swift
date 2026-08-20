@@ -16,6 +16,8 @@ struct DesktopUtilityPanelView: View {
             Divider()
 
             switch model.selectedTab?.content {
+            case .some(.plan(let reference)):
+                DesktopPlanPanelView(store: store, reference: reference)
             case .some(.review):
                 DesktopReviewPanelView(
                     store: store,
@@ -110,6 +112,16 @@ struct DesktopUtilityPanelView: View {
     @ViewBuilder
     private func tabButton(for item: DesktopUtilityPanelItem, index: Int) -> some View {
         switch item.content {
+        case .plan(let reference):
+            DesktopUtilityTabButton(
+                title: "Plan",
+                systemImage: DesktopUtilityPanelTab.plan.systemImage,
+                isLoading: store.planArtifact(for: reference)?.lifecycle == .implementing,
+                isSelected: model.selectedTabID == item.id,
+                select: { model.selectTab(item.id) },
+                close: { model.closeTab(item.id) }
+            )
+            .contextMenu { tabContextMenu(item: item, index: index) }
         case .review:
             DesktopUtilityTabButton(
                 title: "Review",

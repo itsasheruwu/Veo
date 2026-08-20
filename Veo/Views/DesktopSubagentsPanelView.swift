@@ -250,7 +250,7 @@ private struct DesktopSubagentTranscriptRow: View {
             Label(item.body, systemImage: "exclamationmark.triangle.fill")
                 .font(.system(size: 11.5))
                 .foregroundStyle(.red)
-        case .command, .fileChange, .plan, .activity:
+        case .command, .fileChange, .plan, .planUpdate, .activity, .imageView:
             Label(item.title, systemImage: transcriptSymbol)
                 .font(.system(size: 11.5, weight: .medium))
                 .foregroundStyle(.secondary)
@@ -262,6 +262,8 @@ private struct DesktopSubagentTranscriptRow: View {
         case .command: return "terminal"
         case .fileChange: return "doc.badge.gearshape"
         case .plan: return "list.bullet.clipboard"
+        case .planUpdate: return "checklist"
+        case .imageView: return "photo"
         default: return "gearshape.2"
         }
     }

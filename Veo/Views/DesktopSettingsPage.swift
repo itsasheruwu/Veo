@@ -157,6 +157,10 @@ struct DesktopSettingsPage: View {
     @AppStorage(DesktopAppearancePreferences.threadMinimapVisibleKey) private var showsThreadMinimap = true
     @AppStorage(DesktopAppearancePreferences.threadMinimapMaterialKey) private var threadMinimapMaterialRaw =
         DesktopMinimapMaterial.liquidGlass.rawValue
+    @AppStorage(DesktopAppearancePreferences.modelPickerAppearanceKey) private var modelPickerAppearanceRaw =
+        DesktopModelPickerAppearance.native.rawValue
+    @AppStorage(DesktopAppearancePreferences.viewedImagesInitialExpansionKey) private var viewedImagesInitialExpansionRaw =
+        DesktopViewedImagesInitialExpansion.expanded.rawValue
     @AppStorage(DesktopComposerPreferences.showsTurnStatusKey) private var showsTurnStatus = true
     @AppStorage(DesktopComposerPreferences.showsContextWindowUsageKey) private var showsContextWindowUsage = false
     @AppStorage(DesktopComposerPreferences.contextWindowUsageStyleKey) private var contextWindowUsageStyleRaw =
@@ -254,6 +258,22 @@ struct DesktopSettingsPage: View {
         Binding(
             get: { DesktopContextWindowUsageStyle(rawValue: contextWindowUsageStyleRaw) ?? .percent },
             set: { contextWindowUsageStyleRaw = $0.rawValue }
+        )
+    }
+
+    private var modelPickerAppearanceBinding: Binding<DesktopModelPickerAppearance> {
+        Binding(
+            get: { DesktopModelPickerAppearance(rawValue: modelPickerAppearanceRaw) ?? .native },
+            set: { modelPickerAppearanceRaw = $0.rawValue }
+        )
+    }
+
+    private var viewedImagesInitialExpansionBinding: Binding<DesktopViewedImagesInitialExpansion> {
+        Binding(
+            get: {
+                DesktopViewedImagesInitialExpansion(rawValue: viewedImagesInitialExpansionRaw) ?? .expanded
+            },
+            set: { viewedImagesInitialExpansionRaw = $0.rawValue }
         )
     }
 
@@ -439,7 +459,7 @@ struct DesktopSettingsPage: View {
                 SettingsPanel {
                     SettingsRow(
                         title: "Utility model",
-                        detail: "Used for thread minimap topics and automatic Veo chat names. Reasoning stays Low.",
+                        detail: "Used for minimap topics, automatic chat names, and image analysis for text-only models. Reasoning stays Low.",
                         systemImage: "sparkles"
                     ) {
                         Picker("Utility model", selection: Binding(
@@ -455,7 +475,7 @@ struct DesktopSettingsPage: View {
                         .controlSize(.small)
                         .frame(width: 170)
                         .disabled(store.utilityModelOptions.isEmpty)
-                        .help("Choose the model Veo uses for automatic titles and minimap topic detection.")
+                        .help("Choose the model Veo uses for automatic titles, minimap topic detection, and image analysis for text-only models.")
                         .accessibilityLabel("Utility model")
                         .accessibilityValue(store.utilityModelDisplayName)
                     }
@@ -1925,6 +1945,22 @@ struct DesktopSettingsPage: View {
 
                 SettingsPanel {
                     SettingsRow(
+                        title: "Model picker",
+                        detail: modelPickerAppearanceBinding.wrappedValue.title,
+                        systemImage: "slider.horizontal.3"
+                    ) {
+                        SettingsSegmentedControl(
+                            "Model picker",
+                            options: DesktopModelPickerAppearance.allCases,
+                            selection: modelPickerAppearanceBinding,
+                            title: \.title
+                        )
+                        .frame(maxWidth: 280)
+                    }
+
+                    SettingsPanelDivider()
+
+                    SettingsRow(
                         title: "Composer material",
                         detail: composerMaterialBinding.wrappedValue.title,
                         systemImage: "rectangle.and.pencil.and.ellipsis"
@@ -2051,6 +2087,26 @@ struct DesktopSettingsPage: View {
                             )
                             .frame(maxWidth: 280)
                         }
+                    }
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                sectionTitle("Conversation")
+
+                SettingsPanel {
+                    SettingsRow(
+                        title: "Viewed images",
+                        detail: "Start image rows expanded or collapsed.",
+                        systemImage: "photo"
+                    ) {
+                        SettingsSegmentedControl(
+                            "Viewed images",
+                            options: DesktopViewedImagesInitialExpansion.allCases,
+                            selection: viewedImagesInitialExpansionBinding,
+                            title: \.title
+                        )
+                        .frame(maxWidth: 240)
                     }
                 }
             }

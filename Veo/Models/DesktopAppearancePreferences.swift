@@ -46,6 +46,36 @@ enum DesktopChromeMaterial: String, CaseIterable, Identifiable {
     }
 }
 
+enum DesktopModelPickerAppearance: String, CaseIterable, Identifiable {
+    case native
+    case sliderAdvanced
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .native: return "Native"
+        case .sliderAdvanced: return "Slider/Advanced"
+        }
+    }
+}
+
+enum DesktopViewedImagesInitialExpansion: String, CaseIterable, Identifiable {
+    case expanded
+    case collapsed
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .expanded: return "Expanded"
+        case .collapsed: return "Collapsed"
+        }
+    }
+
+    var startsExpanded: Bool { self == .expanded }
+}
+
 typealias DesktopSidebarMaterial = DesktopChromeMaterial
 typealias DesktopComposerMaterial = DesktopChromeMaterial
 typealias DesktopMinimapMaterial = DesktopChromeMaterial
@@ -76,6 +106,8 @@ enum DesktopAppearancePreferences {
     static let windowMaterialKey = "VeoDesktop.windowMaterial"
     static let threadMinimapVisibleKey = "VeoDesktop.threadMinimapVisible"
     static let threadMinimapMaterialKey = "VeoDesktop.threadMinimapMaterial"
+    static let modelPickerAppearanceKey = "VeoDesktop.modelPickerAppearance"
+    static let viewedImagesInitialExpansionKey = "VeoDesktop.viewedImagesInitialExpansion"
 
     /// Default Veo accent (matches prior hard-coded `DesktopTheme.accent`).
     static let defaultAccentHex = "#2E8CFA"
@@ -120,6 +152,17 @@ enum DesktopAppearancePreferences {
     static var threadMinimapMaterial: DesktopMinimapMaterial {
         let raw = defaults.string(forKey: threadMinimapMaterialKey) ?? DesktopMinimapMaterial.liquidGlass.rawValue
         return DesktopMinimapMaterial(rawValue: raw) ?? .liquidGlass
+    }
+
+    static var modelPickerAppearance: DesktopModelPickerAppearance {
+        let raw = defaults.string(forKey: modelPickerAppearanceKey) ?? DesktopModelPickerAppearance.native.rawValue
+        return DesktopModelPickerAppearance(rawValue: raw) ?? .native
+    }
+
+    static var viewedImagesInitialExpansion: DesktopViewedImagesInitialExpansion {
+        let raw = defaults.string(forKey: viewedImagesInitialExpansionKey)
+            ?? DesktopViewedImagesInitialExpansion.expanded.rawValue
+        return DesktopViewedImagesInitialExpansion(rawValue: raw) ?? .expanded
     }
 
     static var accentColor: Color {

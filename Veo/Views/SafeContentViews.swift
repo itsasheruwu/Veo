@@ -783,6 +783,93 @@ private enum SafeInlineArtifactImageCache {
     }
 }
 
+/// Compact local image for agent `imageView` rows. Inspects and size-caps the file,
+/// but does not require an extra outside-workspace confirmation — those paths are
+/// often screenshots the agent already opened for the current turn.
+struct SafeLocalImageThumbnail: View {
+    let path: String
+    let workspaceURL: URL?
+    var displayName: String = ""
+    var maxWidth: CGFloat = 140
+    var height: CGFloat = 96
+    var cornerRadius: CGFloat = 8
+
+    @State private var image: NSImage?
+    @State private var didFail = false
+
+    var body: some View {
+        Group {
+            if let image {
+                Color.clear
+                    .frame(width: displayWidth(for: image), height: height)
+                    .overlay {
+                        Image(nsImage: image)
+                            .resizable()
+                            .interpolation(.high)
+                            .scaledToFill()
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            } else if didFail {
+                placeholder
+            } else {
+                ProgressView()
+                    .controlSize(.small)
+                    .frame(width: height, height: height)
+            }
+        }
+        .frame(height: height)
+        .task(id: path) {
+            image = nil
+            didFail = false
+            let loaded = await loadImage()
+            guard !Task.isCancelled else { return }
+            image = loaded
+            didFail = loaded == nil
+        }
+        .accessibilityLabel(accessibilityName)
+        .help(accessibilityName)
+    }
+
+    private var accessibilityName: String {
+        let name = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !name.isEmpty { return name }
+        return URL(fileURLWithPath: path).lastPathComponent
+    }
+
+    private var placeholder: some View {
+        Image(systemName: "photo")
+            .font(.system(size: 16, weight: .medium))
+            .foregroundStyle(.tertiary)
+            .frame(width: height, height: height)
+            .background(
+                Color.primary.opacity(0.05),
+                in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            )
+    }
+
+    private func displayWidth(for image: NSImage) -> CGFloat {
+        let size = image.size
+        guard size.height > 0 else { return height }
+        let proposed = height * (size.width / size.height)
+        return min(maxWidth, max(height * 0.7, proposed))
+    }
+
+    private func loadImage() async -> NSImage? {
+        do {
+            let descriptor = try SafeLocalFileDescriptor.inspect(
+                path: path,
+                declaredMIMEType: nil,
+                workspaceURL: workspaceURL
+            )
+            try descriptor.validateReadLimit()
+            guard descriptor.kind == .image else { return nil }
+            return try await SafeLocalLoader.readImage(descriptor)
+        } catch {
+            return nil
+        }
+    }
+}
+
 private struct SafeLocalImagePreview: View {
     let descriptor: SafeLocalFileDescriptor
     @State private var image: NSImage?

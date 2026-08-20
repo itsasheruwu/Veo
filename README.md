@@ -39,8 +39,9 @@ Veo has no hosted backend, subscription, relay, phone companion, or bundled cred
 
 ### A native conversation timeline
 
-- Stream responses, reasoning, plans, commands, file changes, tool calls, and structured activity without flattening their order.
-- Answer user-input requests, approvals, permission prompts, and MCP forms inside the timeline.
+- Stream responses, reasoning, plans, commands, file changes, viewed images, tool calls, and structured activity without flattening their order.
+- Answer user-input requests in the composer, and handle approvals, permission prompts, and MCP forms inline.
+- Edit, approve, copy, export, and implement durable plan documents in the current task or a new one.
 - Inspect grouped activity, review current changes, compact long conversations, fork chats, and manage goals or plans.
 - Track the current plan, changed files, GPT-5.6 Auto stages, and active subagents in a compact turn-status surface above the composer.
 - Use the thread minimap to navigate long tasks by topic.
@@ -63,7 +64,7 @@ Veo has no hosted backend, subscription, relay, phone companion, or bundled cred
 
 ### A real docked terminal
 
-The terminal is a SwiftTerm-backed interactive PTY, not a command text box. It supports shell editing, multiple tabs, live terminal resizing, and full-screen terminal applications in the current project.
+The terminal is a SwiftTerm-backed interactive PTY, not a command text box. It supports shell editing, multiple tabs, live terminal resizing, and full-screen terminal applications in the current project. Expand it into a terminal workspace with up to six adjustable panes, grid presets, drag-to-rearrange, and a dedicated session sidebar.
 
 Claude and Codex commands are gated separately from ordinary shell commands. When Agent CLIs are disabled, Veo asks before allowing one to run. Terminal settings can also opt new tabs into the CLIs' full-access bypass flags; those settings are explicit and disabled by default.
 

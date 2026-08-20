@@ -155,7 +155,7 @@ struct DesktopThreadMinimapTurn: Identifiable, Hashable {
                     builders[index].assistantParts.append(item.body)
                     builders[index].contentLength += item.body.count
                 }
-            case .fileChange, .plan:
+            case .fileChange, .plan, .planUpdate:
                 if !item.body.isEmpty {
                     builders[index].topicContextParts.append(item.body)
                 }

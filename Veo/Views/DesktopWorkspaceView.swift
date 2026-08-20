@@ -111,7 +111,7 @@ private struct DesktopVisualEffectBackground: NSViewRepresentable {
 }
 
 /// Disables AppKit’s system-blue list selection so rows can paint `veoAccent` themselves.
-private struct DesktopSidebarListSelectionStyle: NSViewRepresentable {
+struct DesktopSidebarListSelectionStyle: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView {
         FinderView()
     }
@@ -354,6 +354,7 @@ struct DesktopWorkspaceView: View {
     @StateObject private var utilityPanel = DesktopUtilityPanelModel()
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var showsInteractiveTerminal = false
+    @State private var isTerminalWorkspace = false
     @State private var commandRenameTarget: DesktopThread?
     @State private var commandForkTarget: DesktopThread?
     @State private var commandDeleteTarget: DesktopThread?
@@ -370,9 +371,21 @@ struct DesktopWorkspaceView: View {
                 } openUpdates: {
                     navigation.showSettings(.updates)
                 }
-                .opacity(navigation.page == .workspace ? 1 : 0)
-                .allowsHitTesting(navigation.page == .workspace)
-                .accessibilityHidden(navigation.page != .workspace)
+                .opacity(navigation.page == .workspace && !isTerminalWorkspace ? 1 : 0)
+                .allowsHitTesting(navigation.page == .workspace && !isTerminalWorkspace)
+                .accessibilityHidden(navigation.page != .workspace || isTerminalWorkspace)
+
+                DesktopTerminalSessionSidebar(
+                    store: store,
+                    hub: terminalHub,
+                    isWorkspace: $isTerminalWorkspace,
+                    isPresented: $showsInteractiveTerminal
+                ) {
+                    navigation.showSettings()
+                }
+                .opacity(navigation.page == .workspace && isTerminalWorkspace ? 1 : 0)
+                .allowsHitTesting(navigation.page == .workspace && isTerminalWorkspace)
+                .accessibilityHidden(navigation.page != .workspace || !isTerminalWorkspace)
 
                 DesktopSettingsSidebarView(navigation: navigation)
                     .opacity(navigation.page == .settings ? 1 : 0)
@@ -480,8 +493,19 @@ struct DesktopWorkspaceView: View {
         }
         .onChange(of: store.hasExplicitWorkspace) { _, hasWorkspace in
             if !hasWorkspace {
+                isTerminalWorkspace = false
                 showsInteractiveTerminal = false
                 terminalHub.terminateAll()
+            }
+        }
+        .onChange(of: showsInteractiveTerminal) { _, shown in
+            if !shown {
+                isTerminalWorkspace = false
+            }
+        }
+        .onChange(of: isTerminalWorkspace) { _, active in
+            if active {
+                showsInteractiveTerminal = true
             }
         }
         .onAppear {
@@ -499,7 +523,10 @@ struct DesktopWorkspaceView: View {
             if let pending = store.takePendingEmbeddedBrowserURL() {
                 store.openInEmbeddedBrowser?(pending.url, pending.accountLogin)
             }
-            utilityPanel.switchWorkspace(to: store.hasExplicitWorkspace ? store.effectiveWorkspaceURL : nil)
+            utilityPanel.switchWorkspace(
+                to: store.hasExplicitWorkspace ? store.effectiveWorkspaceURL : nil,
+                threadID: store.selectedThreadID
+            )
             utilityPanel.setSubagentsAvailable(!store.selectedSubagents.isEmpty)
         }
         .onOpenURL { url in
@@ -509,7 +536,16 @@ struct DesktopWorkspaceView: View {
             utilityPanel.openBrowser(url: url)
         }
         .onChange(of: store.effectiveWorkspaceURL.path) { _, _ in
-            utilityPanel.switchWorkspace(to: store.hasExplicitWorkspace ? store.effectiveWorkspaceURL : nil)
+            utilityPanel.switchWorkspace(
+                to: store.hasExplicitWorkspace ? store.effectiveWorkspaceURL : nil,
+                threadID: store.selectedThreadID
+            )
+        }
+        .onChange(of: store.selectedThreadID) { _, threadID in
+            utilityPanel.switchWorkspace(
+                to: store.hasExplicitWorkspace ? store.effectiveWorkspaceURL : nil,
+                threadID: threadID
+            )
         }
         .onChange(of: store.selectedSubagents) { _, agents in
             utilityPanel.setSubagentsAvailable(!agents.isEmpty)
@@ -538,6 +574,7 @@ struct DesktopWorkspaceView: View {
 
             ToolbarItem(id: "new-chat", placement: .primaryAction) {
                 Button {
+                    isTerminalWorkspace = false
                     store.beginNewChat()
                 } label: {
                     Label("New chat", systemImage: "square.and.pencil")
@@ -569,7 +606,12 @@ struct DesktopWorkspaceView: View {
 
             ToolbarItem(id: "terminal", placement: .primaryAction) {
                 Button {
-                    showsInteractiveTerminal.toggle()
+                    if showsInteractiveTerminal {
+                        isTerminalWorkspace = false
+                        showsInteractiveTerminal = false
+                    } else {
+                        showsInteractiveTerminal = true
+                    }
                 } label: {
                     Label("Terminal", systemImage: "terminal")
                 }
@@ -628,18 +670,37 @@ struct DesktopWorkspaceView: View {
                 : resolvedUtilityPanelWidth(availableWidth: geometry.size.width)
 
             ZStack(alignment: .trailing) {
-                DesktopConversationView(
-                    store: store,
-                    terminalHub: terminalHub,
-                    showsInteractiveTerminal: $showsInteractiveTerminal,
-                    onOpenSubagent: { id in
-                        utilityPanel.showSubagent(id)
-                        if utilityPanelExpanded {
-                            utilityPanelExpanded = false
-                        }
-                        inspectorVisible = true
+                Group {
+                    if isTerminalWorkspace {
+                        DesktopTerminalWorkspaceView(
+                            store: store,
+                            hub: terminalHub,
+                            isWorkspace: $isTerminalWorkspace,
+                            isPresented: $showsInteractiveTerminal
+                        )
+                    } else {
+                        DesktopConversationView(
+                            store: store,
+                            terminalHub: terminalHub,
+                            showsInteractiveTerminal: $showsInteractiveTerminal,
+                            isTerminalWorkspace: $isTerminalWorkspace,
+                            onOpenSubagent: { id in
+                                utilityPanel.showSubagent(id)
+                                if utilityPanelExpanded {
+                                    utilityPanelExpanded = false
+                                }
+                                inspectorVisible = true
+                            },
+                            onOpenPlan: { reference in
+                                utilityPanel.showPlan(reference)
+                                if utilityPanelExpanded {
+                                    utilityPanelExpanded = false
+                                }
+                                inspectorVisible = true
+                            }
+                        )
                     }
-                )
+                }
                 .padding(.trailing, panelIsVisible && !utilityPanelExpanded ? panelWidth : 0)
                 .opacity(utilityPanelExpanded ? 0 : 1)
                 .allowsHitTesting(!utilityPanelExpanded)
@@ -908,16 +969,7 @@ private struct DesktopPendingRequestView: View {
     @Environment(\.veoAccent) private var veoAccent
     let request: DesktopPendingRequest
     @ObservedObject var store: DesktopCodexStore
-    @State private var selections: [String: String] = [:]
-    @State private var customAnswers: [String: String] = [:]
     @State private var mcpValues: [String: String] = [:]
-
-    private var canSubmitAnswers: Bool {
-        request.questions.allSatisfy { question in
-            let custom = customAnswers[question.id]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            return !custom.isEmpty || selections[question.id] != nil
-        }
-    }
 
     private var canSubmitMCPForm: Bool {
         request.mcpFields.allSatisfy { field in
@@ -940,7 +992,7 @@ private struct DesktopPendingRequestView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top, spacing: 14) {
-                Image(systemName: request.kind == .userInput ? "questionmark.bubble.fill" : "checkmark.shield.fill")
+                Image(systemName: "checkmark.shield.fill")
                     .font(.system(size: 25, weight: .semibold))
                     .foregroundStyle(veoAccent)
                     .frame(width: 34)
@@ -963,17 +1015,7 @@ private struct DesktopPendingRequestView: View {
 
             Divider()
 
-            if request.kind == .userInput {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 22) {
-                        ForEach(request.questions) { question in
-                            questionView(question)
-                        }
-                    }
-                    .padding(22)
-                }
-                .frame(maxHeight: 440)
-            } else if request.kind == .mcpElicitation, request.mcpMode == "form" {
+            if request.kind == .mcpElicitation, request.mcpMode == "form" {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
                         if request.mcpFields.isEmpty {
@@ -1004,19 +1046,7 @@ private struct DesktopPendingRequestView: View {
             Divider()
 
             HStack {
-                if request.kind == .userInput {
-                    Button("Skip") {
-                        store.resolvePendingRequest(approved: false)
-                    }
-                    .keyboardShortcut(.cancelAction)
-                    Spacer()
-                    Button("Continue") {
-                        submitAnswers()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!canSubmitAnswers)
-                    .keyboardShortcut(.defaultAction)
-                } else if request.kind == .mcpElicitation {
+                if request.kind == .mcpElicitation {
                     Button("Decline") {
                         store.resolvePendingRequest(approved: false)
                     }
@@ -1076,62 +1106,6 @@ private struct DesktopPendingRequestView: View {
         }
         .frame(width: 540)
         .tint(veoAccent)
-    }
-
-    @ViewBuilder
-    private func questionView(_ question: DesktopRequestQuestion) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(question.header.uppercased())
-                .font(.system(size: 10.5, weight: .bold))
-                .foregroundStyle(veoAccent)
-                .tracking(0.7)
-            Text(question.prompt)
-                .font(.system(size: 14, weight: .medium))
-                .fixedSize(horizontal: false, vertical: true)
-
-            if !question.options.isEmpty {
-                VStack(alignment: .leading, spacing: 7) {
-                    ForEach(question.options) { option in
-                        Button {
-                            selections[question.id] = option.label
-                            customAnswers[question.id] = ""
-                        } label: {
-                            HStack(alignment: .top, spacing: 9) {
-                                Image(systemName: selections[question.id] == option.label ? "largecircle.fill.circle" : "circle")
-                                    .foregroundStyle(selections[question.id] == option.label ? veoAccent : .secondary)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(option.label)
-                                        .font(.system(size: 12.5, weight: .semibold))
-                                    if !option.description.isEmpty {
-                                        Text(option.description)
-                                            .font(.system(size: 11.5))
-                                            .foregroundStyle(.secondary)
-                                            .fixedSize(horizontal: false, vertical: true)
-                                    }
-                                }
-                                Spacer(minLength: 0)
-                            }
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(12)
-                .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-            }
-
-            if question.allowsOther || question.options.isEmpty {
-                Group {
-                    if question.isSecret {
-                        SecureField(question.options.isEmpty ? "Answer" : "Other answer", text: answerBinding(for: question.id))
-                    } else {
-                        TextField(question.options.isEmpty ? "Answer" : "Other answer", text: answerBinding(for: question.id), axis: .vertical)
-                            .lineLimit(1...4)
-                    }
-                }
-                .textFieldStyle(.roundedBorder)
-            }
-        }
     }
 
     @ViewBuilder
@@ -1216,29 +1190,6 @@ private struct DesktopPendingRequestView: View {
         )
     }
 
-    private func answerBinding(for questionID: String) -> Binding<String> {
-        Binding(
-            get: { customAnswers[questionID, default: ""] },
-            set: { value in
-                customAnswers[questionID] = value
-                if !value.isEmpty {
-                    selections[questionID] = nil
-                }
-            }
-        )
-    }
-
-    private func submitAnswers() {
-        let answers = request.questions.reduce(into: [String: [String]]()) { result, question in
-            let custom = customAnswers[question.id]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if !custom.isEmpty {
-                result[question.id] = [custom]
-            } else if let selection = selections[question.id] {
-                result[question.id] = [selection]
-            }
-        }
-        store.submitPendingAnswers(answers)
-    }
 }
 
 private struct DesktopSidebarView: View {
@@ -1262,6 +1213,7 @@ private struct DesktopSidebarView: View {
     @State private var forkTarget: DesktopThread?
     @State private var deleteTarget: DesktopThread?
     @State private var expandedAgentThreadIDs = Set<String>()
+    @State private var hoveredSidebarGroup: String?
     @State private var settingsGearTurns = 0
     @FocusState private var searchFocused: Bool
     @FocusState private var focusedProjectPath: String?
@@ -1474,6 +1426,7 @@ private struct DesktopSidebarView: View {
                     showsAutoIndicator: store.shouldShowAutoIndicator(for: entry.thread.id),
                     showsWorkspace: true,
                     pendingRequestCount: store.pendingRequestCount(for: entry.thread.id),
+                    hasReadyPlan: store.hasReadyPlan(for: entry.thread.id),
                     agentState: store.agentState(for: entry.thread.id),
                     searchSnippet: store.searchSnippet(for: entry.thread.id),
                     treeDepth: entry.depth,
@@ -1499,6 +1452,7 @@ private struct DesktopSidebarView: View {
                             showsAutoIndicator: store.shouldShowAutoIndicator(for: thread.id),
                             showsWorkspace: true,
                             pendingRequestCount: store.pendingRequestCount(for: thread.id),
+                            hasReadyPlan: store.hasReadyPlan(for: thread.id),
                             agentState: store.agentState(for: thread.id),
                             searchSnippet: store.searchSnippet(for: thread.id),
                             hasChildren: false,
@@ -1515,61 +1469,75 @@ private struct DesktopSidebarView: View {
                 }
             }
 
-            if !temporaryThreads.isEmpty {
-                Section {
-                    if !isProjectCollapsed(temporaryGroupKey) {
-                        let entries = flattenedEntries(for: temporaryThreads)
-                        ForEach(entries) { entry in
-                            DesktopThreadRow(
-                                thread: entry.thread,
-                                showsAutoIndicator: store.shouldShowAutoIndicator(for: entry.thread.id),
-                                pendingRequestCount: store.pendingRequestCount(for: entry.thread.id),
-                                agentState: store.agentState(for: entry.thread.id),
-                                searchSnippet: store.searchSnippet(for: entry.thread.id),
-                                treeDepth: entry.depth,
-                                hasChildren: entry.hasChildren,
-                                isExpanded: expandedAgentThreadIDs.contains(entry.thread.id),
-                                isSelected: store.selectedThreadID == entry.thread.id,
-                                isTurnActive: store.isThreadTurnActive(entry.thread.id),
-                                toggleExpanded: { toggleAgentThread(entry.thread.id) }
-                            )
-                            .tag(entry.thread.id)
-                            .moveDisabled(!canManuallyReorder)
-                            .contextMenu { threadContextMenu(entry.thread) }
-                        }
-                        .onMove { offsets, destination in
-                            moveThreads(entries.map(\.thread), from: offsets, to: destination)
-                        }
+            Section {
+                if isProjectCollapsed(temporaryGroupKey) || temporaryThreads.isEmpty {
+                    sidebarSectionPlaceholder
+                } else {
+                    let entries = flattenedEntries(for: temporaryThreads)
+                    ForEach(entries) { entry in
+                        DesktopThreadRow(
+                            thread: entry.thread,
+                            showsAutoIndicator: store.shouldShowAutoIndicator(for: entry.thread.id),
+                            pendingRequestCount: store.pendingRequestCount(for: entry.thread.id),
+                            hasReadyPlan: store.hasReadyPlan(for: entry.thread.id),
+                            agentState: store.agentState(for: entry.thread.id),
+                            searchSnippet: store.searchSnippet(for: entry.thread.id),
+                            treeDepth: entry.depth,
+                            hasChildren: entry.hasChildren,
+                            isExpanded: expandedAgentThreadIDs.contains(entry.thread.id),
+                            isSelected: store.selectedThreadID == entry.thread.id,
+                            isTurnActive: store.isThreadTurnActive(entry.thread.id),
+                            toggleExpanded: { toggleAgentThread(entry.thread.id) }
+                        )
+                        .tag(entry.thread.id)
+                        .moveDisabled(!canManuallyReorder)
+                        .contextMenu { threadContextMenu(entry.thread) }
                     }
-                } header: {
-                    HStack(spacing: 5) {
-                        Button {
-                            toggleProject(temporaryGroupKey)
-                        } label: {
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 9, weight: .semibold))
-                                .rotationEffect(.degrees(isProjectCollapsed(temporaryGroupKey) ? 0 : 90))
-                                .frame(width: 13, height: 18)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(!store.searchText.isEmpty)
-                        .help(isProjectCollapsed(temporaryGroupKey) ? "Expand Projectless Chats" : "Collapse Projectless Chats")
-                        .accessibilityLabel(isProjectCollapsed(temporaryGroupKey) ? "Expand Projectless Chats" : "Collapse Projectless Chats")
+                    .onMove { offsets, destination in
+                        moveThreads(entries.map(\.thread), from: offsets, to: destination)
+                    }
+                }
+            } header: {
+                HStack(spacing: 5) {
+                    Button {
+                        toggleProject(temporaryGroupKey)
+                    } label: {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9, weight: .semibold))
+                            .rotationEffect(.degrees(isProjectCollapsed(temporaryGroupKey) ? 0 : 90))
+                            .frame(width: 13, height: 18)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!store.searchText.isEmpty)
+                    .help(isProjectCollapsed(temporaryGroupKey) ? "Expand Projectless Chats" : "Collapse Projectless Chats")
+                    .accessibilityLabel(isProjectCollapsed(temporaryGroupKey) ? "Expand Projectless Chats" : "Collapse Projectless Chats")
 
-                        HStack(spacing: 5) {
-                            Image(systemName: "bubble.left.and.bubble.right")
-                                .resizable()
-                                .scaledToFit()
-                                .symbolRenderingMode(.monochrome)
-                                .foregroundStyle(veoAccent)
-                                .frame(width: 14, height: 12)
-                            Text("Projectless Chats")
-                                .foregroundStyle(.secondary)
-                        }
-                        .font(.system(size: 12.5, weight: .semibold))
+                    HStack(spacing: 5) {
+                        Image(systemName: "bubble.left.and.bubble.right")
+                            .resizable()
+                            .scaledToFit()
+                            .symbolRenderingMode(.monochrome)
+                            .foregroundStyle(veoAccent)
+                            .frame(width: 14, height: 12)
+                        Text("Projectless Chats")
+                            .foregroundStyle(.secondary)
                     }
-                    .textCase(nil)
+                    .font(.system(size: 12.5, weight: .semibold))
+
+                    Spacer(minLength: 0)
+
+                    if hoveredSidebarGroup == temporaryGroupKey {
+                        newThreadButton(
+                            help: "New projectless chat",
+                            accessibilityLabel: "New projectless chat",
+                            action: store.beginNewChat
+                        )
+                    }
+                }
+                .textCase(nil)
+                .onHover { isHovering in
+                    hoveredSidebarGroup = isHovering ? temporaryGroupKey : nil
                 }
             }
 
@@ -1582,6 +1550,7 @@ private struct DesktopSidebarView: View {
                                 thread: entry.thread,
                                 showsAutoIndicator: store.shouldShowAutoIndicator(for: entry.thread.id),
                                 pendingRequestCount: store.pendingRequestCount(for: entry.thread.id),
+                                hasReadyPlan: store.hasReadyPlan(for: entry.thread.id),
                                 agentState: store.agentState(for: entry.thread.id),
                                 searchSnippet: store.searchSnippet(for: entry.thread.id),
                                 treeDepth: entry.depth,
@@ -1616,8 +1585,23 @@ private struct DesktopSidebarView: View {
                         .accessibilityLabel(isProjectCollapsed(group.path) ? "Expand project \(group.name)" : "Collapse project \(group.name)")
 
                         projectNameControl(path: group.path, name: group.name)
+
+                        Spacer(minLength: 0)
+
+                        if hoveredSidebarGroup == group.path {
+                            newThreadButton(
+                                help: "New chat in \(group.name)",
+                                accessibilityLabel: "New chat in project \(group.name)",
+                                action: {
+                                    store.beginProjectChat(at: URL(fileURLWithPath: group.path, isDirectory: true))
+                                }
+                            )
+                        }
                     }
                     .textCase(nil)
+                    .onHover { isHovering in
+                        hoveredSidebarGroup = isHovering ? group.path : nil
+                    }
                     .contextMenu { projectContextMenu(path: group.path, name: group.name) }
                 }
             }
@@ -1635,6 +1619,34 @@ private struct DesktopSidebarView: View {
         .font(.system(size: 12.5, weight: .semibold))
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
+    }
+
+    private func newThreadButton(
+        help: String,
+        accessibilityLabel: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: "square.and.pencil")
+                .font(.system(size: 13.5, weight: .medium))
+                .frame(width: 16, height: 18, alignment: .trailing)
+        }
+        .buttonStyle(.plain)
+        .frame(width: 22, height: 18, alignment: .trailing)
+        // Match the center of the thread row's trailing timestamp column.
+        .padding(.trailing, 16)
+        .contentShape(Rectangle())
+        .help(help)
+        .accessibilityLabel(accessibilityLabel)
+    }
+
+    private var sidebarSectionPlaceholder: some View {
+        Text(" ")
+            .font(.system(size: 1))
+            .foregroundStyle(.clear)
+            .listRowSeparator(.hidden)
+            .listRowBackground(Color.clear)
+            .accessibilityHidden(true)
     }
 
     @ViewBuilder
@@ -2128,7 +2140,7 @@ private struct DesktopSidebarView: View {
 
     private var allSidebarProjectPaths: Set<String> {
         var paths = Set(workspaceGroups.map(\.path) + codexWorkspaceGroups.map(\.path))
-        if !temporaryThreads.isEmpty { paths.insert(temporaryGroupKey) }
+        paths.insert(temporaryGroupKey)
         return paths
     }
 
@@ -2144,6 +2156,7 @@ private struct DesktopSidebarView: View {
             showsAutoIndicator: store.shouldShowAutoIndicator(for: entry.thread.id),
             showsWorkspace: showsWorkspace,
             pendingRequestCount: store.pendingRequestCount(for: entry.thread.id),
+            hasReadyPlan: store.hasReadyPlan(for: entry.thread.id),
             agentState: store.agentState(for: entry.thread.id),
             searchSnippet: store.searchSnippet(for: entry.thread.id),
             treeDepth: entry.depth,
@@ -2480,6 +2493,7 @@ private struct DesktopThreadRow: View {
     var showsAutoIndicator = false
     var showsWorkspace = false
     var pendingRequestCount = 0
+    var hasReadyPlan = false
     var agentState: DesktopAgentState?
     var searchSnippet: String?
     var treeDepth = 0
@@ -2562,6 +2576,12 @@ private struct DesktopThreadRow: View {
                     .frame(minWidth: 17, minHeight: 17)
                     .background(.orange, in: Circle())
                     .accessibilityLabel("\(pendingRequestCount) request\(pendingRequestCount == 1 ? "" : "s") waiting")
+            }
+            if hasReadyPlan {
+                Image(systemName: "list.bullet.clipboard.fill")
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .foregroundStyle(veoAccent)
+                    .accessibilityLabel("Plan ready")
             }
             Group {
                 if showsActiveTurn {
@@ -2705,7 +2725,9 @@ private struct DesktopConversationView: View {
     @ObservedObject var store: DesktopCodexStore
     @ObservedObject var terminalHub: DesktopLocalTerminalHub
     @Binding var showsInteractiveTerminal: Bool
+    @Binding var isTerminalWorkspace: Bool
     let onOpenSubagent: (String) -> Void
+    let onOpenPlan: (DesktopPlanReference) -> Void
     @AppStorage(DesktopAppearancePreferences.composerMaterialKey) private var composerMaterialRaw =
         DesktopComposerMaterial.liquidGlass.rawValue
     @AppStorage(DesktopAppearancePreferences.threadMinimapVisibleKey) private var showsThreadMinimap = true
@@ -2765,16 +2787,23 @@ private struct DesktopConversationView: View {
             }
             .animation(composerTransitionAnimation, value: showsEmptyChat)
 
-            if showsInteractiveTerminal {
+            if showsInteractiveTerminal, !isTerminalWorkspace {
                 DesktopInteractiveTerminalPanel(
                     store: store,
                     hub: terminalHub,
-                    isPresented: $showsInteractiveTerminal
+                    isPresented: $showsInteractiveTerminal,
+                    isWorkspace: $isTerminalWorkspace
                 )
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
         .animation(.easeInOut(duration: 0.16), value: showsInteractiveTerminal)
+        .animation(.easeInOut(duration: 0.16), value: isTerminalWorkspace)
+        .onChange(of: showsInteractiveTerminal) { _, shown in
+            if !shown {
+                isTerminalWorkspace = false
+            }
+        }
     }
 
     private var showsEmptyChat: Bool {
@@ -2800,6 +2829,7 @@ private struct DesktopConversationView: View {
         GeometryReader { viewport in
             ScrollViewReader { proxy in
                 let timelineEntries = DesktopTimelineEntry.make(from: store.timeline)
+                let activeTimelineItemIDs = store.selectedActiveTimelineItemIDs
                 let hasCurrentMinimapSnapshot = showsThreadMinimap
                     && minimapSnapshotThreadID == store.selectedThreadID
                     // Keep the last settled map visible while a turn streams. Rebuilding
@@ -2842,7 +2872,7 @@ private struct DesktopConversationView: View {
                                     DesktopTimelineRow(
                                         item: item,
                                         workspaceURL: store.effectiveWorkspaceURL,
-                                        isTurnRunning: store.isBusyTurn,
+                                        isTurnRunning: activeTimelineItemIDs.contains(item.id),
                                         autoContinuationJob: item.kind == .error
                                             ? store.autoContinuationJob(for: store.selectedThreadID)
                                             : nil,
@@ -2862,13 +2892,47 @@ private struct DesktopConversationView: View {
                                         }
                                     }
 
+                                case .plan(let item):
+                                    if let threadID = store.selectedThreadID {
+                                        let reference = DesktopPlanReference(
+                                            threadID: threadID,
+                                            itemID: item.id
+                                        )
+                                        DesktopPlanDocumentView(
+                                            store: store,
+                                            reference: reference,
+                                            fallbackMarkdown: item.body,
+                                            isStreaming: store.planArtifact(for: reference) == nil
+                                                && activeTimelineItemIDs.contains(item.id),
+                                            onOpenSidebar: onOpenPlan
+                                        )
+                                        .id(item.id)
+                                        .background {
+                                            if showsThreadMinimap, !store.isBusyTurn {
+                                                timelineBoundsReader(itemIDs: [item.id])
+                                            }
+                                        }
+                                    }
+
                                 case .activity(let group):
                                     DesktopActivityGroupView(
                                         group: group,
                                         workspaceURL: store.effectiveWorkspaceURL,
-                                        isTurnRunning: store.isBusyTurn,
+                                        isTurnRunning: group.itemIDs.contains(where: activeTimelineItemIDs.contains),
                                         subagents: store.subagents(in: group.items),
                                         onOpenSubagent: onOpenSubagent
+                                    )
+                                    .id(group.id)
+                                    .background {
+                                        if showsThreadMinimap, !store.isBusyTurn {
+                                            timelineBoundsReader(itemIDs: group.itemIDs)
+                                        }
+                                    }
+
+                                case .viewedImages(let group):
+                                    DesktopViewedImagesView(
+                                        group: group,
+                                        workspaceURL: store.effectiveWorkspaceURL
                                     )
                                     .id(group.id)
                                     .background {
@@ -3303,7 +3367,7 @@ private struct DesktopTimelineRow: View {
             assistantRow
         case .reasoning:
             reasoningRow
-        case .command, .fileChange, .activity, .plan:
+        case .command, .fileChange, .activity, .plan, .planUpdate, .imageView:
             activityRow
         case .error:
             errorRow
@@ -3338,7 +3402,8 @@ private struct DesktopTimelineRow: View {
                 source: item.body,
                 artifacts: item.artifacts,
                 citations: item.citations,
-                workspaceURL: workspaceURL
+                workspaceURL: workspaceURL,
+                isStreaming: isActivelyStreamingResponse
             )
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -3351,6 +3416,19 @@ private struct DesktopTimelineRow: View {
             return false
         }
         // Live reasoning deltas mark inProgress; stop once the item completes even if the turn continues.
+        return normalized.contains("progress")
+            || normalized == "active"
+            || normalized == "running"
+    }
+
+    private var isActivelyStreamingResponse: Bool {
+        guard isTurnRunning,
+              item.kind == .assistant,
+              !item.body.isEmpty else { return false }
+        let normalized = (item.status ?? "").lowercased()
+        if normalized.contains("complete") || normalized.contains("failed") || normalized == "done" {
+            return false
+        }
         return normalized.contains("progress")
             || normalized == "active"
             || normalized == "running"
@@ -3413,15 +3491,12 @@ private struct DesktopTimelineRow: View {
                         .font(.system(size: 11.5, weight: .medium, design: item.kind == .command ? .monospaced : .default))
                         .lineLimit(1)
                     Spacer(minLength: 8)
-                    if activityIsRunning {
-                        ProgressView()
-                            .controlSize(.mini)
-                    } else if activityFailed {
-                        Image(systemName: "exclamationmark.circle.fill")
-                            .foregroundStyle(.red)
-                    } else if activityIsComplete {
-                        Image(systemName: "checkmark")
-                            .foregroundStyle(.tertiary)
+                    if activityIsRunning || activityFailed || activityIsComplete {
+                        DesktopActivityCompletionMark(
+                            isLoading: activityIsRunning,
+                            hasFailure: activityFailed
+                        )
+                        .frame(width: 12, height: 12)
                     }
                     if let duration = item.toolMetadata?.durationMilliseconds {
                         Text(formatDuration(duration))
@@ -3530,10 +3605,12 @@ private struct DesktopTimelineRow: View {
     }
 
     private var activityIsRunning: Bool {
-        normalizedActivityStatus.contains("progress")
+        isTurnRunning && (
+            normalizedActivityStatus.contains("progress")
             || normalizedActivityStatus == "running"
             || normalizedActivityStatus == "active"
             || normalizedActivityStatus == "pending"
+        )
     }
 
     private var activityFailed: Bool {
@@ -3616,16 +3693,20 @@ private struct DesktopTimelineRow: View {
     }
 
     private var activitySymbol: String {
+        if item.id.hasPrefix("veo-user-input-answer-") { return "checkmark.bubble" }
         switch item.kind {
         case .command: return "terminal"
         case .fileChange: return "doc.badge.gearshape"
         case .plan: return "list.bullet.clipboard"
+        case .planUpdate: return "checklist"
+        case .imageView: return "photo"
         default: return "gearshape.2"
         }
     }
 
     private var activityTint: Color {
-        item.kind == .fileChange ? veoAccent : .secondary
+        if item.id.hasPrefix("veo-user-input-answer-") { return veoAccent }
+        return item.kind == .fileChange ? veoAccent : .secondary
     }
 
     private func formatDuration(_ milliseconds: Int) -> String {
@@ -3652,6 +3733,7 @@ private struct DesktopTimelineSkeleton: View {
 private struct DesktopComposerView: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.veoAccent) private var veoAccent
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject var store: DesktopCodexStore
     var isWelcome = false
     var transitionNamespace: Namespace.ID?
@@ -3666,6 +3748,8 @@ private struct DesktopComposerView: View {
     @State private var isOptionsPresented = false
     @State private var isQueuePresented = false
     @State private var isProjectChooserPresented = false
+    @State private var isAttachmentDropTarget = false
+    @State private var askQuestionDraftsByRequestID: [String: DesktopAskQuestionsComposerDraft] = [:]
 
     var body: some View {
         Group {
@@ -3684,6 +3768,18 @@ private struct DesktopComposerView: View {
         .onAppear { requestFocus() }
         .onChange(of: store.selectedThreadID) { _, _ in requestFocus() }
         .onChange(of: store.hasExplicitWorkspace) { _, _ in requestFocus() }
+        .onChange(of: store.selectedUserInputRequest?.id) { previousID, requestID in
+            if requestID != nil { isAttachmentDropTarget = false }
+            if let previousID, !store.hasPendingRequest(id: previousID) {
+                askQuestionDraftsByRequestID.removeValue(forKey: previousID)
+            }
+        }
+        .onChange(of: store.pendingRequestCountsByThreadID) { _, _ in
+            let pendingIDs = store.pendingUserInputRequestIDs
+            askQuestionDraftsByRequestID = askQuestionDraftsByRequestID.filter {
+                pendingIDs.contains($0.key)
+            }
+        }
         .onChange(of: store.draft) { _, _ in store.updateComposerAutocomplete() }
         .modifier(ComposerTransitionGeometry(
             namespace: transitionNamespace,
@@ -3697,18 +3793,77 @@ private struct DesktopComposerView: View {
         DesktopComposerMaterial(rawValue: composerMaterialRaw) ?? .liquidGlass
     }
 
+    private var reviewPlan: DesktopPlanArtifact? {
+        guard !isWelcome else { return nil }
+        return store.selectedPlanForReview
+    }
+
+    private var askQuestionsAnimation: Animation {
+        if reduceMotion { return .linear(duration: 0.10) }
+        switch composerMaterial {
+        case .liquidGlass:
+            return .spring(response: 0.42, dampingFraction: 0.86)
+        case .mica, .solid:
+            return .easeInOut(duration: 0.28)
+        }
+    }
+
+    @ViewBuilder
+    private var attachmentDropOverlay: some View {
+        if isAttachmentDropTarget, store.hasExplicitWorkspace {
+            ZStack {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(.thinMaterial)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .stroke(veoAccent.opacity(0.52), lineWidth: 1)
+                    }
+
+                VStack(spacing: 7) {
+                    Image(systemName: "square.and.arrow.down")
+                        .font(.system(size: 22, weight: .semibold))
+                    Text("Drop to attach")
+                        .font(.system(size: 12, weight: .semibold))
+                }
+                .foregroundStyle(veoAccent)
+            }
+            .padding(-2)
+            .transition(.opacity.combined(with: .scale(scale: 0.96)))
+            .accessibilityHidden(true)
+        }
+    }
+
     private func requestFocus() {
-        guard store.hasExplicitWorkspace else { return }
+        guard store.hasExplicitWorkspace, store.selectedUserInputRequest == nil else { return }
         focusToken += 1
     }
 
     private var composerCard: some View {
         VStack(spacing: 0) {
+            if let request = store.selectedUserInputRequest, !isWelcome {
+                DesktopAskQuestionsComposerView(
+                    request: request,
+                    store: store,
+                    draft: askQuestionsDraftBinding(for: request.id)
+                )
+                    .id(request.id)
+                    .transition(.opacity)
+            } else {
             VStack(spacing: DesktopTheme.spaceS) {
             if let error = store.transientError, !error.isEmpty, store.timeline.isEmpty {
                 Text(error)
                     .font(.system(size: 11.5))
                     .foregroundStyle(.red)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            if let plan = reviewPlan,
+               let error = store.planErrorsByID[plan.reference.storageID],
+               !error.isEmpty {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
@@ -3718,22 +3873,39 @@ private struct DesktopComposerView: View {
                     .transition(commandPaletteTransition)
             }
 
+            if let visionFallbackStatus = store.visionFallbackStatus {
+                HStack(spacing: 6) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text(visionFallbackStatus)
+                        .lineLimit(1)
+                }
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(visionFallbackStatus)
+            }
+
             if !store.attachments.isEmpty {
                 DesktopAttachmentStrip(
                     attachments: store.attachments,
                     onRemove: store.removeAttachment
                 )
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .allowsHitTesting(store.visionFallbackStatus == nil)
             }
 
             ComposerTextView(
                 text: $store.draft,
-                placeholder: isWelcome ? "Message Codex in this workspace…" : "Send follow-up",
+                placeholder: isWelcome
+                    ? "Message Codex in this workspace…"
+                    : (reviewPlan == nil ? "Send follow-up" : "Ask Codex to revise this plan…"),
                 placeholderColor: composerPlaceholderColor,
                 fontSize: isWelcome ? 15 : 14,
                 minHeight: isWelcome ? 70 : 34,
                 maxHeight: isWelcome ? 130 : 110,
-                isEditable: store.hasExplicitWorkspace,
+                isEditable: store.hasExplicitWorkspace && store.visionFallbackStatus == nil,
                 focusToken: focusToken,
                 onSubmit: {
                     if store.executeComposerCommandIfPresent() { return true }
@@ -3767,6 +3939,7 @@ private struct DesktopComposerView: View {
                         }
                     }
                 }
+                .disabled(store.visionFallbackStatus != nil)
                 .layoutPriority(1)
 
                 DesktopModelMenu(store: store)
@@ -3781,6 +3954,31 @@ private struct DesktopComposerView: View {
                 }
 
                 Spacer(minLength: 0)
+
+                if let plan = reviewPlan {
+                    Button {
+                        store.navigateToPlan(plan.reference)
+                    } label: {
+                        Image(systemName: "list.bullet.clipboard")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(veoAccent)
+                            .frame(width: 28, height: 28)
+                            .background(
+                                Color.primary.opacity(0.05),
+                                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            )
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .stroke(veoAccent.opacity(0.18), lineWidth: 1)
+                                    .allowsHitTesting(false)
+                            }
+                            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Plan ready — scroll to plan")
+                    .accessibilityLabel("Plan ready. Scroll to plan")
+                    .layoutPriority(1)
+                }
 
                 sendNewlineHint
 
@@ -3864,6 +4062,20 @@ private struct DesktopComposerView: View {
                     .layoutPriority(1)
                 }
 
+                if let plan = reviewPlan {
+                    DesktopPlanImplementControl(
+                        isImplementing: plan.lifecycle == .implementing,
+                        isEnabled: store.canImplementSelectedPlan,
+                        help: store.canImplementSelectedPlan
+                            ? "Implement the approved plan"
+                            : "Send or clear feedback and attachments first",
+                        usesCommandReturn: true,
+                        implement: { store.implementPlan(plan.reference) },
+                        implementInNewTask: { store.implementPlan(plan.reference, inNewTask: true) }
+                    )
+                    .layoutPriority(1)
+                }
+
                 Button {
                     store.sendDraft()
                 } label: {
@@ -3928,16 +4140,44 @@ private struct DesktopComposerView: View {
             if isWelcome {
                 freshProjectBar
             }
+            }
         }
         .modifier(DesktopFloatingMaterialSurface(
             material: DesktopComposerMaterial(rawValue: composerMaterialRaw) ?? .liquidGlass
         ))
+        .blur(radius: isAttachmentDropTarget ? 3.5 : 0)
+        .overlay {
+            attachmentDropOverlay
+        }
         .animation(commandPaletteAnimation, value: store.composerSuggestions.isEmpty)
+        .animation(askQuestionsAnimation, value: store.selectedUserInputRequest?.id)
+        .animation(askQuestionsAnimation, value: reviewPlan?.reference.itemID)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: isAttachmentDropTarget)
         .frame(maxWidth: isWelcome ? DesktopTheme.welcomeWidth : DesktopTheme.conversationWidth)
         .frame(maxWidth: .infinity)
-        .dropDestination(for: URL.self) { urls, _ in
-            store.addDroppedFiles(urls)
-        }
+        .dropDestination(
+            for: URL.self,
+            action: { urls, _ in
+                isAttachmentDropTarget = false
+                guard store.visionFallbackStatus == nil,
+                      store.selectedUserInputRequest == nil else { return false }
+                return store.addDroppedFiles(urls)
+            },
+            isTargeted: { targeted in
+                isAttachmentDropTarget = targeted
+                    && store.hasExplicitWorkspace
+                    && store.selectedUserInputRequest == nil
+            }
+        )
+    }
+
+    private func askQuestionsDraftBinding(
+        for requestID: String
+    ) -> Binding<DesktopAskQuestionsComposerDraft> {
+        Binding(
+            get: { askQuestionDraftsByRequestID[requestID] ?? DesktopAskQuestionsComposerDraft() },
+            set: { askQuestionDraftsByRequestID[requestID] = $0 }
+        )
     }
 
     private var freshProjectBar: some View {
@@ -4075,11 +4315,15 @@ private struct DesktopComposerView: View {
     }
 
     private var composerPlaceholderColor: NSColor {
+        // Built from an explicit colour on purpose: the semantic label colours are
+        // drawn far weaker than their nominal alpha inside the composer's text view,
+        // which left the placeholder almost invisible on the darker materials.
+        // Liquid Glass is the busiest backdrop, so it gets a touch more contrast.
         let material = DesktopComposerMaterial(rawValue: composerMaterialRaw) ?? .liquidGlass
-        if material == .liquidGlass, colorScheme == .dark {
-            return NSColor.labelColor.withAlphaComponent(0.72)
-        }
-        return .tertiaryLabelColor
+        let alpha: CGFloat = material == .liquidGlass ? 0.34 : 0.30
+        return colorScheme == .dark
+            ? NSColor(white: 1, alpha: alpha)
+            : NSColor(white: 0, alpha: alpha)
     }
 
     private var commandPaletteAnimation: Animation? {

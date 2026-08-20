@@ -9,10 +9,10 @@ struct DesktopInteractiveTerminalPanel: View {
     @ObservedObject var store: DesktopCodexStore
     @ObservedObject var hub: DesktopLocalTerminalHub
     @Binding var isPresented: Bool
-    @Environment(\.veoAccent) private var veoAccent
+    @Binding var isWorkspace: Bool
 
-    @State private var panelHeight: CGFloat = 240
-    @State private var dragStartHeight: CGFloat = 240
+    @State private var panelHeight: CGFloat = 288
+    @State private var dragStartHeight: CGFloat = 288
     @State private var isDraggingResize = false
 
     private let minHeight: CGFloat = 140
@@ -46,6 +46,7 @@ struct DesktopInteractiveTerminalPanel: View {
                 ensureSession()
             } else {
                 hub.terminateAll()
+                isWorkspace = false
                 isPresented = false
             }
         }
@@ -111,26 +112,26 @@ struct DesktopInteractiveTerminalPanel: View {
                     ForEach(hub.tabs) { tab in
                         terminalTabChip(tab)
                     }
+
+                    Button {
+                        guard store.hasExplicitWorkspace else { return }
+                        hub.addTab(
+                            in: store.effectiveWorkspaceURL,
+                            columns: bootstrapCols,
+                            rows: bootstrapRows
+                        )
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 20, height: 20)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("New terminal tab")
+                    .disabled(!store.hasExplicitWorkspace)
                 }
             }
-
-            Button {
-                guard store.hasExplicitWorkspace else { return }
-                hub.addTab(
-                    in: store.effectiveWorkspaceURL,
-                    columns: bootstrapCols,
-                    rows: bootstrapRows
-                )
-            } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 20, height: 20)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("New terminal tab")
-            .disabled(!store.hasExplicitWorkspace)
 
             if activeSession?.isStarting == true {
                 ProgressView()
@@ -140,6 +141,20 @@ struct DesktopInteractiveTerminalPanel: View {
             Spacer(minLength: 8)
 
             Button {
+                isWorkspace = true
+            } label: {
+                Image(systemName: "arrow.up.left.and.arrow.down.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Full screen terminal")
+            .accessibilityLabel("Full screen terminal")
+
+            Button {
+                isWorkspace = false
                 isPresented = false
             } label: {
                 Image(systemName: "xmark")
@@ -171,6 +186,7 @@ struct DesktopInteractiveTerminalPanel: View {
 
             Button {
                 if !hub.closeTab(tab.id) {
+                    isWorkspace = false
                     isPresented = false
                 }
             } label: {
@@ -235,7 +251,7 @@ struct DesktopInteractiveTerminalPanel: View {
                 .allowsHitTesting(!hub.isAgentCLIPermissionPromptPresented)
 
                 if let prompt = hub.agentCLIPermissionPrompt {
-                    agentCLIPermissionOverlay(prompt)
+                    DesktopAgentCLIPermissionOverlay(prompt: prompt, hub: hub)
                         .transition(.opacity.combined(with: .scale(scale: 0.98)))
                 }
             }
@@ -247,7 +263,25 @@ struct DesktopInteractiveTerminalPanel: View {
         }
     }
 
-    private func agentCLIPermissionOverlay(_ prompt: DesktopAgentCLIPermissionPrompt) -> some View {
+    private func ensureSession(relocateExisting: Bool = false) {
+        guard store.hasExplicitWorkspace else { return }
+        let cwd = store.effectiveWorkspaceURL
+        let cols = bootstrapCols
+        let rows = bootstrapRows
+        if relocateExisting, !hub.tabs.isEmpty {
+            hub.relocateAll(to: cwd, columns: cols, rows: rows)
+        } else {
+            hub.ensureActiveTab(in: cwd, columns: cols, rows: rows)
+        }
+    }
+}
+
+struct DesktopAgentCLIPermissionOverlay: View {
+    let prompt: DesktopAgentCLIPermissionPrompt
+    @ObservedObject var hub: DesktopLocalTerminalHub
+    @Environment(\.veoAccent) private var veoAccent
+
+    var body: some View {
         ZStack {
             Color.black.opacity(0.28)
                 .background(.ultraThinMaterial)
@@ -298,17 +332,5 @@ struct DesktopInteractiveTerminalPanel: View {
             .padding(.horizontal, 24)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private func ensureSession(relocateExisting: Bool = false) {
-        guard store.hasExplicitWorkspace else { return }
-        let cwd = store.effectiveWorkspaceURL
-        let cols = bootstrapCols
-        let rows = bootstrapRows
-        if relocateExisting, !hub.tabs.isEmpty {
-            hub.relocateAll(to: cwd, columns: cols, rows: rows)
-        } else {
-            hub.ensureActiveTab(in: cwd, columns: cols, rows: rows)
-        }
     }
 }

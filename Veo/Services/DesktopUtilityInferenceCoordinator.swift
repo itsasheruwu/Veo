@@ -49,12 +49,31 @@ final class DesktopUtilityInferenceCoordinator {
         effort: String = "low",
         cwd: String
     ) async throws -> String {
+        try await infer(
+            input: [["type": "text", "text": prompt]],
+            outputSchema: outputSchema,
+            model: model,
+            effort: effort,
+            cwd: cwd
+        )
+    }
+
+    /// Runs an isolated utility turn over application-provided multimodal input.
+    /// Callers must keep the input limited to the current workspace and validate
+    /// their own structured response before using it in the visible chat.
+    func infer(
+        input: [[String: Any]],
+        outputSchema: [String: Any],
+        model: String,
+        effort: String = "low",
+        cwd: String
+    ) async throws -> String {
         let inferenceID = UUID()
         return try await withTaskCancellationHandler(operation: { [weak self] in
             guard let self else { throw CancellationError() }
             return try await self.startInference(
                 inferenceID: inferenceID,
-                prompt: prompt,
+                input: input,
                 outputSchema: outputSchema,
                 model: model,
                 effort: effort,
@@ -69,7 +88,7 @@ final class DesktopUtilityInferenceCoordinator {
 
     private func startInference(
         inferenceID: UUID,
-        prompt: String,
+        input: [[String: Any]],
         outputSchema: [String: Any],
         model: String,
         effort: String,
@@ -84,8 +103,8 @@ final class DesktopUtilityInferenceCoordinator {
                 "ephemeral": true,
                 "approvalPolicy": "never",
                 "sandbox": "read-only",
-                "baseInstructions": "You perform a private UI classification task. Do not use tools. Return only the JSON required by the output schema.",
-                "developerInstructions": "Never inspect files, run commands, browse, or modify state. Analyze only the text supplied by the application.",
+                "baseInstructions": "You perform a private Veo utility task. Do not use tools. Return only the JSON required by the output schema.",
+                "developerInstructions": "Never inspect files, run commands, browse, or modify state. Analyze only input supplied directly by the application.",
                 "threadSource": "veoUtility",
             ]
         )
@@ -114,7 +133,7 @@ final class DesktopUtilityInferenceCoordinator {
             pending.turnStartTask = Task { [weak self] in
                 await self?.startTurn(
                     threadID: threadID,
-                    prompt: prompt,
+                    input: input,
                     outputSchema: outputSchema,
                     model: model,
                     effort: effort
@@ -125,7 +144,7 @@ final class DesktopUtilityInferenceCoordinator {
 
     private func startTurn(
         threadID: String,
-        prompt: String,
+        input: [[String: Any]],
         outputSchema: [String: Any],
         model: String,
         effort: String
@@ -135,7 +154,7 @@ final class DesktopUtilityInferenceCoordinator {
                 method: "turn/start",
                 params: [
                     "threadId": threadID,
-                    "input": [["type": "text", "text": prompt]],
+                    "input": input,
                     "model": model,
                     "effort": effort,
                     "summary": "none",

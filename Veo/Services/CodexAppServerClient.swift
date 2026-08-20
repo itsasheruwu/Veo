@@ -507,12 +507,12 @@ private final class NDJSONStreamSplitter: @unchecked Sendable {
         lock.lock()
         // Incomplete JSON can arrive in large chunks. If this chunk has no newline,
         // no line can complete — just buffer and skip a full rescan.
+        // `memchr` keeps this to one libc scan. The byte-at-a-time Swift loop this
+        // replaced was unspecialized in debug builds and pegged a core for the whole
+        // length of a streaming turn, which starved the UI.
         let chunkHasNewline = data.withUnsafeBytes { raw -> Bool in
-            guard let base = raw.bindMemory(to: UInt8.self).baseAddress else { return false }
-            for index in 0..<raw.count where base[index] == 0x0A {
-                return true
-            }
-            return false
+            guard let base = raw.baseAddress, raw.count > 0 else { return false }
+            return memchr(base, 0x0A, raw.count) != nil
         }
 
         buffer.append(data)
@@ -533,18 +533,16 @@ private final class NDJSONStreamSplitter: @unchecked Sendable {
         var remainderStart = 0
 
         snapshot.withUnsafeBytes { raw in
-            guard let base = raw.bindMemory(to: UInt8.self).baseAddress else { return }
+            guard let base = raw.baseAddress, raw.count > 0 else { return }
             let count = raw.count
             var lineStart = 0
-            var index = 0
-            while index < count {
-                if base[index] == 0x0A {
-                    if index > lineStart {
-                        lines.append(Data(bytes: base + lineStart, count: index - lineStart))
-                    }
-                    lineStart = index + 1
+            while lineStart < count {
+                guard let hit = memchr(base + lineStart, 0x0A, count - lineStart) else { break }
+                let newlineIndex = UnsafeRawPointer(hit) - base
+                if newlineIndex > lineStart {
+                    lines.append(Data(bytes: base + lineStart, count: newlineIndex - lineStart))
                 }
-                index += 1
+                lineStart = newlineIndex + 1
             }
             remainderStart = lineStart
         }

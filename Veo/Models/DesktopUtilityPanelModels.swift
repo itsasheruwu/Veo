@@ -5,6 +5,7 @@
 import Foundation
 
 enum DesktopUtilityPanelTab: String, CaseIterable, Identifiable {
+    case plan
     case review
     case browser
     case files
@@ -16,6 +17,7 @@ enum DesktopUtilityPanelTab: String, CaseIterable, Identifiable {
 
     var systemImage: String {
         switch self {
+        case .plan: return "list.bullet.clipboard"
         case .review: return "arrow.left.arrow.right"
         case .browser: return "globe"
         case .files: return "folder"
@@ -26,6 +28,7 @@ enum DesktopUtilityPanelTab: String, CaseIterable, Identifiable {
 
 struct DesktopUtilityPanelItem: Identifiable, Hashable {
     enum Content: Hashable {
+        case plan(DesktopPlanReference)
         case review
         case browser(UUID)
         case files
@@ -33,6 +36,7 @@ struct DesktopUtilityPanelItem: Identifiable, Hashable {
 
         var kind: DesktopUtilityPanelTab {
             switch self {
+            case .plan: return .plan
             case .review: return .review
             case .browser: return .browser
             case .files: return .files
@@ -63,6 +67,7 @@ enum DesktopUtilityPreferences {
     static let reviewLayoutKey = "VeoDesktop.utilityPanel.reviewLayout"
     static let hideWhitespaceKey = "VeoDesktop.utilityPanel.hideWhitespace"
     static let restoreBrowserTabsKey = "VeoDesktop.browser.restoreTabs"
+    static let planSelectionKey = "VeoDesktop.utilityPanel.planSelection"
 }
 
 @MainActor
@@ -81,6 +86,8 @@ final class DesktopUtilityPanelModel: ObservableObject {
     private var tabsByWorkspace: [String: [DesktopUtilityPanelItem]] = [:]
     private var selectionByWorkspace: [String: UUID] = [:]
     private var preferredKind: DesktopUtilityPanelTab
+    private var planByThread: [String: DesktopPlanReference]
+    private var currentThreadID: String?
 
     var selectedTab: DesktopUtilityPanelItem? {
         tabs.first(where: { $0.id == selectedTabID }) ?? tabs.first
@@ -92,6 +99,9 @@ final class DesktopUtilityPanelModel: ObservableObject {
         browser = DesktopBrowserModel()
         preferredKind = defaults.string(forKey: DesktopUtilityPreferences.selectedTabKey)
             .flatMap(DesktopUtilityPanelTab.init(rawValue:)) ?? .review
+        planByThread = defaults.data(forKey: DesktopUtilityPreferences.planSelectionKey)
+            .flatMap { try? JSONDecoder().decode([String: DesktopPlanReference].self, from: $0) }
+            ?? [:]
 
         browser.tabAdded = { [weak self] browserTabID in
             self?.insertBrowserTab(browserTabID)
@@ -114,6 +124,8 @@ final class DesktopUtilityPanelModel: ObservableObject {
 
     func addTab(_ kind: DesktopUtilityPanelTab) {
         switch kind {
+        case .plan:
+            return
         case .review:
             let item = DesktopUtilityPanelItem(content: .review)
             tabs.append(item)
@@ -139,6 +151,23 @@ final class DesktopUtilityPanelModel: ObservableObject {
         selectedSubagentID = id
     }
 
+    func showPlan(_ reference: DesktopPlanReference) {
+        if let index = tabs.firstIndex(where: { $0.content.kind == .plan }) {
+            let existing = tabs[index]
+            tabs[index] = DesktopUtilityPanelItem(id: existing.id, content: .plan(reference))
+            selectTab(existing.id)
+        } else {
+            let item = DesktopUtilityPanelItem(content: .plan(reference))
+            tabs.insert(item, at: 0)
+            selectTab(item.id)
+        }
+        if currentThreadID == reference.threadID {
+            planByThread[reference.threadID] = reference
+            persistPlanSelections()
+        }
+        cacheCurrentWorkspace()
+    }
+
     func setSubagentsAvailable(_ available: Bool) {
         guard subagentsAvailable != available else { return }
         subagentsAvailable = available
@@ -160,14 +189,27 @@ final class DesktopUtilityPanelModel: ObservableObject {
 
     func ensureOpenTab() {
         guard tabs.isEmpty else { return }
-        addTab(preferredKind)
+        if preferredKind == .plan {
+            let item = DesktopUtilityPanelItem(content: .review)
+            tabs.append(item)
+            selectedTabID = item.id
+            cacheCurrentWorkspace()
+        } else {
+            addTab(preferredKind)
+        }
     }
 
     func selectTab(_ id: UUID) {
+        activateTab(id, updatingPreferredKind: true)
+    }
+
+    private func activateTab(_ id: UUID, updatingPreferredKind: Bool) {
         guard let item = tabs.first(where: { $0.id == id }) else { return }
         selectedTabID = id
-        preferredKind = item.content.kind
-        defaults.set(preferredKind.rawValue, forKey: DesktopUtilityPreferences.selectedTabKey)
+        if updatingPreferredKind {
+            preferredKind = item.content.kind
+            defaults.set(preferredKind.rawValue, forKey: DesktopUtilityPreferences.selectedTabKey)
+        }
         if case .browser(let browserTabID) = item.content {
             browser.selectTab(browserTabID)
         }
@@ -194,17 +236,21 @@ final class DesktopUtilityPanelModel: ObservableObject {
         cacheCurrentWorkspace()
     }
 
-    func switchWorkspace(to url: URL?) {
+    func switchWorkspace(to url: URL?, threadID: String?) {
         cacheCurrentWorkspace()
         let canonical = url?.standardizedFileURL.resolvingSymlinksInPath()
         files.switchWorkspace(to: canonical)
         browser.switchWorkspace(to: canonical)
         workspaceKey = canonical?.path ?? "__no_workspace__"
+        currentThreadID = threadID
 
         let validBrowserIDs = Set(browser.tabs.map(\.id))
         if let savedTabs = tabsByWorkspace[workspaceKey] {
             tabs = savedTabs.filter { item in
                 if item.content.kind == .subagents { return subagentsAvailable }
+                if case .plan(let reference) = item.content {
+                    return reference.threadID == threadID
+                }
                 guard case .browser(let id) = item.content else { return true }
                 return validBrowserIDs.contains(id)
             }
@@ -216,18 +262,31 @@ final class DesktopUtilityPanelModel: ObservableObject {
                 insertBrowserTab(browserTab.id, selecting: false)
             }
         } else {
-            tabs = [DesktopUtilityPanelItem(content: .review)]
+            tabs = []
+            if let threadID, let reference = planByThread[threadID] {
+                tabs.append(DesktopUtilityPanelItem(content: .plan(reference)))
+            }
+            tabs.append(DesktopUtilityPanelItem(content: .review))
             tabs.append(contentsOf: browser.tabs.map { DesktopUtilityPanelItem(content: .browser($0.id)) })
             tabs.append(DesktopUtilityPanelItem(content: .files))
         }
 
+        if let threadID,
+           let reference = planByThread[threadID],
+           !tabs.contains(where: { $0.content.kind == .plan }) {
+            tabs.insert(DesktopUtilityPanelItem(content: .plan(reference)), at: 0)
+        }
+
         if let savedSelection = selectionByWorkspace[workspaceKey],
            tabs.contains(where: { $0.id == savedSelection }) {
-            selectTab(savedSelection)
+            activateTab(savedSelection, updatingPreferredKind: false)
         } else if let preferred = tabs.first(where: { $0.content.kind == preferredKind }) {
-            selectTab(preferred.id)
+            activateTab(preferred.id, updatingPreferredKind: false)
         } else if let first = tabs.first {
-            selectTab(first.id)
+            // Workspace setup can briefly pass through an empty or transient
+            // workspace before the selected task's cwd is available. Do not
+            // let that fallback overwrite the user's persisted Plan selection.
+            activateTab(first.id, updatingPreferredKind: false)
         }
     }
 
@@ -301,5 +360,10 @@ final class DesktopUtilityPanelModel: ObservableObject {
         guard !workspaceKey.isEmpty else { return }
         tabsByWorkspace[workspaceKey] = tabs
         if let selectedTabID { selectionByWorkspace[workspaceKey] = selectedTabID }
+    }
+
+    private func persistPlanSelections() {
+        guard let data = try? JSONEncoder().encode(planByThread) else { return }
+        defaults.set(data, forKey: DesktopUtilityPreferences.planSelectionKey)
     }
 }

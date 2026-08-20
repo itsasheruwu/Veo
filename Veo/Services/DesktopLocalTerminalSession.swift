@@ -17,6 +17,8 @@ final class DesktopLocalTerminalSession: ObservableObject, Identifiable {
     @Published private(set) var startupError: String?
     /// Optional disambiguator when multiple tabs share a project name.
     @Published var tabSuffix: String = ""
+    /// Last submitted shell command name (`zsh` until the user runs something).
+    @Published private(set) var lastCommandName: String = "zsh"
 
     /// Retained raw PTY bytes so the view can restore after the panel is hidden.
     private let maxScrollbackBytes = 512_000
@@ -50,6 +52,32 @@ final class DesktopLocalTerminalSession: ObservableObject, Identifiable {
         let name = URL(fileURLWithPath: workingDirectoryPath).lastPathComponent
         let base = name.isEmpty ? "/" : name
         return tabSuffix.isEmpty ? base : "\(base)\(tabSuffix)"
+    }
+
+    var agentLabel: String { lastCommandName }
+
+    func recordSubmittedCommand(_ line: String) {
+        let name = Self.commandName(from: line)
+        if DesktopTerminalPreferences.gatedAgentCLINames.contains(name) {
+            lastCommandName = name
+            return
+        }
+        guard lastCommandName == "zsh", name != "zsh" else { return }
+        lastCommandName = name
+    }
+
+    private static func commandName(from line: String) -> String {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "zsh" }
+
+        var tokens = trimmed.split(whereSeparator: \.isWhitespace).map(String.init)
+        while let first = tokens.first, first.contains("="), !first.hasPrefix("-") {
+            tokens.removeFirst()
+        }
+        guard let raw = tokens.first else { return "zsh" }
+        let command = raw.split(separator: "/").last.map(String.init) ?? raw
+        let name = command.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return name.isEmpty ? "zsh" : name
     }
 
     func ensureStarted(in directory: URL, columns: Int, rows: Int) {
@@ -117,6 +145,7 @@ final class DesktopLocalTerminalSession: ObservableObject, Identifiable {
         process = nil
         isRunning = false
         isStarting = false
+        lastCommandName = "zsh"
         outputBuffer.reset()
         outputBuffer = DesktopTerminalOutputBuffer(maximumBytes: 256_000)
         flushScheduled = false
@@ -569,7 +598,11 @@ struct DesktopAgentCLIPermissionPrompt: Identifiable, Equatable {
 final class DesktopLocalTerminalHub: ObservableObject {
     @Published private(set) var tabs: [DesktopLocalTerminalSession] = []
     @Published var selectedTabID: UUID?
+    @Published var paneTree: DesktopTerminalPaneNode?
+    @Published var focusedSessionID: UUID?
     @Published private(set) var agentCLIPermissionPrompt: DesktopAgentCLIPermissionPrompt?
+
+    static let maxVisibleLeaves = 6
 
     var selectedSession: DesktopLocalTerminalSession? {
         guard let selectedTabID else { return tabs.first }
@@ -651,6 +684,7 @@ final class DesktopLocalTerminalHub: ObservableObject {
                 selectedTabID = tabs.last?.id
             }
         }
+        pruneWorkspaceLayout(removed: id)
         refreshTabTitles()
         objectWillChange.send()
         return !tabs.isEmpty
@@ -684,6 +718,8 @@ final class DesktopLocalTerminalHub: ObservableObject {
         }
         tabs.removeAll()
         selectedTabID = nil
+        paneTree = nil
+        focusedSessionID = nil
         agentCLIPermissionPrompt = nil
         objectWillChange.send()
     }

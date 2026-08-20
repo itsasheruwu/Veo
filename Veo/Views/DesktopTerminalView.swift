@@ -12,6 +12,9 @@ struct DesktopTerminalView: NSViewRepresentable {
     /// Pixel size from a GeometryReader. SwiftUI does not reliably call
     /// `NSView.setFrameSize` on every layout pass, so we push size explicitly.
     var viewportSize: CGSize
+    /// Full terminal workspace panes should take keyboard focus when activated.
+    /// Docked terminals remain click-to-focus so they do not steal composer focus.
+    var requestsFocus = false
 
     func makeCoordinator() -> Coordinator {
         Coordinator(session: session, hub: hub)
@@ -22,6 +25,9 @@ struct DesktopTerminalView: NSViewRepresentable {
         terminalView.terminalDelegate = context.coordinator
         terminalView.configureNativeColors()
         terminalView.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        terminalView.clipsToBounds = true
+        terminalView.wantsLayer = true
+        terminalView.layer?.masksToBounds = true
         context.coordinator.terminalView = terminalView
         session.attach(sink: context.coordinator)
         // Focus on click — avoid stealing composer focus on appear.
@@ -38,7 +44,11 @@ struct DesktopTerminalView: NSViewRepresentable {
             session.attach(sink: context.coordinator)
         }
         context.coordinator.syncPermissionPromptState()
+        terminalView.clipsToBounds = true
+        terminalView.wantsLayer = true
+        terminalView.layer?.masksToBounds = true
         context.coordinator.applyViewportSize(viewportSize)
+        context.coordinator.applyFocusRequest(requestsFocus)
     }
 
     static func dismantleNSView(_ nsView: TerminalView, coordinator: Coordinator) {
@@ -52,6 +62,7 @@ struct DesktopTerminalView: NSViewRepresentable {
         var hub: DesktopLocalTerminalHub
         weak var terminalView: TerminalView?
         private var lastViewportSize: CGSize = .zero
+        private var wasFocusRequested = false
 
         /// Best-effort reconstruction of the current shell input line for Agent CLI gating.
         private var lineBuffer = ""
@@ -66,6 +77,20 @@ struct DesktopTerminalView: NSViewRepresentable {
         func focus() {
             guard let terminalView, let window = terminalView.window else { return }
             window.makeFirstResponder(terminalView)
+        }
+
+        func applyFocusRequest(_ requested: Bool) {
+            guard requested else {
+                wasFocusRequested = false
+                return
+            }
+            guard !wasFocusRequested else { return }
+            wasFocusRequested = true
+            // updateNSView can run before AppKit has attached the replacement
+            // terminal to its window during the docked -> workspace transition.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                self?.focus()
+            }
         }
 
         func resetLineBuffer() {
@@ -137,6 +162,7 @@ struct DesktopTerminalView: NSViewRepresentable {
         func send(source: TerminalView, data: ArraySlice<UInt8>) {
             // Freeze keystrokes while the Agent CLIs consent sheet is up.
             guard !hub.isAgentCLIPermissionPromptPresented else { return }
+            hub.focusWorkspaceSession(session.id)
 
             var outbound = Data()
             outbound.reserveCapacity(data.count)
@@ -159,6 +185,7 @@ struct DesktopTerminalView: NSViewRepresentable {
                 case 0x0D, 0x0A:
                     if !DesktopTerminalPreferences.agentCLIsEnabled,
                        DesktopTerminalPreferences.commandInvokesAgentCLI(lineBuffer) {
+                        session.recordSubmittedCommand(lineBuffer)
                         if !outbound.isEmpty {
                             session.write(outbound)
                         }
@@ -168,6 +195,7 @@ struct DesktopTerminalView: NSViewRepresentable {
                         )
                         return
                     }
+                    session.recordSubmittedCommand(lineBuffer)
                     let rewrittenLine = DesktopTerminalPreferences.commandLineApplyingYoloMode(lineBuffer)
                     if rewrittenLine != lineBuffer {
                         if !outbound.isEmpty {

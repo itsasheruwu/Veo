@@ -7,18 +7,23 @@ import SwiftUI
 
 enum DesktopTimelineEntry: Identifiable, Equatable {
     case message(DesktopTimelineItem)
+    case plan(DesktopTimelineItem)
     case activity(DesktopActivityGroup)
+    case viewedImages(DesktopViewedImagesGroup)
 
     var id: String {
         switch self {
         case .message(let item): return item.id
+        case .plan(let item): return item.id
         case .activity(let group): return group.id
+        case .viewedImages(let group): return group.id
         }
     }
 
     static func make(from items: [DesktopTimelineItem]) -> [DesktopTimelineEntry] {
         var entries: [DesktopTimelineEntry] = []
         var activityItems: [DesktopTimelineItem] = []
+        var imageItems: [DesktopTimelineItem] = []
 
         func flushActivity() {
             guard !activityItems.isEmpty else { return }
@@ -26,16 +31,32 @@ enum DesktopTimelineEntry: Identifiable, Equatable {
             activityItems.removeAll(keepingCapacity: true)
         }
 
+        func flushImages() {
+            guard !imageItems.isEmpty else { return }
+            entries.append(.viewedImages(DesktopViewedImagesGroup(items: imageItems)))
+            imageItems.removeAll(keepingCapacity: true)
+        }
+
         for item in items {
             switch item.kind {
-            case .reasoning, .command, .fileChange, .activity, .plan:
+            case .imageView:
+                flushActivity()
+                imageItems.append(item)
+            case .reasoning, .command, .fileChange, .activity, .planUpdate:
+                flushImages()
                 activityItems.append(item)
+            case .plan:
+                flushActivity()
+                flushImages()
+                entries.append(.plan(item))
             case .user, .assistant, .error:
                 flushActivity()
+                flushImages()
                 entries.append(.message(item))
             }
         }
         flushActivity()
+        flushImages()
         return entries
     }
 }
@@ -45,6 +66,17 @@ struct DesktopActivityGroup: Identifiable, Equatable {
 
     var id: String { "activity-group-\(items.first?.id ?? "empty")" }
     var itemIDs: [String] { items.map(\.id) }
+}
+
+struct DesktopViewedImagesGroup: Identifiable, Equatable {
+    let items: [DesktopTimelineItem]
+
+    var id: String { "viewed-images-\(items.first?.id ?? "empty")" }
+    var itemIDs: [String] { items.map(\.id) }
+
+    var title: String {
+        items.count == 1 ? "Viewed an image" : "Viewed images"
+    }
 }
 
 struct DesktopActivityGroupView: View {
@@ -194,28 +226,17 @@ struct DesktopActivityGroupView: View {
 
     @ViewBuilder
     private var statusMark: some View {
-        if isActive {
-            ProgressView()
-                .controlSize(.mini)
-                .frame(width: 12, height: 12)
-        } else if hasFailure {
-            Image(systemName: "exclamationmark.circle.fill")
-                .font(.system(size: 10))
-                .foregroundStyle(.red)
-                .frame(width: 12)
-        } else {
-            Image(systemName: "checkmark")
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(.tertiary)
-                .frame(width: 12)
-        }
+        DesktopActivityCompletionMark(isLoading: isActive, hasFailure: hasFailure)
+            .frame(width: 12, height: 12)
     }
 
     private func activeTitle(for item: DesktopTimelineItem) -> String {
         switch item.kind {
         case .command: return "Running a command"
         case .fileChange: return "Updating files"
-        case .plan: return "Updating the plan"
+        case .planUpdate: return "Updating the execution plan"
+        case .imageView:
+            return "Viewing an image"
         case .activity:
             return item.title.localizedCaseInsensitiveContains("web search") ? "Searching the web" : item.title
         default: return "Thinking"
@@ -226,7 +247,9 @@ struct DesktopActivityGroupView: View {
         switch item.kind {
         case .command: return "Ran a command"
         case .fileChange: return "Updated files"
-        case .plan: return "Made a plan"
+        case .planUpdate: return "Updated the execution plan"
+        case .imageView:
+            return "Viewed an image"
         case .activity:
             return item.title.localizedCaseInsensitiveContains("web search") ? "Searched the web" : item.title
         default: return "Worked through the task"
@@ -237,6 +260,56 @@ struct DesktopActivityGroupView: View {
         withAnimation(reduceMotion ? nil : .easeOut(duration: 0.18)) {
             isExpanded.toggle()
         }
+    }
+}
+
+/// Keeps activity completion quiet while making the live-to-finished state change legible.
+struct DesktopActivityCompletionMark: View {
+    let isLoading: Bool
+    let hasFailure: Bool
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var completionProgress: CGFloat
+
+    init(isLoading: Bool, hasFailure: Bool) {
+        self.isLoading = isLoading
+        self.hasFailure = hasFailure
+        _completionProgress = State(initialValue: isLoading ? 0 : 1)
+    }
+
+    var body: some View {
+        ZStack {
+            ProgressView()
+                .controlSize(.mini)
+                .opacity(isLoading ? 1 - completionProgress : 0)
+                .scaleEffect(1 - (completionProgress * 0.22))
+
+            if hasFailure {
+                Image(systemName: "exclamationmark.circle.fill")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.red)
+                    .opacity(completionProgress)
+                    .scaleEffect(0.72 + (completionProgress * 0.28))
+            } else {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+                    .opacity(completionProgress)
+                    .scaleEffect(0.72 + (completionProgress * 0.28))
+            }
+        }
+        .onChange(of: isLoading) { _, loading in
+            withAnimation(reduceMotion ? nil : .spring(response: 0.28, dampingFraction: 0.72)) {
+                completionProgress = loading ? 0 : 1
+            }
+        }
+        .onChange(of: hasFailure) { _, failed in
+            guard failed else { return }
+            withAnimation(reduceMotion ? nil : .spring(response: 0.28, dampingFraction: 0.72)) {
+                completionProgress = 1
+            }
+        }
+        .accessibilityHidden(true)
     }
 }
 
@@ -475,6 +548,8 @@ private struct DesktopActivityStepView: View {
         case .command: return "terminal"
         case .fileChange: return "doc.badge.gearshape"
         case .plan: return "list.bullet"
+        case .planUpdate: return "checklist"
+        case .imageView: return "photo"
         default: return "circle.fill"
         }
     }

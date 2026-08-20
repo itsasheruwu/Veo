@@ -44,6 +44,53 @@ Do not add a mobile companion, relay, phone pairing, subscriptions, hosted deplo
 - The only product scheme is `Veo`, a native macOS app. Keep the project free of UIKit, widgets, phone targets, and mobile package graphs.
 - For small macOS fixes, prefer inspection, a targeted `Veo` build, and launch/process verification.
 
+## SwiftUI craft
+
+Veo is almost entirely SwiftUI over AppKit. Most bad UI work here fails in one of four ways: designing from a description instead of the reference, building controls the pointer cannot actually hit, letting a control's width move things around it, or calling a green build "done".
+
+### Match the reference, don't paraphrase it
+
+- If a recording, screenshot, or marked-up image exists, it is the spec. Read pixels off it before writing any view code.
+- Extract and measure rather than eyeball: `ffmpeg -ss <t> -i ref.mov -frames:v 1 -vf "crop=W:H:X:Y" out.png` for full-resolution crops, `fps=2` plus `tile=5x5` for a contact sheet of the whole interaction, and a one-pixel `crop=W:1:X:Y -f rawvideo -pix_fmt rgb24` scan to read exact edges, run lengths, and RGB values.
+- Screen recordings are 2×. Halve every measurement to get points, then sanity-check the total against the panel's measured height.
+- Watch for behaviour the written brief omits — hover-only affordances, labels that swap on drag, a state that only appears at one end of a range. Those details are most of what makes a copy read as convincing.
+- Collect the derived numbers in one private `enum ...Metrics` so the panel, its expanded form, and its trigger cannot drift apart.
+
+### Controls the pointer can actually hit
+
+- The visible row *is* the button: make the styled content the `Button`/`Menu` label. Never layer an invisible hit target over a separately drawn row.
+- Never use `Color.clear`, `.opacity(0.001)`, or a bare `Spacer` as a pointer target.
+- Any decorative layer drawn above a control must set `.allowsHitTesting(false)` explicitly.
+- Do not stack opaque shapes over a native `Slider`/`Toggle` and rely on clicks reaching it. Build the control: opaque shapes, `.contentShape(Rectangle())`, and `DragGesture(minimumDistance: 0)` so click-to-jump and drag are the same gesture.
+- Accessibility increment/decrement passing is not evidence the mouse works. Click it, drag it, and hover it in the running app.
+
+### Stable layout and anchors
+
+- A `.popover` anchors to its label's frame, so a label whose width tracks its text drags the popover around as values change. Give such triggers a fixed `.frame(width:)` with the content centred and any chevron pinned trailing.
+- Composer chrome is a horizontal stack: a control that grows pushes its neighbours. Fixed-width beats `ViewThatFits` wherever the popover anchor or neighbouring controls matter.
+- Size the fixed width to the longest realistic label (model name plus effort plus icons), not to the current one — then verify with the longest and shortest values.
+
+### When to drop to AppKit, and how far
+
+- Reach for AppKit only where SwiftUI genuinely cannot express it: drawing outside a popover's bounds, menu items with a secondary description line, or explicit menu placement. `NSMenu` built in a small coordinator covers all three and keeps native hit-testing, keyboard nav, and VoiceOver.
+- Anchor such menus to a passthrough `NSViewRepresentable` whose view overrides `hitTest` to return `nil`, and place it in `.background(...)` so it never competes for clicks.
+- Compute the menu origin in screen coordinates and clamp it to `screen.visibleFrame`; anchored off a control near the window bottom, an unclamped menu turns into a scrolling menu instead of moving up.
+- Keep the bridge narrow — one anchor view plus one menu builder. Custom titlebar/overlay AppKit work has hung this app before (see the Liquid Glass note below).
+
+### Adaptive, animated, accessible by default
+
+- Prefer semantic styles (`.primary`, `.secondary`, `.tertiary`, `Color.primary.opacity(...)`, materials) over hardcoded greys so light and dark both work from one definition. Reserve literal colours for deliberate brand ramps and give them a light/dark variant.
+- Verify both appearances: `defaults write com.ash.Veo VeoDesktop.appearanceMode light`, relaunch, compare, then set it back to what it was.
+- Gate every animation on `@Environment(\.accessibilityReduceMotion)`.
+- Custom controls need `.accessibilityElement()`, a label and value, and `.accessibilityAdjustableAction` for anything range-like; keyboard support via `.focusable()` and `.onKeyPress`.
+- Suppress the system focus ring with `.focusEffectDisabled()` and draw a quiet one of your own, shown only once the keyboard has been used. Ash does not want loud blue system rings in Veo chrome.
+
+### Verification
+
+- A successful `xcodebuild` says nothing about whether the design matches or the control is clickable.
+- Kill stale instances, launch the exact artifact you just built, then drive the real UI: open the surface, click every row, drag every slider, toggle every switch, and screenshot each state next to the reference crop.
+- Confirm store side effects landed (the visible label *and* the persisted `defaults` key), and restore any preference or selection you changed while testing.
+
 ## Model selection
 
 Rankings, higher = better. Cost reflects what I actually pay (OpenAI is near-free for me due to a deal), not list price. Intelligence is how hard a problem you can hand the model unsupervised. Taste covers UI/UX, code quality, API design, and copy.
@@ -115,5 +162,6 @@ open /tmp/veo-derived/Build/Products/Debug/Veo.app
 - The docked terminal uses SwiftTerm plus a local PTY (`DesktopLocalTerminalSession`); keep PTY winsize synced to the SwiftUI viewport so TUI CLIs like `codex` and `claude` render correctly.
 - Appearance (Sync/Light/Dark, accent color, sidebar Solid/Mica/Liquid Glass) is driven by `DesktopAppearancePreferences`; apply custom accent via the `veoAccent` environment because `Color.accentColor` alone does not reliably carry Veo's tint on macOS.
 - Terminal Agent CLI / yolo preferences live in `DesktopTerminalPreferences` and Settings → Terminal.
+- The composer model picker has two appearances (`DesktopModelPickerAppearance`, Settings → Appearance): `native` is the studio popover, `sliderAdvanced` is the ChatGPT/Codex-style panel — a compact effort slider that expands into Model/Effort/Speed rows, with submenus popped as `NSMenu` to the right. Both live in `DesktopModelMenu.swift` and share the live catalog and `DesktopCodexStore` selection methods; the slider trigger is fixed-width on purpose so the popover anchor cannot move.
 - The in-app browser lives in `DesktopBrowserPanelView` / `DesktopBrowserModel`, with Keychain save/fill and passkeys in `DesktopBrowserKeychain`. Settings → Browser (`DesktopBrowserPreferences`) holds search engine (Google default), restore tabs, desktop site, JavaScript, fraud warning, AutoFill, and passkeys. WKWebView should identify as current Safari and request desktop layout so sites don’t look dated.
 - ChatGPT Account sign-in must open in Veo’s WKWebView (shared cookie store), not Safari. ChatGPT as a search engine uses `chatgpt.com` with temporary chat and web search (`temporary-chat=true`, `hints=search`).

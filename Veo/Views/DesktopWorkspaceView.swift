@@ -1321,64 +1321,7 @@ private struct DesktopSidebarView: View {
 
             repositoryHeader
 
-            List(selection: selection) {
-                veoThreadSections
-
-                if store.showCodexThreads {
-                    Section("Codex") {
-                        if sidebarOrganization == .oneList {
-                            let codexEntries = flattenedEntries(for: sortedThreads(store.filteredCodexThreads))
-                            ForEach(codexEntries) { entry in
-                                codexThreadRow(entry)
-                            }
-                        } else {
-                            ForEach(codexWorkspaceGroups, id: \.path) { group in
-                                codexProjectHeader(group.path, name: group.name)
-                                if !isProjectCollapsed(group.path) {
-                                    let entries = flattenedEntries(for: group.threads)
-                                    ForEach(entries) { entry in
-                                        codexThreadRow(entry, showsWorkspace: false)
-                                    }
-                                }
-                            }
-                        }
-
-                        if store.isLoadingCodexThreads {
-                            ProgressView()
-                                .progressViewStyle(.linear)
-                                .controlSize(.small)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.vertical, 4)
-                                .listRowBackground(Color.clear)
-                                .accessibilityLabel("Loading Codex chats")
-                        } else if store.filteredCodexThreads.isEmpty, store.runtimeState.isReady {
-                            Text(store.searchText.isEmpty
-                                ? "No Codex CLI chats to show."
-                                : "No Codex chats match your search.")
-                                .font(.system(size: 12))
-                                .foregroundStyle(.secondary)
-                                .listRowBackground(Color.clear)
-                        }
-                    }
-                }
-
-                if store.filteredThreads.isEmpty, store.runtimeState.isReady {
-                    ContentUnavailableView {
-                        Label("No chats yet", systemImage: "text.bubble")
-                    } description: {
-                        Text(
-                            store.searchText.isEmpty
-                                ? "Start a new chat, or enable Codex threads in the sidebar options to browse Codex CLI history."
-                                : "No chats match your search."
-                        )
-                    }
-                    .listRowBackground(Color.clear)
-                }
-            }
-            .listStyle(.sidebar)
-            .scrollContentBackground(.hidden)
-            .environment(\.defaultMinListRowHeight, 30)
-            .background(DesktopSidebarListSelectionStyle())
+            sidebarContent
 
             sidebarFooter
         }
@@ -1413,6 +1356,87 @@ private struct DesktopSidebarView: View {
             } else {
                 Text("“\(thread.title)” and its spawned descendants will be removed from Codex history. Local project files are not reverted.")
             }
+        }
+    }
+
+    @ViewBuilder
+    private var sidebarContent: some View {
+        if store.filteredThreads.isEmpty,
+           store.filteredCodexThreads.isEmpty,
+           !store.isLoadingCodexThreads,
+           store.runtimeState.isReady {
+            let isSearching = !store.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            // Keep the empty state outside List: list-row accessibility otherwise
+            // merges the recovery button into a non-actionable row.
+            ContentUnavailableView {
+                Label(
+                    isSearching ? "No matching chats" : (store.isBrowsingArchivedThreads ? "No archived chats" : "No chats yet"),
+                    systemImage: isSearching ? "magnifyingglass" : "text.bubble"
+                )
+            } description: {
+                Text(
+                    isSearching
+                        ? "Try another search or clear it to show your chats."
+                        : (store.isBrowsingArchivedThreads
+                            ? "Chats you archive will appear here."
+                            : "Start a new chat, or enable Codex threads in the sidebar options to browse Codex CLI history.")
+                )
+            } actions: {
+                if isSearching {
+                    Button("Clear search") {
+                        store.searchText = ""
+                        searchFocused = true
+                    }
+                    .controlSize(.small)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            List(selection: selection) {
+                veoThreadSections
+
+                if store.showCodexThreads {
+                    Section("Codex") {
+                        if sidebarOrganization == .oneList {
+                            let codexEntries = flattenedEntries(for: sortedThreads(store.filteredCodexThreads))
+                            ForEach(codexEntries) { entry in
+                                codexThreadRow(entry)
+                            }
+                        } else {
+                            ForEach(codexWorkspaceGroups, id: \.path) { group in
+                                codexProjectHeader(group.path, name: group.name)
+                                if !isProjectCollapsed(group.path) {
+                                    let entries = flattenedEntries(for: group.threads)
+                                    ForEach(entries) { entry in
+                                        codexThreadRow(entry, showsWorkspace: false)
+                                    }
+                                }
+                            }
+                        }
+
+                        if store.isLoadingCodexThreads {
+                            ProgressView()
+                                .progressViewStyle(.linear)
+                                .controlSize(.small)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.vertical, 4)
+                                .listRowBackground(Color.clear)
+                                .accessibilityLabel("Loading Codex chats")
+                        } else if store.filteredCodexThreads.isEmpty, store.runtimeState.isReady {
+                            Text(store.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                ? "No Codex CLI chats to show."
+                                : "No Codex chats match your search.")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                                .listRowBackground(Color.clear)
+                        }
+                    }
+                }
+            }
+            .listStyle(.sidebar)
+            .scrollContentBackground(.hidden)
+            .environment(\.defaultMinListRowHeight, 30)
+            .background(DesktopSidebarListSelectionStyle())
         }
     }
 
@@ -1723,6 +1747,8 @@ private struct DesktopSidebarView: View {
                 store.chooseWorkspace()
             } label: {
                 Image(systemName: "folder.badge.plus")
+                    .frame(width: 18, height: 18)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help("Open project")
@@ -2599,9 +2625,15 @@ private struct DesktopThreadRow: View {
         .help(thread.isSubagent
             ? "\(agentState?.displayStatus ?? thread.agentStatus) — \(thread.cwd)"
             : (showsWorkspace ? "\(thread.workspaceName) — \(thread.cwd)" : thread.cwd))
-        .listRowBackground(
-            isSelected ? veoAccent.opacity(0.22) : Color.clear
-        )
+        .listRowBackground(rowBackground)
+    }
+
+    /// Inset rounded selection matching macOS sidebar conventions.
+    private var rowBackground: some View {
+        RoundedRectangle(cornerRadius: 6, style: .continuous)
+            .fill(isSelected ? veoAccent.opacity(0.22) : Color.clear)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 1)
     }
 
     private static func compactRelativeTime(from date: Date) -> String {
@@ -2719,6 +2751,27 @@ private struct TimelineItemBoundsKey: PreferenceKey {
     }
 }
 
+private struct DesktopComposerHeightPreferenceKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+private struct DesktopConversationTurnDivider: View {
+    @Environment(\.displayScale) private var displayScale
+
+    var body: some View {
+        Rectangle()
+            .fill(DesktopTheme.hairline)
+            .frame(height: 1 / max(displayScale, 1))
+            .frame(maxWidth: .infinity)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+}
+
 private struct DesktopConversationView: View {
     @Environment(\.veoAccent) private var veoAccent
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -2736,6 +2789,7 @@ private struct DesktopConversationView: View {
     @AppStorage(DesktopAppearancePreferences.windowMaterialKey) private var windowMaterialRaw =
         DesktopWindowMaterial.solid.rawValue
     @State private var isPinnedToBottom = true
+    @State private var composerHeight: CGFloat = 0
     @State private var autoScrollGeneration = 0
     @State private var isAutoScrollInFlight = false
     @State private var pendingAutoScrollAnimation = false
@@ -2783,7 +2837,21 @@ private struct DesktopConversationView: View {
                         transitionNamespace: composerTransitionNamespace,
                         onOpenSubagent: onOpenSubagent
                     )
+                    .background {
+                        GeometryReader { composer in
+                            Color.clear.preference(
+                                key: DesktopComposerHeightPreferenceKey.self,
+                                value: composer.size.height
+                            )
+                        }
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                    }
                 }
+            }
+            .onPreferenceChange(DesktopComposerHeightPreferenceKey.self) { height in
+                guard height.isFinite, abs(composerHeight - height) > 0.5 else { return }
+                composerHeight = height
             }
             .animation(composerTransitionAnimation, value: showsEmptyChat)
 
@@ -2868,8 +2936,12 @@ private struct DesktopConversationView: View {
                         } else {
                             ForEach(timelineEntries) { entry in
                                 switch entry {
+                                case .turnDivider:
+                                    DesktopConversationTurnDivider()
+
                                 case .message(let item):
                                     DesktopTimelineRow(
+                                        store: store,
                                         item: item,
                                         workspaceURL: store.effectiveWorkspaceURL,
                                         isTurnRunning: activeTimelineItemIDs.contains(item.id),
@@ -2959,17 +3031,13 @@ private struct DesktopConversationView: View {
                             .id("running")
                         }
 
-                        if let error = store.transientError, !error.isEmpty {
-                            Label(error, systemImage: "exclamationmark.triangle.fill")
-                                .font(.system(size: 12))
-                                .foregroundStyle(.red)
-                                .padding(12)
-                                .background(.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                        if store.visibleTransientError != nil {
+                            DesktopErrorNotice(store: store)
                                 .id("error")
                         }
 
                         Color.clear
-                            .frame(height: Self.timelineBottomInset)
+                            .frame(height: composerHeight + 12)
                             .id(Self.bottomAnchor)
                             }
                             .frame(maxWidth: DesktopTheme.conversationWidth, alignment: .leading)
@@ -3057,6 +3125,9 @@ private struct DesktopConversationView: View {
                 .onChange(of: store.timeline.last) { _, _ in
                     scheduleScrollToEndIfPinned(proxy, animated: false)
                 }
+                .onChange(of: composerHeight) { _, _ in
+                    scheduleScrollToEndIfPinned(proxy, animated: false)
+                }
                 .onChange(of: store.isRunningTurn) { _, _ in
                     scheduleScrollToEndIfPinned(proxy, animated: true)
                 }
@@ -3102,10 +3173,13 @@ private struct DesktopConversationView: View {
                                 .padding(.horizontal, 12)
                                 .padding(.vertical, 7)
                                 .background(.regularMaterial, in: Capsule())
-                                .overlay(Capsule().stroke(DesktopTheme.hairline, lineWidth: 1))
+                                .overlay {
+                                    Capsule().stroke(DesktopTheme.hairline, lineWidth: 1)
+                                        .allowsHitTesting(false)
+                                }
                         }
                         .buttonStyle(.plain)
-                        .padding(.bottom, 164)
+                        .padding(.bottom, composerHeight + 8)
                         .transition(.opacity.combined(with: .move(edge: .bottom)))
                     }
                 }
@@ -3169,7 +3243,6 @@ private struct DesktopConversationView: View {
 
     private static let scrollSpace = "veo.timeline.scroll"
     private static let bottomAnchor = "veo.timeline.bottom"
-    private static let timelineBottomInset: CGFloat = 188
 
     private func timelineBoundsReader(itemIDs: [String]) -> some View {
         GeometryReader { row in
@@ -3293,10 +3366,15 @@ private struct DesktopConversationView: View {
             Text("Install and sign in to the Codex CLI, then try again.")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.tertiary)
-            Button("Try Again") {
-                store.reconnect()
+            HStack(spacing: 10) {
+                Button("Try Again") { store.reconnect() }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!store.canReconnect)
+                Button("Runtime settings") {
+                    store.performErrorRecovery(.settings(.runtime))
+                }
+                .buttonStyle(.bordered)
             }
-            .buttonStyle(.borderedProminent)
         }
         .padding(40)
     }
@@ -3347,6 +3425,7 @@ private struct DesktopWelcomeView: View {
 }
 
 private struct DesktopTimelineRow: View {
+    let store: DesktopCodexStore
     @Environment(\.veoAccent) private var veoAccent
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let item: DesktopTimelineItem
@@ -3637,18 +3716,7 @@ private struct DesktopTimelineRow: View {
                item.turnID == autoContinuationJob.failedTurnID {
                 usageLimitRow(autoContinuationJob)
             } else {
-        Label {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(item.title).fontWeight(.semibold)
-                Text(item.body)
-            }
-        } icon: {
-            Image(systemName: "exclamationmark.triangle.fill")
-        }
-        .font(.system(size: 12))
-        .foregroundStyle(.red)
-        .padding(12)
-        .background(.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                DesktopErrorNotice(store: store, item: item)
             }
         }
     }
@@ -3743,11 +3811,9 @@ private struct DesktopComposerView: View {
     @AppStorage(DesktopComposerPreferences.showsContextWindowUsageKey) private var showsContextWindowUsage = false
     @AppStorage(DesktopComposerPreferences.contextWindowUsageStyleKey) private var contextWindowUsageStyleRaw =
         DesktopContextWindowUsageStyle.percent.rawValue
-    @AppStorage("VeoDesktop.projectDisplayNames") private var projectDisplayNamesJSON = "{}"
     @State private var focusToken = 0
     @State private var isOptionsPresented = false
     @State private var isQueuePresented = false
-    @State private var isProjectChooserPresented = false
     @State private var isAttachmentDropTarget = false
     @State private var askQuestionDraftsByRequestID: [String: DesktopAskQuestionsComposerDraft] = [:]
 
@@ -3798,8 +3864,8 @@ private struct DesktopComposerView: View {
         return store.selectedPlanForReview
     }
 
-    private var askQuestionsAnimation: Animation {
-        if reduceMotion { return .linear(duration: 0.10) }
+    private var askQuestionsAnimation: Animation? {
+        if reduceMotion { return nil }
         switch composerMaterial {
         case .liquidGlass:
             return .spring(response: 0.42, dampingFraction: 0.86)
@@ -3850,11 +3916,8 @@ private struct DesktopComposerView: View {
                     .transition(.opacity)
             } else {
             VStack(spacing: DesktopTheme.spaceS) {
-            if let error = store.transientError, !error.isEmpty, store.timeline.isEmpty {
-                Text(error)
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(.red)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            if store.visibleTransientError != nil, store.timeline.isEmpty {
+                DesktopErrorNotice(store: store)
             }
 
             if let plan = reviewPlan,
@@ -3926,7 +3989,7 @@ private struct DesktopComposerView: View {
                     Image(systemName: "plus")
                         .font(.system(size: 12, weight: .semibold))
                         .frame(width: 27, height: 27)
-                        .background(.white.opacity(0.08), in: Circle())
+                        .background(DesktopTheme.raised, in: Circle())
                 }
                 .buttonStyle(.plain)
                 .help("Composer options")
@@ -4138,7 +4201,7 @@ private struct DesktopComposerView: View {
             .padding(DesktopTheme.spaceM)
 
             if isWelcome {
-                freshProjectBar
+                DesktopComposerProjectBar(store: store)
             }
             }
         }
@@ -4180,140 +4243,6 @@ private struct DesktopComposerView: View {
         )
     }
 
-    private var freshProjectBar: some View {
-        HStack {
-            Spacer(minLength: 0)
-
-            Button {
-                isProjectChooserPresented.toggle()
-            } label: {
-                HStack(spacing: 7) {
-                    Image(systemName: "folder")
-                    Text("Choose project")
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 8, weight: .semibold))
-                        .foregroundStyle(.tertiary)
-                }
-                .font(.system(size: 11.5, weight: .semibold))
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("Choose the project for this chat")
-            .accessibilityLabel("Choose project")
-            .popover(isPresented: $isProjectChooserPresented, arrowEdge: .bottom) {
-                projectChooserPopover
-            }
-
-            Spacer(minLength: 0)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.horizontal, DesktopTheme.spaceM)
-        .padding(.vertical, 10)
-        .overlay(alignment: .top) {
-            Divider().opacity(0.7)
-        }
-    }
-
-    private var projectChooserPopover: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Choose project")
-                .font(.system(size: 13, weight: .semibold))
-
-            if knownProjects.isEmpty {
-                Text("No existing projects yet")
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(.secondary)
-                    .padding(.vertical, 6)
-            } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 2) {
-                        ForEach(knownProjects, id: \.path) { project in
-                            Button {
-                                chooseExistingProject(project.path)
-                            } label: {
-                                HStack(spacing: 9) {
-                                    Image(systemName: "folder")
-                                        .foregroundStyle(veoAccent)
-                                        .frame(width: 16)
-                                    VStack(alignment: .leading, spacing: 1) {
-                                        Text(project.name)
-                                            .font(.system(size: 11.5, weight: .medium))
-                                            .lineLimit(1)
-                                        Text(project.path)
-                                            .font(.system(size: 9.5, design: .monospaced))
-                                            .foregroundStyle(.tertiary)
-                                            .lineLimit(1)
-                                            .truncationMode(.middle)
-                                    }
-                                    Spacer(minLength: 8)
-                                    if project.path == store.effectiveWorkspaceURL.path,
-                                       store.currentWorkspaceKind == .project {
-                                        Image(systemName: "checkmark")
-                                            .font(.system(size: 10, weight: .bold))
-                                            .foregroundStyle(veoAccent)
-                                    }
-                                }
-                                .contentShape(Rectangle())
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 7)
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel("Use project \(project.name)")
-                        }
-                    }
-                }
-                .frame(maxHeight: 220)
-            }
-
-            Divider()
-
-            Button {
-                isProjectChooserPresented = false
-                DispatchQueue.main.async {
-                    store.chooseWorkspace()
-                }
-            } label: {
-                Label("Add project…", systemImage: "folder.badge.plus")
-                    .font(.system(size: 11.5, weight: .medium))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(12)
-        .frame(width: 310)
-        .background(.regularMaterial)
-    }
-
-    private var projectDisplayNames: [String: String] {
-        guard let data = projectDisplayNamesJSON.data(using: .utf8),
-              let names = try? JSONDecoder().decode([String: String].self, from: data) else {
-            return [:]
-        }
-        return names
-    }
-
-    private var knownProjects: [(path: String, name: String)] {
-        var latestUpdateByPath: [String: Date] = [:]
-        for thread in store.threads {
-            guard thread.workspaceKind == .project else { continue }
-            latestUpdateByPath[thread.cwd] = max(latestUpdateByPath[thread.cwd] ?? .distantPast, thread.updatedAt)
-        }
-        if let workspaceURL = store.workspaceURL {
-            latestUpdateByPath[workspaceURL.path] = max(latestUpdateByPath[workspaceURL.path] ?? .distantPast, .now)
-        }
-        return latestUpdateByPath
-            .sorted { $0.value > $1.value }
-            .map { path, _ in
-                (path: path, name: projectDisplayNames[path] ?? URL(fileURLWithPath: path).lastPathComponent)
-            }
-    }
-
-    private func chooseExistingProject(_ path: String) {
-        isProjectChooserPresented = false
-        store.beginProjectChat(at: URL(fileURLWithPath: path, isDirectory: true))
-    }
-
     private var composerPlaceholderColor: NSColor {
         // Built from an explicit colour on purpose: the semantic label colours are
         // drawn far weaker than their nominal alpha inside the composer's text view,
@@ -4347,25 +4276,30 @@ private struct DesktopComposerView: View {
 
     private var accessModeMenu: some View {
         Menu {
-            ForEach(DesktopAccessMode.allCases) { mode in
-                Button {
-                    store.updateAccessMode(mode)
-                } label: {
-                    HStack {
-                        Text(mode.title)
-                        if store.accessMode == mode {
-                            Image(systemName: "checkmark")
-                        }
-                    }
+            Picker(
+                "Access mode",
+                selection: Binding(
+                    get: { store.accessMode },
+                    set: { store.updateAccessMode($0) }
+                )
+            ) {
+                ForEach(DesktopAccessMode.allCases) { mode in
+                    Label(mode.title, systemImage: mode.symbolName)
+                        .tag(mode)
                 }
             }
+            .pickerStyle(.inline)
+            .labelsHidden()
         } label: {
-            Label(store.accessMode.title, systemImage: "shield")
+            Label(store.accessMode.title, systemImage: store.accessMode.symbolName)
                 .labelStyle(.titleAndIcon)
                 .font(.system(size: 11.5, weight: .medium))
                 .foregroundStyle(store.accessMode == .fullAccess ? .orange : .secondary)
         }
         .menuStyle(.borderlessButton)
+        // A borderless menu paints its label with the tint, so the risk cue for
+        // full access has to be set there rather than with foregroundStyle alone.
+        .tint(store.accessMode == .fullAccess ? Color.orange : Color.secondary)
         .lineLimit(1)
         .help(store.accessMode.detail)
         .accessibilityLabel("Access mode")

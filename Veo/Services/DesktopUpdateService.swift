@@ -31,6 +31,9 @@ enum DesktopUpdatePhase: Equatable {
 final class DesktopUpdateService: ObservableObject {
     @Published private(set) var phase: DesktopUpdatePhase = .idle
     @Published private(set) var lastCheck: Date?
+    @Published private(set) var changelog: [DesktopUpdateRelease] = []
+    @Published private(set) var isLoadingChangelog = false
+    @Published private(set) var changelogError: String?
     @Published var automaticChecks: Bool {
         didSet {
             defaults.set(automaticChecks, forKey: DesktopUpdatePreferences.automaticChecksKey)
@@ -44,6 +47,7 @@ final class DesktopUpdateService: ObservableObject {
     let currentVersion: String
     private let defaults: UserDefaults
     private let feedURL: URL
+    private let changelogURL: URL
     private let session: URLSession
     private var timer: Timer?
     private var activeTask: Task<Void, Never>?
@@ -63,6 +67,11 @@ final class DesktopUpdateService: ObservableObject {
         DesktopUpdatePreferences.registerDefaults(defaults)
         self.defaults = defaults
         self.feedURL = feedURL
+        self.changelogURL = feedURL
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("releases")
+            .appending(queryItems: [URLQueryItem(name: "per_page", value: "20")])
         if let session {
             self.session = session
         } else {
@@ -129,6 +138,24 @@ final class DesktopUpdateService: ObservableObject {
                 self.phase = .idle
             } catch {
                 self.phase = .failed(error.localizedDescription)
+            }
+        }
+    }
+
+    func loadChangelog() {
+        guard !isLoadingChangelog, changelog.isEmpty else { return }
+        isLoadingChangelog = true
+        changelogError = nil
+
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.isLoadingChangelog = false }
+            do {
+                self.changelog = try await self.fetchChangelog()
+            } catch is CancellationError {
+                return
+            } catch {
+                self.changelogError = error.localizedDescription
             }
         }
     }
@@ -203,8 +230,31 @@ final class DesktopUpdateService: ObservableObject {
                 userInfo: [NSLocalizedDescriptionKey: "GitHub returned HTTP \(http.statusCode)."]
             )
         }
-        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              object["draft"] as? Bool != true,
+        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return Self.release(from: object)
+    }
+
+    private func fetchChangelog() async throws -> [DesktopUpdateRelease] {
+        var request = URLRequest(url: changelogURL)
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        request.setValue("Veo/\(currentVersion)", forHTTPHeaderField: "User-Agent")
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.timeoutInterval = 20
+
+        let (data, response) = try await session.data(for: request)
+        if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+            throw NSError(
+                domain: "VeoUpdates",
+                code: http.statusCode,
+                userInfo: [NSLocalizedDescriptionKey: "GitHub returned HTTP \(http.statusCode)."]
+            )
+        }
+        guard let objects = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return [] }
+        return objects.compactMap(Self.release(from:))
+    }
+
+    private static func release(from object: [String: Any]) -> DesktopUpdateRelease? {
+        guard object["draft"] as? Bool != true,
               let tag = object["tag_name"] as? String,
               let pageString = object["html_url"] as? String,
               let pageURL = URL(string: pageString) else { return nil }

@@ -176,13 +176,14 @@ struct DesktopSettingsPage: View {
     @AppStorage(DesktopAutoContinuationPreferences.wakePolicyKey) private var autoContinueWakePolicyRaw =
         DesktopAutoContinuationWakePolicy.nextLaunch.rawValue
     @State private var apiKey = ""
-    @State private var passkeyAccess = DesktopBrowserKeychain.passkeyAccess()
     @State private var confirmsLogout = false
     @State private var confirmsClearBrowserData = false
     @State private var pluginInstallTarget: DesktopPluginRecord?
     @State private var pluginUninstallTarget: DesktopPluginRecord?
     @State private var notificationSoundError: String?
     @State private var highlightedSettingsAnchor: DesktopSettingsAnchor?
+    @State private var selectedChangelogTag: String?
+    @State private var hoveredChangelogTag: String?
 
     private var accentColor: Color {
         DesktopAppearancePreferences.color(fromHex: accentColorHex) ?? DesktopTheme.accent
@@ -322,6 +323,8 @@ struct DesktopSettingsPage: View {
             notifications.refreshAuthorizationStatus()
             if navigation.settingsCategory == .account {
                 store.refreshAccountOverview()
+            } else if navigation.settingsCategory == .updates {
+                updateService.loadChangelog()
             }
         }
         .onChange(of: notificationSystemAlerts) { _, enabled in
@@ -406,7 +409,8 @@ struct DesktopSettingsPage: View {
                         title: "Default project",
                         detail: store.workspaceURL?.path ?? "No project selected",
                         systemImage: "folder",
-                        detailFontDesign: .monospaced
+                        detailFontDesign: .monospaced,
+                        detailIsPath: store.workspaceURL != nil
                     ) {
                         Button("Choose…") { store.chooseWorkspace() }
                             .buttonStyle(.bordered)
@@ -585,6 +589,8 @@ struct DesktopSettingsPage: View {
                         Button("Reconnect") { store.reconnect() }
                             .buttonStyle(.bordered)
                             .controlSize(.small)
+                            .disabled(!store.canReconnect)
+                            .help(DesktopErrorRecoveryAction.reconnect.help)
                     }
 
                     SettingsPanelDivider()
@@ -831,10 +837,7 @@ struct DesktopSettingsPage: View {
                     VStack(alignment: .leading, spacing: 8) {
                         sectionTitle("What's new in \(release.title)")
                         ScrollView {
-                            Text(release.notes)
-                                .font(.system(size: 11.5))
-                                .foregroundStyle(.secondary)
-                                .textSelection(.enabled)
+                            ChangelogMarkdownView(source: release.notes)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(12)
                         }
@@ -843,6 +846,58 @@ struct DesktopSettingsPage: View {
                             Color.primary.opacity(0.035),
                             in: RoundedRectangle(cornerRadius: 12, style: .continuous)
                         )
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        sectionTitle("Changelog")
+                        Spacer()
+                        if updateService.isLoadingChangelog {
+                            ProgressView()
+                                .controlSize(.small)
+                                .accessibilityLabel("Loading changelog")
+                        }
+                    }
+
+                    if updateService.changelog.isEmpty {
+                        SettingsPanel {
+                            SettingsRow(
+                                title: updateService.isLoadingChangelog ? "Loading releases…" : "Changelog unavailable",
+                                detail: updateService.changelogError ?? "Recent Veo release notes will appear here.",
+                                systemImage: updateService.isLoadingChangelog ? "clock" : "text.document"
+                            ) { EmptyView() }
+                        }
+                    } else {
+                        ScrollViewReader { proxy in
+                            HStack(alignment: .top, spacing: 0) {
+                                changelogTimeline { tag in
+                                    selectedChangelogTag = tag
+                                    Task { @MainActor in
+                                        withAnimation(reduceMotion ? nil : .smooth) {
+                                            proxy.scrollTo(tag, anchor: .top)
+                                        }
+                                    }
+                                }
+                                .zIndex(1)
+
+                                ScrollView {
+                                    LazyVStack(alignment: .leading, spacing: 0) {
+                                        ForEach(Array(updateService.changelog.enumerated()), id: \.element.tag) { index, release in
+                                            if index > 0 { SettingsPanelDivider() }
+                                            changelogEntry(release)
+                                                .id(release.tag)
+                                        }
+                                    }
+                                }
+                                .frame(maxWidth: .infinity)
+                            }
+                            .frame(height: 420)
+                            .background(
+                                Color.primary.opacity(0.035),
+                                in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            )
+                        }
                     }
                 }
 
@@ -1576,31 +1631,6 @@ struct DesktopSettingsPage: View {
                         .toggleStyle(.switch)
                         .controlSize(.small)
                 }
-
-                SettingsPanelDivider()
-
-                SettingsRow(
-                    title: "Passkeys",
-                    detail: passkeyAccess == .authorized
-                        ? "Veo can use passkeys stored in Keychain for sites in this browser."
-                        : "Allow Veo to use Keychain passkeys when a site asks to sign in.",
-                    systemImage: "person.badge.key"
-                ) {
-                    if passkeyAccess == .authorized {
-                        Text(passkeyAccess.title)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Button(passkeyAccess == .denied ? "Blocked" : "Allow…") {
-                            Task {
-                                passkeyAccess = await DesktopBrowserKeychain.requestPasskeyAccess()
-                            }
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                        .disabled(passkeyAccess == .denied || passkeyAccess == .unavailable)
-                    }
-                }
             }
 
             sectionTitle("Web content")
@@ -1657,7 +1687,6 @@ struct DesktopSettingsPage: View {
                 }
             }
         }
-        .onAppear { passkeyAccess = DesktopBrowserKeychain.passkeyAccess() }
     }
 
     @ViewBuilder
@@ -2132,6 +2161,80 @@ struct DesktopSettingsPage: View {
         }
     }
 
+    private func changelogTimeline(action: @escaping (String) -> Void) -> some View {
+        VStack(spacing: 0) {
+            ForEach(Array(updateService.changelog.enumerated()), id: \.element.tag) { index, release in
+                Button {
+                    action(release.tag)
+                } label: {
+                    VStack(spacing: 0) {
+                        Circle()
+                            .fill(selectedChangelogTag == release.tag ? accentColor : Color.secondary.opacity(0.55))
+                            .frame(width: selectedChangelogTag == release.tag ? 9 : 7, height: selectedChangelogTag == release.tag ? 9 : 7)
+                            .frame(height: 11)
+
+                        if index < updateService.changelog.count - 1 {
+                            Rectangle()
+                                .fill(Color.secondary.opacity(0.3))
+                                .frame(width: 1, height: 4)
+                        }
+                    }
+                    .frame(width: 28)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Jump to \(release.title)")
+                .accessibilityLabel("Jump to \(release.title)")
+                .onHover { hovering in
+                    withAnimation(reduceMotion ? nil : .easeOut(duration: 0.12)) {
+                        hoveredChangelogTag = hovering ? release.tag : nil
+                    }
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.top, 12)
+        .frame(width: 40)
+        .overlay(alignment: .topLeading) {
+            if let hoveredChangelogTag,
+               let index = updateService.changelog.firstIndex(where: { $0.tag == hoveredChangelogTag }) {
+                Text(updateService.changelog[index].version)
+                    .font(.system(size: 10.5, weight: .medium))
+                    .lineLimit(1)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 4)
+                    .background(.regularMaterial, in: Capsule())
+                    .offset(x: 31, y: CGFloat(index * 15) + 7)
+                    .allowsHitTesting(false)
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Release timeline")
+    }
+
+    private func changelogEntry(_ release: DesktopUpdateRelease) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(release.title)
+                    .font(.system(size: 13, weight: .semibold))
+                Spacer(minLength: 12)
+                if let publishedAt = release.publishedAt {
+                    Text(publishedAt, format: .dateTime.month(.abbreviated).day().year())
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+
+            ChangelogMarkdownView(
+                source: release.notes.isEmpty ? "No release notes were provided." : release.notes
+            )
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(release.title) release notes")
+    }
+
     private func sectionTitle(_ title: String) -> some View {
         Text(title)
             .font(.system(size: 11.5, weight: .semibold))
@@ -2228,6 +2331,61 @@ struct DesktopSettingsPage: View {
             ProgressView().controlSize(.small)
         case .failed, .idle, .upToDate:
             EmptyView()
+        }
+    }
+}
+
+private struct ChangelogMarkdownView: View {
+    var source: String
+
+    private var lines: [String] {
+        source.components(separatedBy: .newlines)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                markdownLine(line)
+            }
+        }
+        .foregroundStyle(.secondary)
+        .textSelection(.enabled)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    @ViewBuilder
+    private func markdownLine(_ line: String) -> some View {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        if trimmed.isEmpty {
+            Color.clear.frame(height: 3)
+        } else if trimmed.hasPrefix("### ") {
+            Text(MarkdownMessageView.inlineAttributed(String(trimmed.dropFirst(4))))
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.primary)
+                .padding(.top, 3)
+        } else if trimmed.hasPrefix("## ") {
+            Text(MarkdownMessageView.inlineAttributed(String(trimmed.dropFirst(3))))
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.primary)
+                .padding(.top, 5)
+        } else if trimmed.hasPrefix("# ") {
+            Text(MarkdownMessageView.inlineAttributed(String(trimmed.dropFirst(2))))
+                .font(.system(size: 15, weight: .bold))
+                .foregroundStyle(.primary)
+                .padding(.top, 5)
+        } else if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") {
+            HStack(alignment: .firstTextBaseline, spacing: 7) {
+                Circle()
+                    .fill(Color.secondary)
+                    .frame(width: 4, height: 4)
+                Text(MarkdownMessageView.inlineAttributed(String(trimmed.dropFirst(2))))
+                    .font(.system(size: 11.5))
+                    .lineSpacing(3)
+            }
+        } else {
+            Text(MarkdownMessageView.inlineAttributed(trimmed))
+                .font(.system(size: 11.5))
+                .lineSpacing(3)
         }
     }
 }
@@ -2682,6 +2840,7 @@ private struct SettingsRow<Trailing: View>: View {
     var assetImage: String? = nil
     var iconColor: Color = .secondary
     var detailFontDesign: Font.Design = .default
+    var detailIsPath = false
     var nestDepth: Int = 0
     var nestStyle: SettingsNestStyle = .none
     @ViewBuilder let trailing: () -> Trailing
@@ -2707,15 +2866,19 @@ private struct SettingsRow<Trailing: View>: View {
                 Text(detail)
                     .font(.system(size: 11.5, design: detailFontDesign))
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .lineLimit(detailIsPath ? 1 : nil)
                     .truncationMode(.middle)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .help(detail)
             }
 
             Spacer(minLength: 18)
             trailing()
+                .layoutPriority(1)
         }
         .padding(.leading, nestStyle.isNested ? nestIndent : 16)
         .padding(.trailing, 16)
+        .padding(.vertical, 12)
         .frame(minHeight: 68)
         .contentShape(Rectangle())
     }

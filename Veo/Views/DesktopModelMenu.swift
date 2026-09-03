@@ -111,9 +111,13 @@ struct DesktopModelMenu: View {
         HStack(spacing: 6) {
             speedIndicator
 
-            Image(systemName: "cube")
-                .font(.system(size: 11, weight: .medium))
-                .accessibilityHidden(true)
+            if let selectedVariant {
+                DesktopGPT56VariantIcon(variant: selectedVariant, fontSize: 12)
+            } else {
+                Image(systemName: "cube")
+                    .font(.system(size: 11, weight: .medium))
+                    .accessibilityHidden(true)
+            }
 
             Text(collapsedModelTitle)
                 .fontWeight(.medium)
@@ -149,6 +153,10 @@ struct DesktopModelMenu: View {
         ZStack {
             HStack(spacing: 5) {
                 speedIndicator
+
+                if let selectedVariant {
+                    DesktopGPT56VariantIcon(variant: selectedVariant, fontSize: 12)
+                }
 
                 Text(sliderModelTitle)
                     .fontWeight(.medium)
@@ -1512,6 +1520,44 @@ private enum DesktopGPT56Variant: String, CaseIterable, Hashable {
     case sol
 
     var title: String { rawValue.capitalized }
+
+    var systemImage: String? {
+        switch self {
+        case .auto: return nil
+        case .luna: return "moon.fill"
+        case .terra: return "globe.americas.fill"
+        case .sol: return "sun.max.fill"
+        }
+    }
+}
+
+/// A compact identity mark for the GPT-5.6 family. Individual variants match
+/// the adjacent label's point size; Auto combines all three without displacing
+/// the independent Fast Mode indicator that can sit before it in the trigger.
+private struct DesktopGPT56VariantIcon: View {
+    let variant: DesktopGPT56Variant
+    let fontSize: CGFloat
+
+    var body: some View {
+        Group {
+            if let systemImage = variant.systemImage {
+                Image(systemName: systemImage)
+                    .font(.system(size: fontSize, weight: .medium))
+                    .frame(width: fontSize + 1, height: fontSize + 2)
+            } else {
+                HStack(spacing: -2.5) {
+                    Image(systemName: "moon.fill")
+                    Image(systemName: "globe.americas.fill")
+                    Image(systemName: "sun.max.fill")
+                }
+                .font(.system(size: fontSize * 0.62, weight: .semibold))
+                .frame(width: fontSize + 6, height: fontSize + 2)
+            }
+        }
+        .foregroundStyle(.secondary)
+        .accessibilityHidden(true)
+        .allowsHitTesting(false)
+    }
 }
 
 private struct DesktopModelCatalogPresentation {

@@ -84,7 +84,11 @@ final class DesktopCodexStore: ObservableObject {
     @Published var isRunningTurn = false
     @Published private(set) var visionFallbackStatus: String?
     @Published var activeTurnID: String?
-    @Published var transientError: String?
+    @Published var transientError: String? {
+        didSet { transientErrorRecovery = nil }
+    }
+    @Published private(set) var transientErrorRecovery: DesktopErrorRecoveryAction?
+    @Published private(set) var errorRecoveryActionInFlight: DesktopErrorRecoveryAction?
     @Published var pendingRequest: DesktopPendingRequest?
     @Published private(set) var pendingRequestCountsByThreadID: [String: Int] = [:]
     @Published private(set) var pendingRequestErrorsByID: [String: String] = [:]
@@ -1163,8 +1167,192 @@ final class DesktopCodexStore: ObservableObject {
     }
 
     func reconnect() {
-        guard !isBusyTurn else { return }
+        guard canReconnect else { return }
         scheduleConnection()
+    }
+
+    var canReconnect: Bool {
+        guard runtimeState != .starting, connectionTask == nil else { return false }
+        // The terminated-runtime callback can leave catalog status from the
+        // previous process. Reconnecting is how those chats are rehydrated.
+        if case .unavailable = runtimeState { return true }
+        return !isBusyTurn
+            && activeTurnIDByThread.isEmpty
+            && queuedDispatchingThreadIDs.isEmpty
+            && queuedDeliveryInFlightIDs.isEmpty
+            && !threads.contains(where: \.isRunning)
+            && !codexThreads.contains(where: \.isRunning)
+            && !agentStateByThreadID.values.contains(where: \.isActive)
+    }
+
+    var visibleTransientError: String? {
+        guard let transientError, !transientError.isEmpty else { return nil }
+        // Turn failures already have an item-scoped notice. Do not repeat the
+        // same error beneath it, with a second and potentially different action.
+        if let last = timeline.last, last.kind == .error,
+           last.body == transientError || last.body.hasPrefix(transientError + "\n\n") {
+            return nil
+        }
+        return transientError
+    }
+
+    private func setTransientError(_ message: String, recovery: DesktopErrorRecoveryAction) {
+        transientError = message
+        transientErrorRecovery = recovery
+    }
+
+    func errorRecoveryAction(for item: DesktopTimelineItem? = nil) -> DesktopErrorRecoveryAction? {
+        let message = item?.body ?? transientError ?? ""
+        guard !message.isEmpty else { return nil }
+        if let item {
+            guard isCurrentRecoverableError(item.id) else { return nil }
+            if item.status == "retrying", isBusyTurn { return nil }
+        }
+        if let category = DesktopErrorRecoveryAction.suggestedSettings(for: message) {
+            return .settings(category)
+        }
+        if !runtimeState.isReady { return .reconnect }
+        if item == nil, let transientErrorRecovery { return transientErrorRecovery }
+
+        if let item, let threadID = selectedThreadID,
+           let original = messageBeforeError(item.id) {
+            if let clientID = original.clientID,
+               queuedDraftsByThreadID[threadID]?.contains(where: { $0.id == clientID }) == true {
+                return .retryQueuedMessage(threadID: threadID, payloadID: clientID)
+            }
+            return .restoreMessage(threadID: threadID, errorItemID: item.id)
+        }
+        return item == nil ? .dismiss : .settings(.runtime)
+    }
+
+    func canPerformErrorRecovery(_ action: DesktopErrorRecoveryAction) -> Bool {
+        if case .settings = action { return true }
+        guard errorRecoveryActionInFlight == nil else { return false }
+        switch action {
+        case .retryQueuedMessage(let threadID, let payloadID):
+            return runtimeState.isReady && selectedThreadID == threadID
+                && !isLoadingTimeline && !isThreadTurnActive(threadID)
+                && selectedThreadAcceptsDirectInput
+                && !queuedDeliveryInFlightIDs.contains(payloadID)
+                && queuedDraftsByThreadID[threadID]?.first?.id == payloadID
+        case .restoreMessage(let threadID, let errorItemID):
+            return selectedThreadID == threadID && !isLoadingTimeline && !isThreadTurnActive(threadID)
+                && selectedThreadAcceptsDirectInput && selectedUserInputRequest == nil
+                && draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachments.isEmpty
+                && isCurrentRecoverableError(errorItemID) && messageBeforeError(errorItemID) != nil
+        case .reloadConversation(let threadID):
+            return runtimeState.isReady && selectedThreadID == threadID && !isLoadingTimeline
+                && !isThreadTurnActive(threadID)
+        case .reloadModels:
+            return runtimeState.isReady
+        case .reconnect:
+            return canReconnect
+        case .settings, .dismiss:
+            return true
+        }
+    }
+
+    func errorRecoveryDetail(for action: DesktopErrorRecoveryAction) -> String? {
+        switch action {
+        case .retryQueuedMessage(let threadID, let payloadID):
+            guard let payload = queuedDraftsByThreadID[threadID]?.first(where: { $0.id == payloadID }) else { return nil }
+            let model = modelOption(for: payload.model)?.userFacingDisplayName ?? payload.model ?? "the default model"
+            return "Uses saved settings: \((payload.accessMode ?? .workspace).title) · \(model)."
+        case .restoreMessage:
+            if !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty {
+                return "Your current draft is kept. Clear it before restoring this message."
+            }
+            return "Review the restored message before sending it again."
+        default:
+            return nil
+        }
+    }
+
+    @discardableResult
+    func performErrorRecovery(_ action: DesktopErrorRecoveryAction) -> Bool {
+        guard canPerformErrorRecovery(action) else { return false }
+        switch action {
+        case .settings(let category):
+            composerCommandDestinationRequest = .settings(category)
+        case .dismiss:
+            transientError = nil
+        case .restoreMessage(_, let errorItemID):
+            guard let original = messageBeforeError(errorItemID) else { return false }
+            // Restoring is deliberately not resending: the user reviews it in the
+            // current access/model mode, and a newer draft is never overwritten.
+            draft = original.body
+            attachments = original.attachments
+            transientError = nil
+        case .reconnect:
+            transientError = nil
+            reconnect()
+        case .reloadModels, .reloadConversation, .retryQueuedMessage:
+            errorRecoveryActionInFlight = action
+            transientError = nil
+            Task {
+                defer { errorRecoveryActionInFlight = nil }
+                switch action {
+                case .reloadModels:
+                    await loadModels()
+                case .reloadConversation(let threadID):
+                    guard selectedThreadID == threadID else { return }
+                    let generation = UUID()
+                    timelineLoadGeneration = generation
+                    await prepareAndResumeSelectedThread(threadID, loadGeneration: generation)
+                case .retryQueuedMessage(let threadID, let payloadID):
+                    do {
+                        if let runtimeID = runtimeThreadID(forUIThreadID: threadID) {
+                            let response = try await client.request(
+                                method: "thread/read",
+                                params: ["threadId": runtimeID, "includeTurns": true]
+                            )
+                            guard selectedThreadID == threadID, !isLoadingTimeline else { return }
+                            guard let thread = response["thread"] as? [String: Any] else {
+                                throw CodexAppServerClientError.malformedResponse("thread/read")
+                            }
+                            // A completed turn can also outlive a lost start response.
+                            // Acknowledge confirmed delivery instead of sending it twice.
+                            if Self.parseTimeline(from: thread).contains(where: {
+                                $0.kind == .user && $0.clientID == payloadID
+                            }) {
+                                removeQueuedDraft(payloadID, queueKey: threadID)
+                                hydrateTimeline(from: thread)
+                                return
+                            }
+                        }
+                        // A lost start response is not proof the turn failed to
+                        // start. Rehydrate first so Retry cannot duplicate live work.
+                        let activeTurn = try await resolveActiveTurnID(threadID: threadID, forceRead: true)
+                        guard activeTurn == nil, runtimeState.isReady, selectedThreadID == threadID,
+                              !isLoadingTimeline, !isThreadTurnActive(threadID),
+                              selectedThreadAcceptsDirectInput,
+                              let payload = queuedDraftsByThreadID[threadID]?.first,
+                              payload.id == payloadID else { return }
+                        isSubmittingTurn = true
+                        await send(payload, to: threadID, fromQueue: true, queuedUnder: threadID)
+                    } catch {
+                        guard selectedThreadID == threadID else { return }
+                        setTransientError(error.localizedDescription, recovery: .reconnect)
+                    }
+                default:
+                    break
+                }
+            }
+        }
+        return true
+    }
+
+    private func isCurrentRecoverableError(_ itemID: String) -> Bool {
+        DesktopErrorRecoveryAction.isCurrentError(itemID, in: timeline)
+    }
+
+    private func messageBeforeError(_ itemID: String) -> DesktopTimelineItem? {
+        let error = timeline.first(where: { $0.id == itemID })
+        return DesktopErrorRecoveryAction.originalMessage(
+            for: itemID,
+            in: timeline,
+            originalClientID: error?.turnID.flatMap { payloadByTurnID[$0]?.id }
+        )
     }
 
     func refreshAccountResources() {
@@ -1834,7 +2022,7 @@ final class DesktopCodexStore: ObservableObject {
                 _ = try await client.request(method: "account/rateLimitResetCredit/consume", params: params)
                 await loadAccountResources()
             } catch {
-                transientError = "Rate-limit reset could not be used: \(error.localizedDescription)"
+                setTransientError("Rate-limit reset could not be used: \(error.localizedDescription)", recovery: .settings(.account))
             }
         }
     }
@@ -1914,7 +2102,7 @@ final class DesktopCodexStore: ObservableObject {
                 accountLoginSession = nil
                 await loadAccountResources()
             } catch {
-                transientError = "Sign out failed: \(error.localizedDescription)"
+                setTransientError("Sign out failed: \(error.localizedDescription)", recovery: .settings(.account))
             }
         }
     }
@@ -3340,7 +3528,7 @@ final class DesktopCodexStore: ObservableObject {
 
     private func presentModelSuggestions() {
         guard !models.isEmpty else {
-            transientError = "No models are available from the local Codex runtime."
+            setTransientError("No models are available from the local Codex runtime.", recovery: .reloadModels)
             return
         }
         composerPaletteContext = .models
@@ -4626,7 +4814,10 @@ final class DesktopCodexStore: ObservableObject {
             models = parsed
             guard let model = parsed.first(where: { $0.id == selectedModelID })
                     ?? parsed.first(where: \.isDefault)
-                    ?? parsed.first else { return }
+                    ?? parsed.first else {
+                setTransientError("No models are available from the local Codex runtime.", recovery: .reloadModels)
+                return
+            }
 
             selectedModelID = model.id
             defaults.set(model.id, forKey: "VeoDesktop.modelID")
@@ -4640,7 +4831,7 @@ final class DesktopCodexStore: ObservableObject {
                 persistServiceTier(model.defaultServiceTier)
             }
         } catch {
-            transientError = "Models could not be loaded: \(error.localizedDescription)"
+            setTransientError("Models could not be loaded: \(error.localizedDescription)", recovery: .reloadModels)
         }
     }
 
@@ -5909,7 +6100,10 @@ final class DesktopCodexStore: ObservableObject {
             } catch {
                 guard selectedThreadID == uiThreadID,
                       timelineLoadGeneration == loadGeneration else { return }
-                transientError = "Could not load local timeline: \(error.localizedDescription)"
+                setTransientError(
+                    "Could not load local timeline: \(error.localizedDescription)",
+                    recovery: .reloadConversation(threadID: uiThreadID)
+                )
             }
         }
 
@@ -5993,7 +6187,7 @@ final class DesktopCodexStore: ObservableObject {
         } catch {
             guard timelineLoadGeneration == loadGeneration,
                   selectedThreadID == uiThreadID else { return }
-            transientError = error.localizedDescription
+            setTransientError(error.localizedDescription, recovery: .reloadConversation(threadID: uiThreadID))
         }
     }
 
@@ -6220,6 +6414,7 @@ final class DesktopCodexStore: ObservableObject {
             timeline.append(DesktopTimelineItem(
                 id: "error-\(UUID().uuidString)",
                 turnID: nil,
+                clientID: payload.id,
                 kind: .error,
                 title: "Couldn’t start the turn",
                 body: error.localizedDescription,

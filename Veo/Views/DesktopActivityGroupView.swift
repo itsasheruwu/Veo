@@ -6,6 +6,7 @@ import Foundation
 import SwiftUI
 
 enum DesktopTimelineEntry: Identifiable, Equatable {
+    case turnDivider(beforeItemID: String)
     case message(DesktopTimelineItem)
     case plan(DesktopTimelineItem)
     case activity(DesktopActivityGroup)
@@ -13,6 +14,7 @@ enum DesktopTimelineEntry: Identifiable, Equatable {
 
     var id: String {
         switch self {
+        case .turnDivider(let itemID): return "turn-divider-\(itemID)"
         case .message(let item): return item.id
         case .plan(let item): return item.id
         case .activity(let group): return group.id
@@ -52,6 +54,11 @@ enum DesktopTimelineEntry: Identifiable, Equatable {
             case .user, .assistant, .error:
                 flushActivity()
                 flushImages()
+                // Separate visible exchanges, not internal runtime turns or streamed
+                // response items. This also works before a pending prompt has a turn ID.
+                if item.kind == .user, !entries.isEmpty {
+                    entries.append(.turnDivider(beforeItemID: item.id))
+                }
                 entries.append(.message(item))
             }
         }

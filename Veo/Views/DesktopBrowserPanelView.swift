@@ -47,7 +47,6 @@ struct DesktopBrowserPanelView: View {
         }
         .onAppear {
             syncAddress(resetStartPage: true)
-            DesktopBrowserKeychain.requestPasskeyAccessIfNeeded()
         }
     }
 

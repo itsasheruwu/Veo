@@ -1,27 +1,11 @@
 // FILE: DesktopBrowserKeychain.swift
-// Purpose: Save and fill website passwords via iCloud Keychain, and request passkey access for WKWebView.
+// Purpose: Save and fill website passwords via iCloud Keychain for WKWebView.
 // Layer: Desktop app service
 
 import AppKit
 import AuthenticationServices
 import Foundation
 import Security
-
-enum DesktopBrowserPasskeyAccess: String {
-    case authorized
-    case denied
-    case notDetermined
-    case unavailable
-
-    var title: String {
-        switch self {
-        case .authorized: return "Allowed"
-        case .denied: return "Blocked"
-        case .notDetermined: return "Not requested"
-        case .unavailable: return "Unavailable"
-        }
-    }
-}
 
 struct DesktopBrowserStoredPassword: Equatable {
     var server: String
@@ -32,33 +16,6 @@ struct DesktopBrowserStoredPassword: Equatable {
 }
 
 enum DesktopBrowserKeychain {
-    static func passkeyAccess() -> DesktopBrowserPasskeyAccess {
-        switch ASAuthorizationWebBrowserPublicKeyCredentialManager().authorizationStateForPlatformCredentials {
-        case .authorized: return .authorized
-        case .denied: return .denied
-        case .notDetermined: return .notDetermined
-        @unknown default: return .unavailable
-        }
-    }
-
-    static func requestPasskeyAccess() async -> DesktopBrowserPasskeyAccess {
-        let state = await ASAuthorizationWebBrowserPublicKeyCredentialManager()
-            .requestAuthorizationForPublicKeyCredentials()
-        switch state {
-        case .authorized: return .authorized
-        case .denied: return .denied
-        case .notDetermined: return .notDetermined
-        @unknown default: return .unavailable
-        }
-    }
-
-    static func requestPasskeyAccessIfNeeded() {
-        guard passkeyAccess() == .notDetermined else { return }
-        Task { @MainActor in
-            _ = await requestPasskeyAccess()
-        }
-    }
-
     static func passwords(for url: URL) -> [DesktopBrowserStoredPassword] {
         guard let host = url.host?.lowercased(), !host.isEmpty else { return [] }
         let port = url.port

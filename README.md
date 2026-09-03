@@ -51,7 +51,7 @@ Veo has no hosted backend, subscription, relay, phone companion, or bundled cred
 
 - Open Review, Browser, and Files in a resizable right utility panel with Safari-style tabs.
 - Inspect unified or split diffs, filter whitespace, stage files or safe hunks, discard with recovery, commit staged work, and start AI reviews inline.
-- Browse with a native start page, Safari-like desktop layout, shared website data, downloads, Keychain AutoFill, passkeys, and ChatGPT sign-in that stays in Veo’s browser.
+- Browse with a native start page, Safari-like desktop layout, shared website data, downloads, Keychain password AutoFill, and ChatGPT sign-in that stays in Veo’s browser.
 - Search and preview the workspace tree, edit existing text files with native undo/find support, and preserve encoding, newlines, permissions, and external-change safety.
 
 ### A composer that knows the workspace

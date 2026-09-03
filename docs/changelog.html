@@ -7,7 +7,7 @@
 <meta name="description" content="What changed in each Veo release.">
 <meta name="color-scheme" content="dark">
 <link rel="icon" href="assets/favicon.png">
-<link rel="stylesheet" href="styles.css?v=20260820-2">
+<link rel="stylesheet" href="styles.css?v=20260903-1">
 </head>
 <body>
 
@@ -35,54 +35,63 @@
 
 <div class="wrap" style="padding-bottom:40px">
 
-  <!-- Release authoring note: when adding the 2.1 changelog entry, convert 2.0 from release-major to the same standard .release layout used by the pre-2.0 entries below. Do not leave 2.0 as a special milestone card once it is no longer the latest release. -->
-  <article class="release release-major" id="v2-0-0">
+  <article class="release" id="v2-1-0">
     <div class="side">
-      <div class="major-kicker">Major release</div>
-      <div class="ver">2.0</div>
-      <div class="date">20 Aug 2026</div>
-      <div class="major-rule" aria-hidden="true"></div>
+      <div class="ver">2.1</div>
+      <div class="date">3 Sep 2026</div>
       <span class="tag">Latest</span>
     </div>
-    <div class="major-content">
-      <div class="major-intro">
-        <span class="major-overline">Veo becomes a complete work surface</span>
-        <h2>Plan it. Shape it.<br>Run the whole workspace.</h2>
-        <p>Veo 2.0 turns chat into a complete local workspace: durable plans, inline decisions, a split-pane terminal, sharper model controls, and richer live activity.</p>
+    <div>
+      <div class="block">
+        <h3>Recovery that keeps your context</h3>
+        <p>Failed turns now offer useful next steps instead of dead ends. Veo can safely retry queued work after refreshing the task, restore a failed message and its attachments to the composer for review, reload models or chats, reconnect the local runtime, and open the relevant settings.</p>
       </div>
-
-      <div class="major-grid">
-        <div class="major-feature">
-          <span class="major-number">01</span>
-          <h3>Plans you can actually use</h3>
-          <p>Completed plans become persistent, editable documents with lifecycle status and one-click implementation in the current or a new task.</p>
-        </div>
-        <div class="major-feature">
-          <span class="major-number">02</span>
-          <h3>Questions, answered in place</h3>
-          <p>Codex questions move into the composer with choices, notes, secret responses, skipping, and a local timeline receipt.</p>
-        </div>
-        <div class="major-feature">
-          <span class="major-number">03</span>
-          <h3>A terminal becomes a workspace</h3>
-          <p>The docked PTY expands into a multi-session workspace with up to six panes, presets, resizing, rearranging, and sessions that survive hiding.</p>
-        </div>
-        <div class="major-feature">
-          <span class="major-number">04</span>
-          <h3>Sharper model and image workflows</h3>
-          <p>Model, Effort, and Speed now share one advanced picker. Models without vision input automatically fall back to the configured Utility model for private image analysis, passing only bounded visual context into the turn.</p>
-        </div>
+      <div class="block">
+        <h3>Release history inside Veo</h3>
+        <p>Settings → Updates now renders release notes from GitHub with readable Markdown, dates, a fixed-height history, timeline jump controls, and version labels on hover.</p>
       </div>
-
-      <div class="major-strip">
-        <div><b>Live output</b><span>Smoother streamed Markdown and clear completion transitions</span></div>
-        <div><b>Visual work</b><span>Collapsible thumbnails for images viewed by the agent</span></div>
-        <div><b>Runtime</b><span>Faster newline parsing and tighter active-turn scoping</span></div>
+      <div class="block">
+        <h3>A calmer workspace</h3>
+        <p>The composer reserves the space it actually needs, turn dividers make long tasks easier to scan, search has a clear empty state, sidebar selection is more considered, and project picking is cleaner. Access controls also use clearer symbols and tint while motion respects Reduce Motion.</p>
       </div>
+      <div class="block">
+        <h3>Distinct GPT-5.6 identities</h3>
+        <p>Sol, Terra, and Luna now carry sun, globe, and moon marks in the model picker. Auto combines all three in a compact cluster, while Fast mode keeps its independent bolt indicator.</p>
+      </div>
+      <div class="block">
+        <h3>Local builds without provisioning</h3>
+        <p>Release packaging now uses manual ad-hoc signing without requesting an unsupported passkey entitlement. Keychain password AutoFill remains available.</p>
+      </div>
+      <div class="block">
+        <p class="faint"><a href="downloads.html" style="color:var(--accent)">Download 2.1</a> · <a href="https://github.com/itsasheruwu/Veo/releases/tag/v2.1.0" style="color:var(--accent)">Tag v2.1.0</a></p>
+      </div>
+    </div>
+  </article>
 
-      <div class="major-actions">
-        <a class="btn btn-primary" href="downloads.html">Download Veo 2.0</a>
-        <a class="btn btn-ghost" href="https://github.com/itsasheruwu/Veo/releases/tag/v2.0.0">Release v2.0.0</a>
+  <article class="release" id="v2-0-0">
+    <div class="side">
+      <div class="ver">2.0</div>
+      <div class="date">20 Aug 2026</div>
+    </div>
+    <div>
+      <div class="block">
+        <h3>Plans and inline decisions</h3>
+        <p>Completed plans become persistent, editable documents with lifecycle status and one-click implementation. Codex questions move into the composer with choices, notes, secret responses, skipping, and a local timeline receipt.</p>
+      </div>
+      <div class="block">
+        <h3>A terminal workspace</h3>
+        <p>The docked PTY expands into a multi-session workspace with up to six panes, presets, resizing, rearranging, and sessions that survive hiding.</p>
+      </div>
+      <div class="block">
+        <h3>Sharper model and image workflows</h3>
+        <p>Model, Effort, and Speed share one advanced picker. Models without vision input can use the configured Utility model for private image analysis, passing only bounded visual context into the turn.</p>
+      </div>
+      <div class="block">
+        <h3>Richer live work</h3>
+        <p>Veo 2.0 adds smoother streamed Markdown, clearer completion transitions, collapsible viewed-image thumbnails, faster newline parsing, and tighter active-turn scoping.</p>
+      </div>
+      <div class="block">
+        <p class="faint"><a href="https://github.com/itsasheruwu/Veo/releases/tag/v2.0.0" style="color:var(--accent)">Tag v2.0.0</a></p>
       </div>
     </div>
   </article>
@@ -350,7 +359,7 @@
       <h2>Update from inside the app.</h2>
       <p>Veo 1.2 and later check for releases themselves and verify the signature before installing.</p>
       <div class="hero-actions" style="margin-bottom:0">
-        <a class="btn btn-primary btn-lg" href="downloads.html">Get Veo 2.0</a>
+        <a class="btn btn-primary btn-lg" href="downloads.html">Get Veo 2.1</a>
       </div>
     </div>
   </div>

@@ -7,7 +7,7 @@ import SwiftUI
 struct DesktopPlanDocumentView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.veoAccent) private var veoAccent
-    @ObservedObject var store: DesktopCodexStore
+    @Bindable var store: DesktopCodexStore
 
     let reference: DesktopPlanReference
     let fallbackMarkdown: String
@@ -371,7 +371,7 @@ struct DesktopPlanImplementControl: View {
 }
 
 struct DesktopPlanPanelView: View {
-    @ObservedObject var store: DesktopCodexStore
+    @Bindable var store: DesktopCodexStore
     let reference: DesktopPlanReference
 
     var body: some View {

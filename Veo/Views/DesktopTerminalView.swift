@@ -15,12 +15,13 @@ struct DesktopTerminalView: NSViewRepresentable {
     /// Full terminal workspace panes should take keyboard focus when activated.
     /// Docked terminals remain click-to-focus so they do not steal composer focus.
     var requestsFocus = false
+    @Binding var isFileDropTargeted: Bool
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(session: session, hub: hub)
+        Coordinator(session: session, hub: hub, isFileDropTargeted: $isFileDropTargeted)
     }
 
-    func makeNSView(context: Context) -> TerminalView {
+    func makeNSView(context: Context) -> DesktopTerminalDropHostView {
         let terminalView = TerminalView(frame: .zero)
         terminalView.terminalDelegate = context.coordinator
         terminalView.configureNativeColors()
@@ -28,31 +29,40 @@ struct DesktopTerminalView: NSViewRepresentable {
         terminalView.clipsToBounds = true
         terminalView.wantsLayer = true
         terminalView.layer?.masksToBounds = true
+        let host = DesktopTerminalDropHostView(terminalView: terminalView)
+        host.onTargetedChange = { targeted in
+            context.coordinator.setFileDropTargeted(targeted)
+        }
+        host.onPerformDrop = { urls, text in
+            context.coordinator.handleDroppedInput(urls: urls, text: text)
+        }
         context.coordinator.terminalView = terminalView
         session.attach(sink: context.coordinator)
         // Focus on click — avoid stealing composer focus on appear.
-        return terminalView
+        return host
     }
 
-    func updateNSView(_ terminalView: TerminalView, context: Context) {
+    func updateNSView(_ host: DesktopTerminalDropHostView, context: Context) {
         context.coordinator.hub = hub
+        context.coordinator.isFileDropTargeted = $isFileDropTargeted
         if context.coordinator.session !== session {
             context.coordinator.session.detach(sink: context.coordinator)
             context.coordinator.session = session
-            context.coordinator.terminalView = terminalView
+            context.coordinator.terminalView = host.terminalView
             context.coordinator.resetLineBuffer()
             session.attach(sink: context.coordinator)
         }
         context.coordinator.syncPermissionPromptState()
-        terminalView.clipsToBounds = true
-        terminalView.wantsLayer = true
-        terminalView.layer?.masksToBounds = true
+        host.terminalView.clipsToBounds = true
+        host.terminalView.wantsLayer = true
+        host.terminalView.layer?.masksToBounds = true
         context.coordinator.applyViewportSize(viewportSize)
         context.coordinator.applyFocusRequest(requestsFocus)
     }
 
-    static func dismantleNSView(_ nsView: TerminalView, coordinator: Coordinator) {
+    static func dismantleNSView(_ nsView: DesktopTerminalDropHostView, coordinator: Coordinator) {
         coordinator.session.detach(sink: coordinator)
+        coordinator.setFileDropTargeted(false)
         coordinator.terminalView = nil
     }
 
@@ -60,6 +70,7 @@ struct DesktopTerminalView: NSViewRepresentable {
     final class Coordinator: NSObject, TerminalViewDelegate, DesktopTerminalOutputSink {
         var session: DesktopLocalTerminalSession
         var hub: DesktopLocalTerminalHub
+        var isFileDropTargeted: Binding<Bool>
         weak var terminalView: TerminalView?
         private var lastViewportSize: CGSize = .zero
         private var wasFocusRequested = false
@@ -69,9 +80,55 @@ struct DesktopTerminalView: NSViewRepresentable {
         private var isParsingEscape = false
         private var wasPermissionPromptPresented = false
 
-        init(session: DesktopLocalTerminalSession, hub: DesktopLocalTerminalHub) {
+        init(
+            session: DesktopLocalTerminalSession,
+            hub: DesktopLocalTerminalHub,
+            isFileDropTargeted: Binding<Bool>
+        ) {
             self.session = session
             self.hub = hub
+            self.isFileDropTargeted = isFileDropTargeted
+        }
+
+        func setFileDropTargeted(_ targeted: Bool) {
+            guard isFileDropTargeted.wrappedValue != targeted else { return }
+            let animation: Animation? = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+                ? nil
+                : .easeOut(duration: 0.2)
+            withAnimation(animation) {
+                isFileDropTargeted.wrappedValue = targeted
+            }
+        }
+
+        @discardableResult
+        func handleDroppedInput(urls: [URL], text: String?) -> Bool {
+            guard !hub.isAgentCLIPermissionPromptPresented else { return false }
+            hub.focusWorkspaceSession(session.id)
+            focus()
+
+            if !urls.isEmpty {
+                let payload = DesktopLocalTerminalSession.droppedPathPayload(from: urls)
+                guard !payload.isEmpty else { return false }
+                lineBuffer += payload
+                session.write(payload)
+                return true
+            }
+
+            guard let text, !text.isEmpty else { return false }
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if UUID(uuidString: trimmed) != nil { return false }
+
+            if text.contains("\n") || text.contains("\r") {
+                let normalized = text
+                    .replacingOccurrences(of: "\r\n", with: "\n")
+                    .replacingOccurrences(of: "\r", with: "\n")
+                session.write("\u{1b}[200~" + normalized + "\u{1b}[201~")
+                lineBuffer = normalized.split(separator: "\n", omittingEmptySubsequences: false).last.map(String.init) ?? ""
+            } else {
+                lineBuffer += text
+                session.write(text)
+            }
+            return true
         }
 
         func focus() {
@@ -267,5 +324,147 @@ struct DesktopTerminalView: NSViewRepresentable {
         func iTermContent(source: TerminalView, content: ArraySlice<UInt8>) {}
 
         func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
+    }
+}
+
+/// Hosts SwiftTerm and owns AppKit drag-and-drop so Finder files land on the PTY
+/// even though the cursor is over an `NSViewRepresentable`.
+final class DesktopTerminalDropHostView: NSView {
+    let terminalView: TerminalView
+    var onTargetedChange: ((Bool) -> Void)?
+    var onPerformDrop: (([URL], String?) -> Bool)?
+
+    private static let acceptedTypes: [NSPasteboard.PasteboardType] = [
+        .fileURL,
+        .URL,
+        .string,
+    ]
+
+    init(terminalView: TerminalView) {
+        self.terminalView = terminalView
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.masksToBounds = true
+        autoresizesSubviews = true
+        terminalView.autoresizingMask = [.width, .height]
+        addSubview(terminalView)
+        registerForDraggedTypes(Self.acceptedTypes)
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    override var acceptsFirstResponder: Bool { false }
+
+    override func layout() {
+        super.layout()
+        if terminalView.superview === self, terminalView.frame != bounds {
+            terminalView.frame = bounds
+        }
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard canAccept(sender) else { return [] }
+        onTargetedChange?(true)
+        return .copy
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard canAccept(sender) else {
+            onTargetedChange?(false)
+            return []
+        }
+        onTargetedChange?(true)
+        return .copy
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        onTargetedChange?(false)
+    }
+
+    override func draggingEnded(_ sender: NSDraggingInfo) {
+        onTargetedChange?(false)
+    }
+
+    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        canAccept(sender)
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        onTargetedChange?(false)
+        let pasteboard = sender.draggingPasteboard
+        let fileURLs = Self.fileURLs(from: pasteboard)
+        if !fileURLs.isEmpty {
+            return onPerformDrop?(fileURLs, nil) ?? false
+        }
+        if let text = Self.textPayload(from: pasteboard) {
+            return onPerformDrop?([], text) ?? false
+        }
+        return false
+    }
+
+    private func canAccept(_ sender: NSDraggingInfo) -> Bool {
+        let pasteboard = sender.draggingPasteboard
+        if pasteboard.availableType(from: [.fileURL, .URL]) != nil {
+            return true
+        }
+        if let string = pasteboard.string(forType: .string), !string.isEmpty {
+            let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+            return UUID(uuidString: trimmed) == nil
+        }
+        return false
+    }
+
+    private static func fileURLs(from pasteboard: NSPasteboard) -> [URL] {
+        var collected: [URL] = []
+
+        if let urls = pasteboard.readObjects(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]
+        ) as? [URL] {
+            collected.append(contentsOf: urls)
+        }
+
+        if collected.isEmpty,
+           let paths = pasteboard.propertyList(
+            forType: NSPasteboard.PasteboardType("NSFilenamesPboardType")
+           ) as? [String] {
+            collected.append(contentsOf: paths.map { URL(fileURLWithPath: $0) })
+        }
+
+        if collected.isEmpty, let items = pasteboard.pasteboardItems {
+            for item in items {
+                guard let raw = item.string(forType: .fileURL) else { continue }
+                if let url = URL(string: raw), url.isFileURL {
+                    collected.append(url)
+                } else if raw.hasPrefix("/") {
+                    collected.append(URL(fileURLWithPath: raw))
+                }
+            }
+        }
+
+        var seen = Set<String>()
+        var unique: [URL] = []
+        for url in collected where url.isFileURL {
+            let standardized = url.standardizedFileURL
+            if seen.insert(standardized.path).inserted {
+                unique.append(standardized)
+            }
+        }
+        return unique
+    }
+
+    private static func textPayload(from pasteboard: NSPasteboard) -> String? {
+        if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] {
+            let remote = urls.filter { !$0.isFileURL }
+            if !remote.isEmpty {
+                return remote.map(\.absoluteString).joined(separator: " ")
+            }
+        }
+        guard let string = pasteboard.string(forType: .string), !string.isEmpty else { return nil }
+        let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+        if UUID(uuidString: trimmed) != nil { return nil }
+        return string
     }
 }

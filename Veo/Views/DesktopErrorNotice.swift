@@ -5,7 +5,7 @@
 import SwiftUI
 
 struct DesktopErrorNotice: View {
-    @ObservedObject var store: DesktopCodexStore
+    @Bindable var store: DesktopCodexStore
     var item: DesktopTimelineItem?
     @State private var showsRestoreConfirmation = false
 

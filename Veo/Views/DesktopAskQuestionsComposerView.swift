@@ -25,7 +25,7 @@ struct DesktopAskQuestionsComposerView: View {
     @Environment(\.veoAccent) private var veoAccent
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let request: DesktopPendingRequest
-    @ObservedObject var store: DesktopCodexStore
+    @Bindable var store: DesktopCodexStore
     @Binding var draft: DesktopAskQuestionsComposerDraft
 
     @State private var hoveredOptionID: String?

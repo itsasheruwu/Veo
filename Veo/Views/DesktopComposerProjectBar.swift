@@ -6,7 +6,7 @@ import SwiftUI
 
 struct DesktopComposerProjectBar: View {
     @Environment(\.veoAccent) private var veoAccent
-    @ObservedObject var store: DesktopCodexStore
+    @Bindable var store: DesktopCodexStore
     @AppStorage("VeoDesktop.projectDisplayNames") private var projectDisplayNamesJSON = "{}"
     @State private var isChooserPresented = false
 

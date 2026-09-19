@@ -8,7 +8,8 @@ import SwiftUI
 
 @main
 struct VeoApp: App {
-    @StateObject private var store = DesktopCodexStore()
+    @State private var store = DesktopCodexStore()
+    @State private var keybindings = DesktopKeyboardPreferences.shared
     @StateObject private var navigation = DesktopNavigationState()
     @StateObject private var updateService = DesktopUpdateService()
     @StateObject private var notifications = DesktopNotificationService()
@@ -45,19 +46,19 @@ struct VeoApp: App {
                 Button("New Chat") {
                     store.beginNewChat()
                 }
-                .keyboardShortcut("n", modifiers: .command)
+                .keyboardShortcut(keybindings.shortcut(for: "newChat"))
 
                 Button("Open Project…") {
                     store.chooseWorkspace()
                 }
-                .keyboardShortcut("o", modifiers: .command)
+                .keyboardShortcut(keybindings.shortcut(for: "openProject"))
             }
 
             CommandMenu("Workspace") {
                 Button("Refresh Chats") {
                     store.refreshThreads()
                 }
-                .keyboardShortcut("r", modifiers: [.command, .shift])
+                .keyboardShortcut(keybindings.shortcut(for: "refresh"))
 
                 Button("Reveal Project in Finder") {
                     store.revealWorkspace()
@@ -71,10 +72,14 @@ struct VeoApp: App {
 
                 Divider()
 
+                Button("Save Prompt for Later") { store.stashPrompt() }
+                    .keyboardShortcut(keybindings.shortcut(for: "stash"))
+                    .disabled(store.draft.isEmpty && store.attachments.isEmpty)
+
                 Button("Stop Turn") {
                     store.stopTurn()
                 }
-                .keyboardShortcut(".", modifiers: .command)
+                .keyboardShortcut(keybindings.shortcut(for: "stop"))
                 .disabled(!store.isRunningTurn)
             }
 
@@ -83,7 +88,7 @@ struct VeoApp: App {
                     navigation.showSettings()
                     NSApp.activate(ignoringOtherApps: true)
                 }
-                .keyboardShortcut(",", modifiers: .command)
+                .keyboardShortcut(keybindings.shortcut(for: "settings"))
             }
 
             CommandGroup(after: .appInfo) {

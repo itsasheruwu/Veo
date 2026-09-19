@@ -5,7 +5,7 @@
 import SwiftUI
 
 struct DesktopTerminalSessionSidebar: View {
-    @ObservedObject var store: DesktopCodexStore
+    @Bindable var store: DesktopCodexStore
     @ObservedObject var hub: DesktopLocalTerminalHub
     @Binding var isWorkspace: Bool
     @Binding var isPresented: Bool

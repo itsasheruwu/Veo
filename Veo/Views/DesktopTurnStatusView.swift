@@ -7,7 +7,7 @@ import SwiftUI
 struct DesktopTurnStatusView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.veoAccent) private var veoAccent
-    @ObservedObject var store: DesktopCodexStore
+    @Bindable var store: DesktopCodexStore
     var onOpenSubagent: (String) -> Void = { _ in }
     @AppStorage(DesktopAppearancePreferences.composerMaterialKey) private var composerMaterialRaw =
         DesktopComposerMaterial.liquidGlass.rawValue

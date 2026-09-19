@@ -187,6 +187,12 @@ private struct DesktopFileTreeRow: View {
             )
         }
         .buttonStyle(.plain)
+        .draggable(row.entry.url) {
+            Label(row.entry.name, systemImage: desktopFileIcon(row.entry))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
     }
 }
 

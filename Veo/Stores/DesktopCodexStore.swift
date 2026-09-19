@@ -6,6 +6,7 @@
 import AppKit
 import Combine
 import Foundation
+import Observation
 import ServiceManagement
 import SwiftUI
 import UniformTypeIdentifiers
@@ -35,41 +36,90 @@ private struct PendingTimelineDelta {
 }
 
 @MainActor
-final class DesktopCodexStore: ObservableObject {
-    @Published var runtimeState: DesktopRuntimeState = .starting
+@Observable
+final class DesktopCodexStore {
+    var runtimeState: DesktopRuntimeState = .starting
     /// Veo-owned chats (active).
-    @Published var threads: [DesktopThread] = []
+    var threads: [DesktopThread] = []
     /// Veo-owned chats (archived).
-    @Published private(set) var archivedThreads: [DesktopThread] = []
+    private(set) var archivedThreads: [DesktopThread] = []
     /// Codex CLI history chats (active). Populated only when `showCodexThreads` is true.
-    @Published private(set) var codexThreads: [DesktopThread] = []
+    private(set) var codexThreads: [DesktopThread] = []
     /// Codex CLI history chats (archived).
-    @Published private(set) var archivedCodexThreads: [DesktopThread] = []
+    private(set) var archivedCodexThreads: [DesktopThread] = []
     /// Codex search results (origin `.codex`). Not used for Veo sidebar filtering.
-    @Published private(set) var searchedThreads: [DesktopThread]?
-    @Published var isBrowsingArchivedThreads = false
-    @Published var showCodexThreads = false
+    private(set) var searchedThreads: [DesktopThread]?
+    var isBrowsingArchivedThreads = false
+    var showCodexThreads = false
     /// True while Codex CLI history is first loading after turning the sidebar option on.
-    @Published private(set) var isLoadingCodexThreads = false
-    @Published var selectedThreadID: String?
-    @Published var timeline: [DesktopTimelineItem] = [] {
+    private(set) var isLoadingCodexThreads = false
+    var selectedThreadID: String?
+    var timeline: [DesktopTimelineItem] = [] {
         didSet {
             timelineRevision &+= 1
             timelineIndexNeedsRebuild = true
+            cachedTimelineEntries = nil
+            if let threadID = selectedThreadID {
+                for item in timeline where !item.asyncQuestions.isEmpty {
+                    asyncQuestions.ingest(threadID: threadID, itemID: item.id, questions: item.asyncQuestions)
+                }
+            }
+            if let reference = pendingQuoteNavigation, reference.threadID == selectedThreadID,
+               timeline.contains(where: { $0.id == reference.itemID }) {
+                timelineNavigationItemID = reference.itemID
+                pendingQuoteNavigation = nil
+            }
         }
     }
     /// Advances once per visible timeline commit, including a coalesced stream flush.
-    @Published private(set) var timelineRevision = 0
-    @Published var draft = "" {
+    private(set) var timelineRevision = 0
+    private var pendingQuoteNavigation: DesktopQuoteReference?
+    var isRestoringCheckpoint = false
+    var isSavingPrompt = false
+    var isRestoringPrompt = false
+    let asyncQuestions: DesktopAsyncQuestionStore
+
+    var selectedAsyncQuestions: [DesktopAsyncQuestionRequest] {
+        guard let selectedThreadID else { return [] }
+        return asyncQuestions.pending(threadID: selectedThreadID)
+    }
+
+    var canAnswerAsyncQuestions: Bool {
+        runtimeState.isReady && hasExplicitWorkspace && selectedThreadAcceptsDirectInput
+            && !historyRevertInFlight && !isRestoringCheckpoint && !isSubmittingTurn
+            && (!isRunningTurn || capabilities.supports(.turnSteering))
+    }
+
+    func submitAsyncAnswers(_ request: DesktopAsyncQuestionRequest) {
+        guard canAnswerAsyncQuestions, selectedThreadID == request.threadID,
+              let current = selectedAsyncQuestions.first(where: { $0.id == request.id }),
+              let text = current.answerMessage else { return }
+        let payload = DesktopComposerPayload(
+            id: current.answerClientID, text: text, accessMode: accessMode,
+            model: selectedModel?.model, reasoningEffort: selectedReasoningEffort,
+            serviceTier: selectedServiceTier, interactionMode: interactionMode
+        )
+        autoContinuationCoordinator.cancel(threadID: current.threadID, detail: "Answered a question.")
+        // Persist in the normal outbox before closing the question. Transport
+        // failures remain visible/retryable there; the ordinary draft is untouched.
+        enqueue(payload, queueKey: current.threadID)
+        asyncQuestions.resolve(current.id, as: "queued")
+        if isRunningTurn {
+            steerQueuedDraft(payload.id)
+        } else {
+            sendNextQueuedDraft()
+        }
+    }
+    var draft = "" {
         didSet { persistCurrentDraft() }
     }
-    @Published var attachments: [DesktopComposerAttachment] = [] {
+    var attachments: [DesktopComposerAttachment] = [] {
         didSet { persistCurrentAttachments() }
     }
-    @Published var searchText = "" {
+    var searchText = "" {
         didSet { scheduleThreadSearch() }
     }
-    @Published var searchesMessageContent = false {
+    var searchesMessageContent = false {
         didSet {
             defaults.set(searchesMessageContent, forKey: "VeoDesktop.searchesMessageContent")
             searchOccurrencesByThreadID = [:]
@@ -77,101 +127,115 @@ final class DesktopCodexStore: ObservableObject {
             scheduleThreadSearch()
         }
     }
-    @Published var accessMode: DesktopAccessMode = .workspace
-    @Published var workspaceURL: URL?
-    @Published var isLoadingTimeline = false
-    @Published var isSubmittingTurn = false
-    @Published var isRunningTurn = false
-    @Published private(set) var visionFallbackStatus: String?
-    @Published var activeTurnID: String?
-    @Published var transientError: String? {
+    var accessMode: DesktopAccessMode = .workspace
+    var workspaceURL: URL?
+    var requestedWorktreeProject: URL?
+    var isLoadingTimeline = false
+    var isSubmittingTurn = false
+    var isRunningTurn = false
+    private(set) var visionFallbackStatus: String?
+    var activeTurnID: String?
+    var transientError: String? {
         didSet { transientErrorRecovery = nil }
     }
-    @Published private(set) var transientErrorRecovery: DesktopErrorRecoveryAction?
-    @Published private(set) var errorRecoveryActionInFlight: DesktopErrorRecoveryAction?
-    @Published var pendingRequest: DesktopPendingRequest?
-    @Published private(set) var pendingRequestCountsByThreadID: [String: Int] = [:]
-    @Published private(set) var pendingRequestErrorsByID: [String: String] = [:]
-    @Published private(set) var pendingUserInputCountdownDeadlines: [String: Date] = [:]
-    @Published var followUpBehavior: DesktopFollowUpBehavior = .steer
-    @Published private(set) var queuedDraftsByThreadID: [String: [DesktopComposerPayload]] = [:]
-    @Published private(set) var composerSuggestions: [DesktopComposerSuggestion] = [] {
+    private(set) var transientErrorRecovery: DesktopErrorRecoveryAction?
+    private(set) var errorRecoveryActionInFlight: DesktopErrorRecoveryAction?
+    var pendingRequest: DesktopPendingRequest?
+    private(set) var pendingRequestCountsByThreadID: [String: Int] = [:]
+    private(set) var pendingRequestErrorsByID: [String: String] = [:]
+    private(set) var pendingUserInputCountdownDeadlines: [String: Date] = [:]
+    var followUpBehavior: DesktopFollowUpBehavior = .steer
+    private(set) var queuedDraftsByThreadID: [String: [DesktopComposerPayload]] = [:]
+    private(set) var composerSuggestions: [DesktopComposerSuggestion] = [] {
         didSet {
             if !composerSuggestions.contains(where: { $0.id == selectedComposerSuggestionID }) {
                 selectedComposerSuggestionID = composerSuggestions.first?.id
             }
         }
     }
-    @Published private(set) var selectedComposerSuggestionID: String?
-    @Published private(set) var composerCommandDestinationRequest: DesktopComposerCommandDestination?
-    @Published private(set) var composerPaletteContext: DesktopComposerPaletteContext?
-    @Published private(set) var tokenUsageByThreadID: [String: DesktopTokenUsage] = [:]
-    @Published private(set) var compactingThreadIDs: Set<String> = []
-    @Published private(set) var turnDiffByThreadID: [String: DesktopTurnDiff] = [:]
-    @Published private(set) var turnPlanByThreadID: [String: DesktopTurnPlan] = [:]
-    @Published private(set) var planArtifactsByID: [String: DesktopPlanArtifact] = [:]
-    @Published private(set) var planEditingDraftsByID: [String: String] = [:]
-    @Published private(set) var planErrorsByID: [String: String] = [:]
-    @Published private(set) var searchOccurrencesByThreadID: [String: [DesktopThreadSearchOccurrence]] = [:]
-    @Published private(set) var searchSnippetByThreadID: [String: String] = [:]
-    @Published private(set) var agentStateByThreadID: [String: DesktopAgentState] = [:]
-    @Published private(set) var timelineNavigationItemID: String?
-    @Published private(set) var accountOverview = DesktopAccountOverview()
-    @Published private(set) var resourceOverviews: [DesktopResourceOverview] = []
-    @Published private(set) var skillRecords: [DesktopSkillRecord] = []
-    @Published private(set) var pluginRecords: [DesktopPluginRecord] = []
-    @Published private(set) var appRecords: [DesktopAppRecord] = []
-    @Published private(set) var mcpServerStatuses: [DesktopMCPServerStatus] = []
-    @Published private(set) var accountLoginSession: DesktopAccountLoginSession?
-    @Published private(set) var interactiveTerminal: DesktopInteractiveTerminalState?
-    @Published private(set) var gitRepository: DesktopGitRepositorySnapshot?
-    @Published private(set) var gitReviewSnapshot: DesktopGitReviewSnapshot?
-    @Published private(set) var isRefreshingGit = false
-    @Published private(set) var isRefreshingGitReview = false
-    @Published private(set) var isMutatingGit = false
-    @Published private(set) var gitMessage: String?
-    @Published var realtimeVoiceEnabled = false {
+    private(set) var selectedComposerSuggestionID: String?
+    private(set) var composerCommandDestinationRequest: DesktopComposerCommandDestination?
+    private(set) var composerPaletteContext: DesktopComposerPaletteContext?
+    private(set) var tokenUsageByThreadID: [String: DesktopTokenUsage] = [:]
+    private(set) var compactingThreadIDs: Set<String> = []
+    private(set) var turnDiffByThreadID: [String: DesktopTurnDiff] = [:]
+    private(set) var turnPlanByThreadID: [String: DesktopTurnPlan] = [:]
+    private(set) var planArtifactsByID: [String: DesktopPlanArtifact] = [:]
+    private(set) var planEditingDraftsByID: [String: String] = [:]
+    private(set) var planErrorsByID: [String: String] = [:]
+    private(set) var searchOccurrencesByThreadID: [String: [DesktopThreadSearchOccurrence]] = [:]
+    private(set) var searchSnippetByThreadID: [String: String] = [:]
+    private(set) var agentStateByThreadID: [String: DesktopAgentState] = [:]
+    private(set) var timelineNavigationItemID: String?
+    private(set) var accountOverview = DesktopAccountOverview()
+    private(set) var resourceOverviews: [DesktopResourceOverview] = []
+    private(set) var skillRecords: [DesktopSkillRecord] = []
+    private(set) var pluginRecords: [DesktopPluginRecord] = []
+    private(set) var appRecords: [DesktopAppRecord] = []
+    private(set) var mcpServerStatuses: [DesktopMCPServerStatus] = []
+    private(set) var accountLoginSession: DesktopAccountLoginSession?
+    private(set) var interactiveTerminal: DesktopInteractiveTerminalState?
+    private(set) var gitRepository: DesktopGitRepositorySnapshot?
+    private(set) var gitReviewSnapshot: DesktopGitReviewSnapshot?
+    private(set) var isRefreshingGit = false
+    private(set) var isRefreshingGitReview = false
+    private(set) var isMutatingGit = false
+    private(set) var gitMessage: String?
+    var realtimeVoiceEnabled = false {
         didSet { defaults.set(realtimeVoiceEnabled, forKey: "VeoDesktop.realtimeVoiceEnabled") }
     }
-    @Published private(set) var realtimeVoices: [DesktopVoiceOption] = []
-    @Published var selectedRealtimeVoiceID: String?
-    @Published private(set) var realtimeSession: DesktopRealtimeSessionState?
-    @Published private(set) var realtimeTranscript = ""
-    @Published private(set) var isLoadingAccountOverview = false
-    @Published private(set) var isLoadingAccountResources = false
-    @Published private(set) var integrationMutationID: String?
-    @Published private(set) var accountOverviewMessage: String?
-    @Published private(set) var accountResourcesMessage: String?
-    @Published var models: [DesktopModelOption] = []
-    @Published var selectedModelID: String?
-    @Published var selectedReasoningEffort: String?
-    @Published var selectedServiceTier: String?
-    @Published private(set) var supportsPlanMode = false
-    @Published private(set) var capabilities = CodexAppServerCapabilities.unavailable
-    @Published private(set) var interactionMode: DesktopInteractionMode = .agentic
-    @Published private(set) var routingMode: DesktopModelRoutingMode = .direct
-    @Published var isGoalModeEnabled = false
-    @Published private(set) var activeGoalObjective: String?
-    @Published private(set) var threadMinimapTopicStartIDs: Set<String>?
-    @Published private(set) var utilityModelPreferenceRevision = 0
-    @Published private(set) var runtimeNotices: [DesktopRuntimeNotice] = []
-    @Published private(set) var permissionProfiles: [DesktopPermissionProfile] = []
-    @Published private(set) var managedRequirements = DesktopManagedRequirements()
-    @Published private(set) var experimentalFeatures: [DesktopExperimentalFeature] = []
-    @Published private(set) var hasLoadedAutoCapabilities = false
-    @Published private(set) var hookRecords: [DesktopHookRecord] = []
-    @Published private(set) var codexConfigDetails: [String] = []
-    @Published private(set) var isLoadingRuntimeConfiguration = false
-    @Published private(set) var runtimeConfigurationMessage: String?
-    @Published private(set) var workspaceMessages: [DesktopWorkspaceMessage] = []
-    @Published private(set) var availableRateLimitResetCredits = 0
-    @Published private(set) var availableRateLimitResetCreditID: String?
-    @Published private(set) var autoContinuationJobs: [DesktopAutoContinuationJob] = []
-    @Published private(set) var autoContinuationHelperStatus: SMAppService.Status = .notRegistered
-    @Published private(set) var autoContinuationHelperMessage: String?
-    @Published private(set) var threadsWithStartedAutoTurns = Set<String>()
+    private(set) var realtimeVoices: [DesktopVoiceOption] = []
+    var selectedRealtimeVoiceID: String?
+    private(set) var realtimeSession: DesktopRealtimeSessionState?
+    private(set) var realtimeTranscript = ""
+    private(set) var isLoadingAccountOverview = false
+    private(set) var isLoadingAccountResources = false
+    private(set) var integrationMutationID: String?
+    private(set) var accountOverviewMessage: String?
+    private(set) var accountResourcesMessage: String?
+    var models: [DesktopModelOption] = []
+    /// Bumps when enabled-model or external-provider preferences change so pickers refresh.
+    private(set) var catalogPreferenceRevision = 0
+    var selectedModelID: String?
+    var selectedReasoningEffort: String?
+    var selectedServiceTier: String?
+    var selectedPersonality: String = "none"
+    var realtimeProtocolChoice: DesktopRealtimeProtocolChoice = .automatic
+    private(set) var historyNextCursor: String?
+    private(set) var historyModeByThreadID: [String: String] = [:]
+
+    var canRevertSelectedHistory: Bool {
+        guard let selectedThreadID else { return false }
+        return historyModeByThreadID[selectedThreadID] == "paginated" && !isBusyTurn && !historyRevertInFlight && !isRestoringCheckpoint && capabilities.supports(.historyRevert)
+    }
+    private(set) var isLoadingMoreHistory = false
+    private(set) var supportsPlanMode = false
+    private(set) var capabilities = CodexAppServerCapabilities.unavailable
+    private(set) var interactionMode: DesktopInteractionMode = .agentic
+    private(set) var routingMode: DesktopModelRoutingMode = .direct
+    var isGoalModeEnabled = false
+    private(set) var activeGoalObjective: String?
+    private(set) var threadMinimapTopicStartIDs: Set<String>?
+    private(set) var utilityModelPreferenceRevision = 0
+    private(set) var runtimeNotices: [DesktopRuntimeNotice] = []
+    private(set) var permissionProfiles: [DesktopPermissionProfile] = []
+    private(set) var managedRequirements = DesktopManagedRequirements()
+    private(set) var experimentalFeatures: [DesktopExperimentalFeature] = []
+    private(set) var hasLoadedAutoCapabilities = false
+    private(set) var hookRecords: [DesktopHookRecord] = []
+    private(set) var codexConfigDetails: [String] = []
+    private(set) var isLoadingRuntimeConfiguration = false
+    private(set) var runtimeConfigurationMessage: String?
+    private(set) var workspaceMessages: [DesktopWorkspaceMessage] = []
+    private(set) var availableRateLimitResetCredits = 0
+    private(set) var availableRateLimitResetCreditID: String?
+    private(set) var autoContinuationJobs: [DesktopAutoContinuationJob] = []
+    private(set) var autoContinuationHelperStatus: SMAppService.Status = .notRegistered
+    private(set) var autoContinuationHelperMessage: String?
+    private(set) var threadsWithStartedAutoTurns = Set<String>()
 
     private let client: CodexAppServerClient
+    let appServer0153: DesktopAppServer0153Coordinator
     private let utilityInference: DesktopUtilityInferenceCoordinator
     private let gitService: LocalGitService
     private let realtimeAudio: RealtimeAudioCoordinator
@@ -180,7 +244,8 @@ final class DesktopCodexStore: ObservableObject {
     private let threadStore = VeoThreadStore()
     private let temporaryWorkspaceService: DesktopTemporaryWorkspaceService
     private var hasStarted = false
-    private var connectionTask: Task<Void, Never>?
+    @ObservationIgnored private var connectionTask: Task<Void, Never>?
+    @ObservationIgnored private var pendingOverlayReload = false
     private var interactionModeByThreadID: [String: DesktopInteractionMode] = [:]
     private var routingModeByThreadID: [String: DesktopModelRoutingMode] = [:]
     private var defaultRoutingMode: DesktopModelRoutingMode = .direct
@@ -191,33 +256,39 @@ final class DesktopCodexStore: ObservableObject {
     private var activeTurnIDByThread: [String: String] = [:]
     private var queuedDispatchingThreadIDs = Set<String>()
     private var queuedDeliveryInFlightIDs = Set<String>()
+    private var serverQueueManagedClientIDs = Set<String>() {
+        didSet { defaults.set(Array(serverQueueManagedClientIDs), forKey: "VeoDesktop.serverQueueManagedIDs") }
+    }
+    private var serverQueueUncertainClientIDs = Set<String>() {
+        didSet { defaults.set(Array(serverQueueUncertainClientIDs), forKey: "VeoDesktop.serverQueueUncertainIDs") }
+    }
     private var availableSkillSuggestions: [DesktopComposerSuggestion] = []
-    private var autocompleteTask: Task<Void, Never>?
+    @ObservationIgnored private var autocompleteTask: Task<Void, Never>?
     private var autocompleteToken: String?
-    private var threadSearchTask: Task<Void, Never>?
-    private var searchOccurrencesTask: Task<Void, Never>?
+    @ObservationIgnored private var threadSearchTask: Task<Void, Never>?
+    @ObservationIgnored private var searchOccurrencesTask: Task<Void, Never>?
     private var codexThreadsLoadGeneration = 0
     private var codexCatalogRequestGeneration = 0
     private var pendingRequestQueues: [String: [DesktopPendingRequest]] = [:]
     private var pendingRequestOrder: [String] = []
-    private var pendingUserInputAutoResolutionTasks: [String: Task<Void, Never>] = [:]
-    private weak var notifications: DesktopNotificationService?
+    @ObservationIgnored private var pendingUserInputAutoResolutionTasks: [String: Task<Void, Never>] = [:]
+    @ObservationIgnored private weak var notifications: DesktopNotificationService?
     private var newChatGenerationID = UUID()
     private var skillPathsByWorkspacePath: [String: Set<String>] = [:]
     private var pendingRealtimeAudioChunks: [RealtimeAudioCoordinator.PCMChunk] = []
     private var isSendingRealtimeAudio = false
     private var realtimeAudioGeneration = UUID()
-    private var realtimeStartTask: Task<Void, Never>?
+    @ObservationIgnored private var realtimeStartTask: Task<Void, Never>?
     private var accountOverviewLoadGeneration = UUID()
     private var accountResourcesLoadGeneration = UUID()
     private var interactiveTerminalPendingOutput = Data()
     private var interactiveTerminalPendingProcessID: String?
     private var gitContextGeneration = UUID()
     private var gitRefreshRequested = false
-    var prepareForWorkspaceChange: ((@escaping () -> Void) -> Bool)?
-    var cancelDeferredWorkspaceChange: (() -> Void)?
+    @ObservationIgnored var prepareForWorkspaceChange: ((@escaping () -> Void) -> Bool)?
+    @ObservationIgnored var cancelDeferredWorkspaceChange: (() -> Void)?
     /// Opens an HTTPS (or loopback) URL in Veo's embedded browser, sharing ChatGPT cookies.
-    var openInEmbeddedBrowser: ((URL, Bool) -> Void)?
+    @ObservationIgnored var openInEmbeddedBrowser: ((URL, Bool) -> Void)?
     private var pendingEmbeddedBrowserURL: URL?
     private var pendingEmbeddedBrowserIsAccountLogin = false
     private var timelineLoadGeneration = UUID()
@@ -225,19 +296,24 @@ final class DesktopCodexStore: ObservableObject {
     private var veoIDByCodexThreadID: [String: String] = [:]
     /// Veo UI storage key → runtime (Codex) thread id.
     private var codexThreadIDByVeoID: [String: String] = [:]
-    private var threadMinimapAnalysisTask: Task<Void, Never>?
+    @ObservationIgnored private var threadMinimapAnalysisTask: Task<Void, Never>?
     private var threadMinimapAnalysisKey: String?
-    private var timelineIndexByItemID: [String: Int] = [:]
-    private var timelineIndexNeedsRebuild = true
-    private var pendingTimelineDeltasByItemID: [String: PendingTimelineDelta] = [:]
-    private var pendingTimelineDeltaOrder: [String] = []
-    private var timelineDeltaFlushTask: Task<Void, Never>?
-    private var interactionSnapshotPersistenceTask: Task<Void, Never>?
+    @ObservationIgnored private var cachedTimelineEntries: [DesktopTimelineEntry]?
+    @ObservationIgnored private var timelineIndexByItemID: [String: Int] = [:]
+    @ObservationIgnored private var timelineIndexNeedsRebuild = true
+    @ObservationIgnored private var pendingTimelineDeltasByItemID: [String: PendingTimelineDelta] = [:]
+    @ObservationIgnored private var pendingTimelineDeltaOrder: [String] = []
+    @ObservationIgnored private var timelineDeltaFlushTask: Task<Void, Never>?
+    @ObservationIgnored private var interactionSnapshotPersistenceTask: Task<Void, Never>?
     private var messageAttachmentPresentations: [String: DesktopMessageAttachmentPresentation] = [:]
-    private var autoTitleTasksByThreadID: [String: Task<Void, Never>] = [:]
+    @ObservationIgnored private var autoTitleTasksByThreadID: [String: Task<Void, Never>] = [:]
     private var payloadByTurnID: [String: DesktopComposerPayload] = [:]
     private var autoContinuationDispatchingThreadIDs = Set<String>()
-    private var autoContinuationCancellables = Set<AnyCancellable>()
+    @ObservationIgnored private var autoContinuationCancellables = Set<AnyCancellable>()
+    private var settingsUpdateInFlight = false
+    private var pendingSettingsThreadID: String?
+    private var historyUsesTimeline = false
+    private(set) var historyRevertInFlight = false
 
     init(
         client: CodexAppServerClient? = nil,
@@ -248,11 +324,13 @@ final class DesktopCodexStore: ObservableObject {
         let resolvedClient = client ?? CodexAppServerClient()
         let resolvedRealtimeAudio = RealtimeAudioCoordinator()
         self.client = resolvedClient
+        self.appServer0153 = DesktopAppServer0153Coordinator(client: resolvedClient)
         self.utilityInference = DesktopUtilityInferenceCoordinator(client: resolvedClient)
         self.gitService = gitService ?? LocalGitService()
         self.realtimeAudio = resolvedRealtimeAudio
         self.temporaryWorkspaceService = temporaryWorkspaceService
         self.defaults = defaults
+        self.asyncQuestions = DesktopAsyncQuestionStore(defaults: defaults)
         self.autoContinuationCoordinator = DesktopAutoContinuationCoordinator(defaults: defaults)
 
         if let savedPath = defaults.string(forKey: "VeoDesktop.workspacePath"),
@@ -269,6 +347,10 @@ final class DesktopCodexStore: ObservableObject {
         selectedModelID = defaults.string(forKey: "VeoDesktop.modelID")
         selectedReasoningEffort = defaults.string(forKey: "VeoDesktop.reasoningEffort")
         selectedServiceTier = defaults.string(forKey: "VeoDesktop.serviceTier")
+        selectedPersonality = defaults.string(forKey: "VeoDesktop.personality") ?? "none"
+        realtimeProtocolChoice = DesktopRealtimeProtocolChoice(
+            rawValue: defaults.string(forKey: "VeoDesktop.realtimeProtocolChoice") ?? "automatic"
+        ) ?? .automatic
         realtimeVoiceEnabled = defaults.bool(forKey: "VeoDesktop.realtimeVoiceEnabled")
         selectedRealtimeVoiceID = defaults.string(forKey: "VeoDesktop.realtimeVoice")
         searchesMessageContent = defaults.bool(forKey: "VeoDesktop.searchesMessageContent")
@@ -318,6 +400,11 @@ final class DesktopCodexStore: ObservableObject {
             queuedDraftsByThreadID = snapshot.queuedDraftsByThreadID
             messageAttachmentPresentations = snapshot.messageAttachmentPresentations
         }
+        serverQueueManagedClientIDs = Set(
+            appServer0153.serverQueueLinksByThreadID.values.flatMap { $0.map(\.clientUserMessageID) }
+        )
+        serverQueueManagedClientIDs.formUnion(defaults.stringArray(forKey: "VeoDesktop.serverQueueManagedIDs") ?? [])
+        serverQueueUncertainClientIDs = Set(defaults.stringArray(forKey: "VeoDesktop.serverQueueUncertainIDs") ?? [])
         draft = draftsByContextID[currentDraftContextID] ?? ""
         attachments = attachmentsByContextID[currentDraftContextID] ?? []
         autoContinuationJobs = autoContinuationCoordinator.jobs
@@ -345,6 +432,11 @@ final class DesktopCodexStore: ObservableObject {
         }
         resolvedClient.serverRequestHandler = { [weak self] request, route in
             if self?.utilityInference.handleServerRequest(request, route: route) == true { return true }
+            if self?.appServer0153.handleDynamicToolRequest(request, route: route, resolveContext: { runtimeID in
+                guard let self,
+                      let thread = self.allKnownThreads.first(where: { $0.runtimeThreadID == runtimeID }) else { return nil }
+                return (thread.cwd, self.accessMode.rawValue)
+            }) == true { return true }
             return self?.captureServerRequest(request, route: route) ?? false
         }
         resolvedClient.capabilitiesHandler = { [weak self] capabilities in
@@ -400,6 +492,7 @@ final class DesktopCodexStore: ObservableObject {
             self.realtimeSession = nil
             self.realtimeTranscript = ""
             self.realtimeAudio.stop()
+            self.appServer0153.selectRuntimeThread(nil)
         }
         resolvedRealtimeAudio.captureHandler = { [weak self] chunk in
             self?.enqueueRealtimeAudio(chunk)
@@ -445,6 +538,18 @@ final class DesktopCodexStore: ObservableObject {
         return findThread(selectedThreadID)
     }
 
+    var selectedRuntimeThreadID: String? { selectedThread?.runtimeThreadID }
+
+    var selectedApprovalReviews: [DesktopApprovalReview] {
+        guard let selectedThreadID else { return [] }
+        return appServer0153.approvalReviewsByThreadID[selectedThreadID] ?? []
+    }
+
+    var selectedMemoryMode: DesktopThreadMemoryMode? {
+        guard let selectedThreadID else { return nil }
+        return appServer0153.memoryModeByThreadID[selectedThreadID]
+    }
+
     var sidebarThreads: [DesktopThread] {
         isBrowsingArchivedThreads ? archivedThreads : threads
     }
@@ -454,7 +559,11 @@ final class DesktopCodexStore: ObservableObject {
     }
 
     private func findThread(_ id: String) -> DesktopThread? {
-        allKnownThreads.first(where: { $0.id == id })
+        threads.first(where: { $0.id == id })
+            ?? archivedThreads.first(where: { $0.id == id })
+            ?? codexThreads.first(where: { $0.id == id })
+            ?? archivedCodexThreads.first(where: { $0.id == id })
+            ?? searchedThreads?.first(where: { $0.id == id })
     }
 
     private static func workspaceExists(for thread: DesktopThread) -> Bool {
@@ -634,13 +743,223 @@ final class DesktopCodexStore: ObservableObject {
         models.first(where: { $0.id == selectedModelID })
     }
 
+    var visibleModels: [DesktopModelOption] {
+        _ = catalogPreferenceRevision
+        let preferences = DesktopModelCatalogPreferences.shared
+        return models.filter { model in
+            if model.isExternal {
+                return preferences.isExternalModelEnabled(model.id)
+            }
+            return preferences.isNativeModelEnabled(model.id)
+        }
+    }
+
+    var enabledModelsGroups: [DesktopEnabledModelGroup] {
+        _ = catalogPreferenceRevision
+        let preferences = DesktopModelCatalogPreferences.shared
+        let visibleIDs = Set(visibleModels.map(\.id))
+        let lastEnabled = visibleIDs.count <= 1
+        var groups: [DesktopEnabledModelGroup] = []
+
+        let gpt56 = models.filter { $0.isGPT56Family && !$0.isExternal }
+        if !gpt56.isEmpty {
+            groups.append(
+                DesktopEnabledModelGroup(
+                    id: "gpt56",
+                    title: "GPT-5.6",
+                    rows: gpt56.map { model in
+                        DesktopEnabledModelRow(
+                            id: model.id,
+                            title: model.userFacingDisplayName,
+                            isLastEnabled: lastEnabled && visibleIDs.contains(model.id)
+                        )
+                    }
+                )
+            )
+        }
+
+        let astra = models.filter { $0.isGPT6Astra && !$0.isExternal }
+        if !astra.isEmpty {
+            groups.append(
+                DesktopEnabledModelGroup(
+                    id: "astra",
+                    title: "Astra",
+                    rows: astra.map { model in
+                        DesktopEnabledModelRow(
+                            id: model.id,
+                            title: model.userFacingDisplayName,
+                            isLastEnabled: lastEnabled && visibleIDs.contains(model.id)
+                        )
+                    }
+                )
+            )
+        }
+
+        let otherNative = models.filter { !$0.isExternal && !$0.isGPT56Family && !$0.isGPT6Astra }
+        if !otherNative.isEmpty {
+            groups.append(
+                DesktopEnabledModelGroup(
+                    id: "other",
+                    title: "Other",
+                    rows: otherNative.map { model in
+                        DesktopEnabledModelRow(
+                            id: model.id,
+                            title: model.userFacingDisplayName,
+                            isLastEnabled: lastEnabled && visibleIDs.contains(model.id)
+                        )
+                    }
+                )
+            )
+        }
+
+        if preferences.includeExternalModels {
+            for provider in preferences.providers {
+                let rows = provider.models.map { record in
+                    DesktopEnabledModelRow(
+                        id: record.id,
+                        title: DesktopModelOption.displayNameForUser(
+                            id: record.id,
+                            model: record.upstreamID,
+                            fallback: record.displayName
+                        ),
+                        isLastEnabled: lastEnabled && visibleIDs.contains(record.id)
+                    )
+                }
+                if !rows.isEmpty {
+                    groups.append(DesktopEnabledModelGroup(id: provider.id, title: provider.name, rows: rows))
+                }
+            }
+        }
+        return groups
+    }
+
+    var includeExternalModels: Bool {
+        _ = catalogPreferenceRevision
+        return DesktopModelCatalogPreferences.shared.includeExternalModels
+    }
+
+    var connectedExternalProviders: [DesktopConnectedProvider] {
+        _ = catalogPreferenceRevision
+        return DesktopModelCatalogPreferences.shared.providers
+    }
+
+    var enabledModelCount: Int { visibleModels.count }
+
+    var catalogModelCount: Int {
+        _ = catalogPreferenceRevision
+        let preferences = DesktopModelCatalogPreferences.shared
+        let native = models.filter { !$0.isExternal }.count
+        let external = preferences.includeExternalModels
+            ? preferences.providers.reduce(0) { $0 + $1.models.count }
+            : 0
+        return native + external
+    }
+
+    func modelEnabledBinding(_ id: String) -> Binding<Bool> {
+        Binding(
+            get: {
+                if let model = self.models.first(where: { $0.id == id }), model.isExternal {
+                    return DesktopModelCatalogPreferences.shared.isExternalModelEnabled(id)
+                }
+                if DesktopModelCatalogPreferences.shared.provider(forModelID: id) != nil {
+                    return DesktopModelCatalogPreferences.shared.isExternalModelEnabled(id)
+                }
+                return DesktopModelCatalogPreferences.shared.isNativeModelEnabled(id)
+            },
+            set: { self.setModelEnabled(id, enabled: $0) }
+        )
+    }
+
+    func setModelEnabled(_ id: String, enabled: Bool) {
+        let preferences = DesktopModelCatalogPreferences.shared
+        if let provider = preferences.provider(forModelID: id) {
+            if !enabled, visibleModels.count <= 1, visibleModels.contains(where: { $0.id == id }) {
+                return
+            }
+            preferences.setExternalModelEnabled(providerID: provider.id, modelID: id, enabled: enabled)
+            catalogPreferenceRevision += 1
+            fallbackSelectionIfNeeded()
+            requestOverlayReload()
+            return
+        }
+        let remaining = visibleModels.map(\.id)
+        guard preferences.setNativeModelEnabled(id, enabled: enabled, remainingEnabledIDs: remaining) else { return }
+        catalogPreferenceRevision += 1
+        fallbackSelectionIfNeeded()
+    }
+
+    func setIncludeExternalModels(_ enabled: Bool) {
+        DesktopModelCatalogPreferences.shared.setIncludeExternalModels(enabled)
+        catalogPreferenceRevision += 1
+        fallbackSelectionIfNeeded()
+        requestOverlayReload()
+    }
+
+    func saveExternalProvider(_ provider: DesktopConnectedProvider, apiKey: String?) async throws {
+        if let apiKey, !apiKey.isEmpty {
+            guard DesktopProviderCredentialStore.setKey(apiKey, providerID: provider.id) else {
+                throw DesktopExternalModelCatalogError.catalogWrite("The API key could not be saved to Keychain.")
+            }
+        } else if provider.authKind == .oauth {
+            guard DesktopProviderOAuth.loadToken(providerID: provider.id) != nil else {
+                throw DesktopProviderOAuthError.missingToken
+            }
+        } else if !DesktopProviderCredentialStore.hasKey(providerID: provider.id) {
+            throw DesktopExternalModelCatalogError.catalogWrite("Enter an API key to connect this provider.")
+        }
+        DesktopModelCatalogPreferences.shared.upsertProvider(provider)
+        if !DesktopModelCatalogPreferences.shared.includeExternalModels {
+            DesktopModelCatalogPreferences.shared.setIncludeExternalModels(true)
+        }
+        catalogPreferenceRevision += 1
+        fallbackSelectionIfNeeded()
+        requestOverlayReload()
+    }
+
+    func removeExternalProvider(_ id: String) {
+        DesktopProviderCredentialStore.deleteKey(providerID: id)
+        DesktopModelCatalogPreferences.shared.removeProvider(id)
+        catalogPreferenceRevision += 1
+        fallbackSelectionIfNeeded()
+        requestOverlayReload()
+    }
+
+    private func fallbackSelectionIfNeeded() {
+        let visible = visibleModels
+        if routingMode == .auto {
+            let hasGPT56 = visible.contains { $0.isGPT56Family }
+            if !hasGPT56, let first = visible.first {
+                selectModel(first.id)
+            }
+            return
+        }
+        if let selectedModelID, visible.contains(where: { $0.id == selectedModelID }) { return }
+        if let first = visible.first {
+            selectModel(first.id)
+        }
+    }
+
+    private func requestOverlayReload() {
+        if canReconnect {
+            reconnect()
+        } else {
+            pendingOverlayReload = true
+        }
+    }
+
+    private func applyPendingOverlayReloadIfNeeded() {
+        guard pendingOverlayReload, canReconnect else { return }
+        pendingOverlayReload = false
+        reconnect()
+    }
+
     var modelDisplayName: String {
         routingMode == .auto ? "GPT-5.6 Auto" : (selectedModel?.userFacingDisplayName ?? "Model")
     }
 
     var resolvedAutoRoutePlan: DesktopAutoRoutePlan? {
         guard hasLoadedAutoCapabilities else { return nil }
-        return try? DesktopAutoRoutePlan.resolve(models: models, experimentalFeatures: experimentalFeatures)
+        return try? DesktopAutoRoutePlan.resolve(models: visibleModels, experimentalFeatures: experimentalFeatures)
     }
 
     var autoRouteErrorMessage: String? {
@@ -648,7 +967,7 @@ final class DesktopCodexStore: ObservableObject {
             return "Checking GPT-5.6 Auto capabilities…"
         }
         do {
-            _ = try DesktopAutoRoutePlan.resolve(models: models, experimentalFeatures: experimentalFeatures)
+            _ = try DesktopAutoRoutePlan.resolve(models: visibleModels, experimentalFeatures: experimentalFeatures)
             return nil
         } catch {
             return error.localizedDescription
@@ -670,7 +989,7 @@ final class DesktopCodexStore: ObservableObject {
     }
 
     var utilityModelOptions: [DesktopModelOption] {
-        models.filter { model in
+        visibleModels.filter { model in
             model.supportedReasoningEfforts.contains(where: {
                 $0.id.caseInsensitiveCompare(DesktopUtilityModelPreferences.reasoningEffort) == .orderedSame
             })
@@ -769,6 +1088,15 @@ final class DesktopCodexStore: ObservableObject {
 
     var isBusyTurn: Bool {
         isSubmittingTurn || isRunningTurn
+    }
+
+    /// Group only when timeline content changes, not when scrolling or composer state changes.
+    var timelineEntries: [DesktopTimelineEntry] {
+        _ = timelineRevision
+        if let cachedTimelineEntries { return cachedTimelineEntries }
+        let entries = DesktopTimelineEntry.make(from: timeline)
+        cachedTimelineEntries = entries
+        return entries
     }
 
     /// Timeline rows that belong to the selected thread's current in-flight turn.
@@ -1567,16 +1895,32 @@ final class DesktopCodexStore: ObservableObject {
                 var params: [String: Any] = [
                     "threadId": runtimeID,
                     "outputModality": "audio",
-                    "version": "v2",
+                    "version": realtimeProtocolChoice == .legacyV2 ? "v2" : "v3",
                     "includeStartupContext": true,
                     "transport": ["type": "websocket"],
                 ]
+                if realtimeProtocolChoice != .legacyV2 {
+                    params["codexResponsesAsItems"] = true
+                    params["codexResponseHandoffMode"] = "commentary"
+                    params["flushTranscriptTailOnSessionEnd"] = true
+                }
                 if let voice { params["voice"] = voice }
-                _ = try await client.request(
-                    method: "thread/realtime/start",
-                    params: params,
-                    requiring: .realtimeVoice
-                )
+                do {
+                    _ = try await client.request(
+                        method: "thread/realtime/start", params: params, requiring: .realtimeVoice
+                    )
+                } catch {
+                    guard realtimeProtocolChoice == .automatic,
+                          case CodexAppServerClientError.rpc(let code, _) = error,
+                          code == -32601 || code == -32602 else { throw error }
+                    params["version"] = "v2"
+                    params.removeValue(forKey: "codexResponsesAsItems")
+                    params.removeValue(forKey: "codexResponseHandoffMode")
+                    params.removeValue(forKey: "flushTranscriptTailOnSessionEnd")
+                    _ = try await client.request(
+                        method: "thread/realtime/start", params: params, requiring: .realtimeVoice
+                    )
+                }
                 // A stop waits for this start task before sending its server stop,
                 // so a stop can never race ahead of an in-flight server start.
                 guard !Task.isCancelled,
@@ -2835,6 +3179,231 @@ final class DesktopCodexStore: ObservableObject {
         }
     }
 
+    func loadMoreHistory() {
+        guard let uiID = selectedThreadID, let runtimeID = selectedRuntimeThreadID,
+              historyNextCursor != nil, !isLoadingMoreHistory else { return }
+        Task { await loadMoreHistory(replacing: false, runtimeID: runtimeID, uiThreadID: uiID) }
+    }
+
+    private func loadMoreHistory(
+        replacing: Bool,
+        runtimeID: String,
+        uiThreadID: String
+    ) async {
+        guard !isLoadingMoreHistory, selectedThreadID == uiThreadID else { return }
+        isLoadingMoreHistory = true
+        defer { isLoadingMoreHistory = false }
+        let cursor = historyNextCursor
+        if realtimeProtocolChoice != .legacyV2, (cursor == nil || historyUsesTimeline),
+           capabilities.supports(.realtimeTimeline) {
+            do {
+                let page = try await appServer0153.loadTimelinePage(runtimeThreadID: runtimeID, cursor: cursor)
+                guard selectedThreadID == uiThreadID else { return }
+                var positioned: [(Int, DesktopTimelineItem)] = page.items.compactMap { position, turnID, item in
+                    DesktopTimelineItem.parse(item, turnID: turnID).map { (position, applyingPresentationAttachments($0)) }
+                }
+                positioned += page.realtime.map { transcript in
+                    (transcript.position ?? 0, DesktopTimelineItem(
+                        id: "realtime-\(transcript.id)", turnID: nil,
+                        kind: transcript.role == "user" ? .user : .assistant,
+                        title: transcript.role == "user" ? "You · Voice" : "Codex · Voice",
+                        body: transcript.text, status: transcript.isComplete ? "completed" : "inProgress"
+                    ))
+                }
+                mergeHistoryPage(positioned.sorted { $0.0 < $1.0 }.map(\.1), replacing: replacing, appending: true)
+                historyNextCursor = page.next
+                historyUsesTimeline = true
+                return
+            } catch {
+                capabilities = client.capabilities
+                if realtimeProtocolChoice == .timelineV3 {
+                    transientError = "Timeline v3 is unavailable; Veo used item history instead: \(error.localizedDescription)"
+                }
+                // Never send a timeline cursor to item history.
+                if cursor != nil { return }
+                historyUsesTimeline = false
+                historyNextCursor = nil
+            }
+        }
+        do {
+            var params: [String: Any] = [
+                "threadId": runtimeID, "limit": 100, "sortDirection": "desc",
+            ]
+            if let cursor, !historyUsesTimeline { params["cursor"] = cursor }
+            let response = try await client.request(method: "thread/items/list", params: params)
+            let page = (response["data"] as? [[String: Any]] ?? []).compactMap { entry -> DesktopTimelineItem? in
+                guard let item = entry["item"] as? [String: Any] else { return nil }
+                return DesktopTimelineItem.parse(item, turnID: entry.string("turnId"))
+                    .map(applyingPresentationAttachments)
+            }.reversed()
+            guard selectedThreadID == uiThreadID else { return }
+            mergeHistoryPage(Array(page), replacing: replacing)
+            historyNextCursor = response.string("nextCursor")
+            historyUsesTimeline = false
+        } catch {
+            do {
+                let turns = try await fetchRetainedTurns(runtimeID: runtimeID)
+                guard selectedThreadID == uiThreadID else { return }
+                let page = turns.flatMap { turn in
+                    (turn["items"] as? [[String: Any]] ?? []).compactMap {
+                        DesktopTimelineItem.parse($0, turnID: turn.string("id")).map(applyingPresentationAttachments)
+                    }
+                }
+                mergeHistoryPage(page, replacing: replacing)
+                historyNextCursor = nil
+            } catch {
+                if selectedThreadID == uiThreadID { transientError = "History could not be refreshed: \(error.localizedDescription)" }
+            }
+        }
+    }
+
+    private func mergeHistoryPage(_ page: [DesktopTimelineItem], replacing: Bool, appending: Bool = false) {
+        if replacing { timeline = [] }
+        let pageIDs = Set(page.map(\.id))
+        if appending {
+            let existingIDs = Set(timeline.map(\.id))
+            let updates = Dictionary(page.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
+            timeline = timeline.map { updates[$0.id] ?? $0 } + page.filter { !existingIDs.contains($0.id) }
+        } else {
+            timeline = page + timeline.filter { !pageIDs.contains($0.id) }
+        }
+    }
+
+    private func fetchRetainedTurns(runtimeID: String) async throws -> [[String: Any]] {
+        do { return try await fetchPaginatedTurns(runtimeID: runtimeID) }
+        catch {
+            let response = try await client.request(method: "thread/read", params: ["threadId": runtimeID, "includeTurns": true])
+            guard let thread = response["thread"] as? [String: Any], let turns = thread["turns"] as? [[String: Any]] else {
+                throw CodexAppServerClientError.malformedResponse("thread/read history")
+            }
+            return turns
+        }
+    }
+
+    private func fetchPaginatedTurns(runtimeID: String) async throws -> [[String: Any]] {
+        var cursor: String?
+        var seen = Set<String>()
+        var turns: [[String: Any]] = []
+        repeat {
+            var params: [String: Any] = ["threadId": runtimeID, "limit": 100, "sortDirection": "desc", "itemsView": "full"]
+            if let cursor { params["cursor"] = cursor }
+            let response = try await client.request(method: "thread/turns/list", params: params, maturity: .experimental)
+            guard let page = response["data"] as? [[String: Any]] else {
+                throw CodexAppServerClientError.malformedResponse("thread/turns/list")
+            }
+            turns += page
+            cursor = response.string("nextCursor")
+            if let cursor, !seen.insert(cursor).inserted {
+                throw CodexAppServerClientError.malformedResponse("Repeated history cursor")
+            }
+        } while cursor != nil
+        return turns.reversed()
+    }
+
+    private func refreshRevertedHistory(uiID: String, runtimeID: String) async throws {
+        let turns = try await fetchRetainedTurns(runtimeID: runtimeID)
+        if DesktopThreadSelection.parse(uiID).origin == .veo {
+            try await threadStore.replaceTimeline(veoID: uiID, turns: turns, pruningRemovedTurns: true)
+        }
+        guard selectedThreadID == uiID else { return }
+        timeline = turns.flatMap { turn in
+            (turn["items"] as? [[String: Any]] ?? []).compactMap {
+                DesktopTimelineItem.parse($0, turnID: turn.string("id")).map(applyingPresentationAttachments)
+            }
+        }
+        historyNextCursor = nil
+        historyUsesTimeline = false
+    }
+
+    func revertHistory(before turnID: String) {
+        guard canRevertSelectedHistory, let uiID = selectedThreadID, let runtimeID = selectedRuntimeThreadID else { return }
+        historyRevertInFlight = true
+        Task {
+            defer { historyRevertInFlight = false }
+            var serverReverted = false
+            do {
+                _ = try await client.request(method: "thread/revert", params: ["threadId": runtimeID, "beforeTurnId": turnID])
+                serverReverted = true
+                try await refreshRevertedHistory(uiID: uiID, runtimeID: runtimeID)
+                if selectedThreadID == uiID { transientError = nil }
+            } catch {
+                if selectedThreadID == uiID {
+                    transientError = serverReverted
+                        ? "The server reverted this chat, but its retained history could not be refreshed. Reopen the chat to retry: \(error.localizedDescription)"
+                        : "History revert could not be confirmed. Refresh the chat before retrying: \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
+    func checkpoint(for item: DesktopTimelineItem) -> DesktopWorkspaceCheckpoint? {
+        guard let selectedThreadID else { return nil }
+        return DesktopCheckpointLibrary.shared.checkpoint(threadID: selectedThreadID, item: item)
+    }
+
+    func editFromHere(_ item: DesktopTimelineItem, restoreFiles: Bool) {
+        guard item.kind == .user, let turnID = item.turnID, canRevertSelectedHistory,
+              let uiID = selectedThreadID, let runtimeID = selectedRuntimeThreadID else { return }
+        let savedCheckpoint = checkpoint(for: item)
+        if restoreFiles && savedCheckpoint == nil { return }
+        if restoreFiles, let savedCheckpoint {
+            let project = DesktopProjectPreferences.shared.projectPath(for: savedCheckpoint.workspacePath)
+            let anotherTurnIsActive = (threads + codexThreads).contains { other in
+                guard other.id != uiID, isThreadTurnActive(other.id) else { return false }
+                let otherProject = DesktopProjectPreferences.shared.projectPath(for: other.cwd)
+                return otherProject == project || other.cwd.hasPrefix(savedCheckpoint.repositoryPath + "/")
+            }
+            guard !anotherTurnIsActive else {
+                transientError = "Stop the other active tasks in this repository before restoring files."
+                return
+            }
+        }
+        historyRevertInFlight = true
+        Task {
+            defer { historyRevertInFlight = false }
+            var historyReverted = false
+            var recovery: DesktopWorkspaceCheckpoint?
+            do {
+                if restoreFiles, let savedCheckpoint {
+                    let current = try await gitService.repositorySnapshot(for: URL(fileURLWithPath: savedCheckpoint.workspacePath))
+                    guard current.headObjectID == savedCheckpoint.head, current.branchName == savedCheckpoint.branch, current.canMutate else {
+                        throw CodexAppServerClientError.invalidInput("The branch or commit changed after this checkpoint. Restore history only, or return to the original branch and commit.")
+                    }
+                    recovery = try await gitService.captureCheckpoint(workspace: URL(fileURLWithPath: savedCheckpoint.workspacePath), threadID: uiID, payloadID: "recovery-" + UUID().uuidString)
+                    if let recovery { DesktopCheckpointLibrary.shared.save(recovery) }
+                }
+                _ = try await client.request(method: "thread/revert", params: ["threadId": runtimeID, "beforeTurnId": turnID])
+                historyReverted = true
+                let key = "thread:" + uiID
+                if selectedThreadID == uiID {
+                    appendContextToDraft(item.body)
+                    attachments.append(contentsOf: item.attachments)
+                } else {
+                    let existing = draftsByContextID[key] ?? ""
+                    draftsByContextID[key] = existing + (existing.isEmpty ? "" : "\n\n") + item.body
+                    attachmentsByContextID[key, default: []].append(contentsOf: item.attachments)
+                    persistInteractionSnapshot()
+                }
+                try await refreshRevertedHistory(uiID: uiID, runtimeID: runtimeID)
+                if restoreFiles, let savedCheckpoint, let recovery {
+                    try await gitService.restoreCheckpoint(savedCheckpoint, recovery: recovery)
+                    if selectedThreadID == uiID { refreshGitRepository() }
+                }
+            } catch {
+                if selectedThreadID == uiID {
+                    transientError = (historyReverted ? "History was reverted and the prompt restored, but the remaining steps failed: " : "Edit from here could not be confirmed: ") + error.localizedDescription
+                    if let recovery { transientError! += " Recovery checkpoint: " + recovery.filesRef }
+                }
+            }
+        }
+    }
+
+    private func reloadSelectedHistoryAfterRevert() async {
+        guard let uiID = selectedThreadID, let runtimeID = selectedRuntimeThreadID, !isBusyTurn, !historyRevertInFlight else { return }
+        do { try await refreshRevertedHistory(uiID: uiID, runtimeID: runtimeID) }
+        catch { if selectedThreadID == uiID { transientError = "Reverted history could not be refreshed: \(error.localizedDescription)" } }
+    }
+
     func forkThread(_ thread: DesktopThread, through turnID: String?) {
         guard let runtimeID = thread.runtimeThreadID else {
             transientError = "Chat could not be forked: start a turn in this chat first."
@@ -2967,11 +3536,15 @@ final class DesktopCodexStore: ObservableObject {
         }
     }
 
-    func beginProjectChat(at url: URL) {
+    func beginProjectChat(at url: URL, offerWorktree: Bool = true, onCreated: (() -> Void)? = nil) {
+        if offerWorktree, DesktopProjectPreferences.shared.configuration(for: url.path).usesWorktree {
+            requestedWorktreeProject = url
+            return
+        }
         performWorkspaceChange { [weak self] in
             guard let self else { return }
             self.applyWorkspace(url)
-            self.createNewChat(workspaceKind: .project, projectURL: url)
+            if self.createNewChat(workspaceKind: .project, projectURL: url) != nil { onCreated?() }
         }
     }
 
@@ -3023,6 +3596,9 @@ final class DesktopCodexStore: ObservableObject {
         rebuildCodexMappings()
         persistVeoThread(created, isArchived: false)
         selectedThreadID = created.id
+        historyNextCursor = nil
+        historyUsesTimeline = false
+        appServer0153.selectRuntimeThread(nil)
         defaults.set(created.id, forKey: "VeoDesktop.selectedThreadID")
         discardTemporaryChatIfNeeded(leaving: previousThreadID)
         discardUnusedNewChatIfNeeded(leaving: previousThreadID)
@@ -3031,8 +3607,12 @@ final class DesktopCodexStore: ObservableObject {
         activeTurnID = nil
         isSubmittingTurn = false
         isRunningTurn = false
+        applyPendingOverlayReloadIfNeeded()
         interactionMode = .agentic
         routingMode = defaultRoutingMode
+        selectedModelID = defaults.string(forKey: "VeoDesktop.modelID")
+        selectedReasoningEffort = defaults.string(forKey: "VeoDesktop.reasoningEffort")
+        selectedServiceTier = defaults.string(forKey: "VeoDesktop.serviceTier")
         persistRoutingMode(routingMode, threadID: created.id)
         isGoalModeEnabled = false
         activeGoalObjective = nil
@@ -3041,6 +3621,7 @@ final class DesktopCodexStore: ObservableObject {
         composerSuggestions = []
         isBrowsingArchivedThreads = false
         restoreDraft()
+        if workspaceKind == .project { applyProjectDefaults(at: targetWorkspaceURL.path) }
         refreshInvalidatedGitContextIfNeeded()
         if runtimeState.isReady {
             Task {
@@ -3123,6 +3704,9 @@ final class DesktopCodexStore: ObservableObject {
         saveCurrentDraft()
         let previousThreadID = selectedThreadID
         selectedThreadID = id
+        historyNextCursor = nil
+        historyUsesTimeline = false
+        appServer0153.selectRuntimeThread(id.flatMap { findThread($0)?.runtimeThreadID })
         if let id {
             defaults.set(id, forKey: "VeoDesktop.selectedThreadID")
         } else {
@@ -3147,6 +3731,11 @@ final class DesktopCodexStore: ObservableObject {
         guard let id else { return }
         Task {
             await prepareAndResumeSelectedThread(id, loadGeneration: loadGeneration)
+            if let runtimeID = runtimeThreadID(forUIThreadID: id), capabilities.supports(.serverQueue) {
+                if let links = try? await appServer0153.reconcileServerQueue(runtimeThreadID: runtimeID, uiThreadID: id) {
+                    applyReconciledServerQueueLinks(links, uiThreadID: id)
+                }
+            }
             await loadSkills()
             await loadAccountResources()
             let term = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -3527,12 +4116,12 @@ final class DesktopCodexStore: ObservableObject {
     }
 
     private func presentModelSuggestions() {
-        guard !models.isEmpty else {
+        guard !visibleModels.isEmpty else {
             setTransientError("No models are available from the local Codex runtime.", recovery: .reloadModels)
             return
         }
         composerPaletteContext = .models
-        composerSuggestions = models.map { model in
+        composerSuggestions = visibleModels.map { model in
             DesktopComposerSuggestion(
                 kind: .model,
                 title: model.displayName,
@@ -3795,8 +4384,78 @@ final class DesktopCodexStore: ObservableObject {
         defaults.set(mode.rawValue, forKey: "VeoDesktop.accessMode")
     }
 
+    func stashPrompt() {
+        guard !isSavingPrompt, !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty else { return }
+        let text = draft, savedAttachments = attachments, path = effectiveWorkspaceURL.path, context = currentDraftContextID
+        isSavingPrompt = true
+        Task {
+            defer { isSavingPrompt = false }
+            do {
+                try await DesktopPromptLibrary.shared.save(text: text, attachments: savedAttachments, workspace: path)
+                if currentDraftContextID == context, draft == text, attachments == savedAttachments {
+                    draft = ""; attachments = []
+                } else if currentDraftContextID != context, draftsByContextID[context] == text, attachmentsByContextID[context] == savedAttachments {
+                    draftsByContextID[context] = ""; attachmentsByContextID[context] = []; persistInteractionSnapshot()
+                }
+            } catch { transientError = "Could not save prompt: \(error.localizedDescription)" }
+        }
+    }
+
+    func restorePrompt(_ prompt: DesktopSavedPrompt) async throws {
+        guard !isRestoringPrompt else { return }
+        let context = currentDraftContextID, workspace = effectiveWorkspaceURL
+        isRestoringPrompt = true
+        defer { isRestoringPrompt = false }
+        let copied = try await DesktopPromptLibrary.shared.restore(prompt, into: workspace)
+        if currentDraftContextID == context {
+            appendContextToDraft(prompt.text); attachments.append(contentsOf: copied)
+        } else {
+            let existing = draftsByContextID[context] ?? ""
+            draftsByContextID[context] = existing + (existing.isEmpty ? "" : "\n\n") + prompt.text
+            attachmentsByContextID[context, default: []].append(contentsOf: copied)
+            persistInteractionSnapshot()
+        }
+    }
+
+    func canRestoreCheckpoint(_ checkpoint: DesktopWorkspaceCheckpoint) -> Bool {
+        guard !isBusyTurn, !historyRevertInFlight, !isRestoringCheckpoint else { return false }
+        let project = DesktopProjectPreferences.shared.projectPath(for: checkpoint.workspacePath)
+        return !(threads + codexThreads).contains { thread in
+            isThreadTurnActive(thread.id) && (DesktopProjectPreferences.shared.projectPath(for: thread.cwd) == project || thread.cwd == checkpoint.repositoryPath || thread.cwd.hasPrefix(checkpoint.repositoryPath + "/"))
+        }
+    }
+
+    func appendContextToDraft(_ text: String) {
+        draft += (draft.isEmpty ? "" : "\n\n") + text
+    }
+
+    private func applyProjectDefaults(at path: String) {
+        let configuration = DesktopProjectPreferences.shared.configuration(for: path)
+        guard let id = configuration.modelID else { return }
+        guard let model = visibleModels.first(where: { $0.id == id }) ?? models.first(where: { $0.id == id }) else {
+            // A chat can be opened before the runtime returns its catalog.
+            // Keep the requested override for loadModels to validate later.
+            if models.isEmpty {
+                selectedModelID = id
+                selectedReasoningEffort = configuration.reasoningEffort
+                selectedServiceTier = nil
+                routingMode = .direct
+                if let threadID = selectedThreadID { persistRoutingMode(.direct, threadID: threadID) }
+            }
+            return
+        }
+        // Project overrides must not overwrite the user's global default.
+        selectedModelID = model.id
+        selectedReasoningEffort = model.supportedReasoningEfforts.contains(where: { $0.id == configuration.reasoningEffort })
+            ? configuration.reasoningEffort : model.defaultReasoningEffort
+        selectedServiceTier = model.defaultServiceTier
+        routingMode = .direct
+        if let threadID = selectedThreadID { persistRoutingMode(.direct, threadID: threadID) }
+        updateActiveThreadSettings()
+    }
+
     func selectModel(_ id: String) {
-        guard let model = models.first(where: { $0.id == id }) else { return }
+        guard let model = visibleModels.first(where: { $0.id == id }) ?? models.first(where: { $0.id == id }) else { return }
         let isNewDirectModel = selectedModelID != model.id
         setRoutingMode(.direct)
         selectedModelID = model.id
@@ -3810,6 +4469,15 @@ final class DesktopCodexStore: ObservableObject {
             persistServiceTier(model.defaultServiceTier)
         }
         updateActiveThreadSettings()
+    }
+
+    private func modelProviderID(for modelName: String?) -> String? {
+        guard let modelName, !modelName.isEmpty else { return nil }
+        if let match = models.first(where: { $0.id == modelName || $0.model == modelName }) {
+            return match.externalProviderID
+        }
+        return DesktopModelCatalogPreferences.shared.provider(forModelID: modelName)?.id
+            ?? (modelName.contains("/") ? String(modelName.split(separator: "/").first ?? "") : nil)
     }
 
     func selectAutoRouting() {
@@ -3838,6 +4506,51 @@ final class DesktopCodexStore: ObservableObject {
         selectedServiceTier = tier
         persistServiceTier(tier)
         updateActiveThreadSettings()
+    }
+
+    func selectPersonality(_ personality: String) {
+        guard ["none", "friendly", "pragmatic"].contains(personality),
+              selectedModel?.supportsPersonality == true else { return }
+        selectedPersonality = personality
+        defaults.set(personality, forKey: "VeoDesktop.personality")
+        updateActiveThreadSettings()
+        if isBusyTurn { appServer0153.noteNextTurnOnly("personality changes apply to the next turn") }
+    }
+
+    func setRealtimeProtocolChoice(_ choice: DesktopRealtimeProtocolChoice) {
+        realtimeProtocolChoice = choice
+        defaults.set(choice.rawValue, forKey: "VeoDesktop.realtimeProtocolChoice")
+    }
+
+    func setSelectedMemoryMode(_ mode: DesktopThreadMemoryMode) {
+        guard let uiID = selectedThreadID, let runtimeID = selectedRuntimeThreadID else { return }
+        Task {
+            do { try await appServer0153.setMemoryMode(mode, runtimeThreadID: runtimeID, uiThreadID: uiID) }
+            catch { transientError = "Memory mode could not be changed: \(error.localizedDescription)" }
+        }
+    }
+
+    func refreshBackgroundAgentTerminals() {
+        guard let runtimeID = selectedRuntimeThreadID else { return }
+        Task { await appServer0153.refreshBackgroundTerminals(runtimeThreadID: runtimeID) }
+    }
+
+    func terminateBackgroundAgentTerminal(_ processID: String) {
+        guard let runtimeID = selectedRuntimeThreadID else { return }
+        Task { await appServer0153.terminateBackgroundTerminal(processID, runtimeThreadID: runtimeID) }
+    }
+
+    func cleanBackgroundAgentTerminals() {
+        guard let runtimeID = selectedRuntimeThreadID else { return }
+        Task { await appServer0153.cleanBackgroundTerminals(runtimeThreadID: runtimeID) }
+    }
+
+    func approveGuardianDeniedAction(_ review: DesktopApprovalReview) {
+        guard let runtimeID = selectedRuntimeThreadID else { return }
+        Task {
+            do { try await appServer0153.approveGuardianDeniedAction(review, runtimeThreadID: runtimeID) }
+            catch { transientError = "Denied action could not be retried: \(error.localizedDescription)" }
+        }
     }
 
     func setInteractionMode(_ mode: DesktopInteractionMode) {
@@ -3944,6 +4657,20 @@ final class DesktopCodexStore: ObservableObject {
             planErrorsByID.removeValue(forKey: reference.storageID)
         } catch {
             planErrorsByID[reference.storageID] = "Plan could not be exported: \(error.localizedDescription)"
+        }
+    }
+
+    func navigateToQuote(_ reference: DesktopQuoteReference) {
+        guard findThread(reference.threadID) != nil else {
+            transientError = "The source chat is no longer available. The saved quote is still readable."
+            return
+        }
+        if selectedThreadID == reference.threadID, timeline.contains(where: { $0.id == reference.itemID }) {
+            timelineNavigationItemID = reference.itemID
+        } else {
+            pendingQuoteNavigation = reference
+            if selectedThreadID != reference.threadID { selectThread(reference.threadID) }
+            else { transientError = "The quoted response is not in the loaded history. Load earlier messages to find it; the saved quote is still readable." }
         }
     }
 
@@ -4070,7 +4797,7 @@ final class DesktopCodexStore: ObservableObject {
         }
     }
 
-    func sendDraft() {
+    func sendDraft(willSubmit: ((DesktopComposerPayload) -> Void)? = nil) {
         let message = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard canSend else { return }
         let autoPlan: DesktopAutoRoutePlan?
@@ -4116,7 +4843,8 @@ final class DesktopCodexStore: ObservableObject {
                 requestedThreadID: requestedThreadID,
                 draftContextID: draftContextID,
                 queueKey: queueKey,
-                originNewChatGenerationID: originNewChatGenerationID
+                originNewChatGenerationID: originNewChatGenerationID,
+                willSubmit: willSubmit
             )
             return
         }
@@ -4159,7 +4887,8 @@ final class DesktopCodexStore: ObservableObject {
                     requestedThreadID: requestedThreadID,
                     draftContextID: draftContextID,
                     queueKey: queueKey,
-                    originNewChatGenerationID: originNewChatGenerationID
+                    originNewChatGenerationID: originNewChatGenerationID,
+                    willSubmit: willSubmit
                 )
             } catch is CancellationError {
                 self.transientError = "Image analysis was canceled. Your draft is still here."
@@ -4174,10 +4903,18 @@ final class DesktopCodexStore: ObservableObject {
         requestedThreadID: String?,
         draftContextID: String,
         queueKey: String,
-        originNewChatGenerationID: UUID?
+        originNewChatGenerationID: UUID?,
+        willSubmit: ((DesktopComposerPayload) -> Void)?
     ) {
+        guard !historyRevertInFlight, !isRestoringCheckpoint else {
+            transientError = "Wait for the history change to finish before sending. Your draft is still here."
+            return
+        }
         if let requestedThreadID {
             autoContinuationCoordinator.cancel(threadID: requestedThreadID, detail: "Canceled by new activity.")
+        }
+        if !isBusyTurn, currentDraftContextID == draftContextID {
+            willSubmit?(payload)
         }
         clearComposerDraft(contextID: draftContextID)
 
@@ -4189,6 +4926,9 @@ final class DesktopCodexStore: ObservableObject {
             enqueue(payload, queueKey: threadID)
             if followUpBehavior == .steer, isRunningTurn {
                 steerQueuedDraft(payload.id)
+            } else if capabilities.supports(.serverQueue), findThread(threadID)?.workspaceKind != .temporary, let runtimeID = runtimeThreadID(forUIThreadID: threadID) {
+                serverQueueUncertainClientIDs.insert(payload.id)
+                Task { await enqueueOnServer(payload, uiThreadID: threadID, runtimeThreadID: runtimeID) }
             }
             return
         }
@@ -4320,23 +5060,95 @@ final class DesktopCodexStore: ObservableObject {
     }
 
     func updateQueuedDraft(_ id: String, text: String) {
-        guard !queuedDeliveryInFlightIDs.contains(id) else { return }
-        let queueKey = currentQueueContextID
-        guard let index = queuedDraftsByThreadID[queueKey]?.firstIndex(where: { $0.id == id }) else { return }
-        queuedDraftsByThreadID[queueKey]?[index].text = text
-        persistInteractionSnapshot()
+        guard !queuedDeliveryInFlightIDs.contains(id), !serverQueueUncertainClientIDs.contains(id) else { return }
+        let key = currentQueueContextID
+        guard var payload = queuedDraftsByThreadID[key]?.first(where: { $0.id == id }) else { return }
+        payload.text = text
+        if let runtimeID = runtimeThreadID(forUIThreadID: key), serverQueueManagedClientIDs.contains(id) {
+            queuedDeliveryInFlightIDs.insert(id)
+            Task {
+                defer { queuedDeliveryInFlightIDs.remove(id) }
+                do {
+                    try await appServer0153.updateServerQueue(payload, runtimeThreadID: runtimeID, uiThreadID: key)
+                    let links = try await appServer0153.reconcileServerQueue(runtimeThreadID: runtimeID, uiThreadID: key)
+                    applyReconciledServerQueueLinks(links, uiThreadID: key)
+                } catch { await reconcileQueueAfterUncertainMutation(uiThreadID: key, runtimeThreadID: runtimeID, message: error.localizedDescription) }
+            }
+        } else if let index = queuedDraftsByThreadID[key]?.firstIndex(where: { $0.id == id }) {
+            queuedDraftsByThreadID[key]?[index] = payload
+            persistInteractionSnapshot()
+        }
     }
 
     func removeQueuedDraft(_ id: String) {
-        guard !queuedDeliveryInFlightIDs.contains(id) else { return }
-        removeQueuedDraft(id, queueKey: currentQueueContextID)
+        guard !queuedDeliveryInFlightIDs.contains(id), !serverQueueUncertainClientIDs.contains(id) else { return }
+        let queueKey = currentQueueContextID
+        if let runtimeID = selectedRuntimeThreadID,
+           appServer0153.serverQueueID(clientID: id, uiThreadID: queueKey) != nil {
+            queuedDeliveryInFlightIDs.insert(id)
+            Task {
+                defer { queuedDeliveryInFlightIDs.remove(id) }
+                do {
+                    try await appServer0153.deleteServerQueue(clientID: id, runtimeThreadID: runtimeID, uiThreadID: queueKey)
+                    removeQueuedDraft(id, queueKey: queueKey)
+                    serverQueueManagedClientIDs.remove(id)
+                } catch {
+                    await reconcileQueueAfterUncertainMutation(uiThreadID: queueKey, runtimeThreadID: runtimeID, message: error.localizedDescription)
+                }
+            }
+        } else {
+            removeQueuedDraft(id, queueKey: queueKey)
+        }
+    }
+
+    func moveQueuedDraft(_ id: String, offset: Int) {
+        let key = currentQueueContextID
+        guard var queue = queuedDraftsByThreadID[key],
+              queue.allSatisfy({ !queuedDeliveryInFlightIDs.contains($0.id) && !serverQueueUncertainClientIDs.contains($0.id) }),
+              let index = queue.firstIndex(where: { $0.id == id }) else { return }
+        let target = index + offset
+        guard queue.indices.contains(target) else { return }
+        queue.swapAt(index, target)
+        if queue.contains(where: { serverQueueManagedClientIDs.contains($0.id) }) {
+            guard let runtimeID = runtimeThreadID(forUIThreadID: key),
+                  queue.allSatisfy({ appServer0153.serverQueueID(clientID: $0.id, uiThreadID: key) != nil }) else { return }
+            let ids = Set(queue.map(\.id))
+            queuedDeliveryInFlightIDs.formUnion(ids)
+            Task {
+                defer { queuedDeliveryInFlightIDs.subtract(ids) }
+                do {
+                    try await appServer0153.reorderServerQueue(clientIDs: queue.map(\.id), runtimeThreadID: runtimeID, uiThreadID: key)
+                    let links = try await appServer0153.reconcileServerQueue(runtimeThreadID: runtimeID, uiThreadID: key)
+                    applyReconciledServerQueueLinks(links, uiThreadID: key)
+                } catch { await reconcileQueueAfterUncertainMutation(uiThreadID: key, runtimeThreadID: runtimeID, message: error.localizedDescription) }
+            }
+        } else {
+            queuedDraftsByThreadID[key] = queue
+            persistInteractionSnapshot()
+        }
     }
 
     func steerQueuedDraft(_ id: String) {
         guard let threadID = selectedThreadID,
-              !queuedDeliveryInFlightIDs.contains(id),
+              !queuedDeliveryInFlightIDs.contains(id), !serverQueueUncertainClientIDs.contains(id),
               let payload = queuedDraftsByThreadID[threadID]?.first(where: { $0.id == id }) else { return }
-        Task { await steer(payload, threadID: threadID) }
+        if serverQueueManagedClientIDs.contains(id) {
+            guard let runtimeID = runtimeThreadID(forUIThreadID: threadID) else { return }
+            queuedDeliveryInFlightIDs.insert(id)
+            serverQueueUncertainClientIDs.insert(id)
+            Task {
+                do {
+                    try await appServer0153.deleteServerQueue(clientID: id, runtimeThreadID: runtimeID, uiThreadID: threadID)
+                    serverQueueManagedClientIDs.remove(id)
+                    serverQueueUncertainClientIDs.remove(id)
+                    queuedDeliveryInFlightIDs.remove(id)
+                    await steer(payload, threadID: threadID)
+                } catch {
+                    queuedDeliveryInFlightIDs.remove(id)
+                    await reconcileQueueAfterUncertainMutation(uiThreadID: threadID, runtimeThreadID: runtimeID, message: error.localizedDescription)
+                }
+            }
+        } else { Task { await steer(payload, threadID: threadID) } }
     }
 
     func sendNextQueuedDraft() {
@@ -4523,10 +5335,24 @@ final class DesktopCodexStore: ObservableObject {
             if client.isRunning {
                 client.stop()
             }
-            try await client.start()
+            let overlay: CodexAppServerLaunchOverlay?
+            var overlayError: String?
+            do {
+                overlay = try await DesktopExternalModelCatalog.launchOverlay()
+            } catch {
+                overlay = nil
+                overlayError = error.localizedDescription
+            }
+            try await client.start(overlay: overlay)
             capabilities = client.capabilities
             runtimeState = .ready
             transientError = nil
+            if let overlayError {
+                setTransientError(
+                    "External models could not be applied: \(overlayError)",
+                    recovery: .settings(.general)
+                )
+            }
             await loadVeoThreadsFromStore()
             if showCodexThreads {
                 let generation = codexThreadsLoadGeneration
@@ -4536,6 +5362,7 @@ final class DesktopCodexStore: ObservableObject {
                 finishCodexThreadsLoading(generation: generation)
             }
             await loadModels()
+            await appServer0153.readModelProviderCapabilities()
             await loadCollaborationModes()
             await loadRuntimeConfiguration()
             if let selectedThreadID, findThread(selectedThreadID) != nil {
@@ -4812,7 +5639,11 @@ final class DesktopCodexStore: ObservableObject {
 
             let parsed = rows.compactMap(DesktopModelOption.parse)
             models = parsed
-            guard let model = parsed.first(where: { $0.id == selectedModelID })
+            let visible = visibleModels
+            guard let model = visible.first(where: { $0.id == selectedModelID })
+                    ?? visible.first(where: \.isDefault)
+                    ?? visible.first
+                    ?? parsed.first(where: { $0.id == selectedModelID })
                     ?? parsed.first(where: \.isDefault)
                     ?? parsed.first else {
                 setTransientError("No models are available from the local Codex runtime.", recovery: .reloadModels)
@@ -4820,15 +5651,24 @@ final class DesktopCodexStore: ObservableObject {
             }
 
             selectedModelID = model.id
-            defaults.set(model.id, forKey: "VeoDesktop.modelID")
-
             if !model.supportedReasoningEfforts.contains(where: { $0.id == selectedReasoningEffort }) {
                 selectedReasoningEffort = model.defaultReasoningEffort
-                defaults.set(model.defaultReasoningEffort, forKey: "VeoDesktop.reasoningEffort")
             }
             if !model.serviceTiers.contains(where: { $0.id == selectedServiceTier }) {
                 selectedServiceTier = model.defaultServiceTier
-                persistServiceTier(model.defaultServiceTier)
+            }
+
+            // Catalog refresh validates global defaults independently of the
+            // currently selected chat, which may carry a project override.
+            if let globalModel = parsed.first(where: { $0.id == defaults.string(forKey: "VeoDesktop.modelID") })
+                ?? parsed.first(where: \.isDefault) ?? parsed.first {
+                defaults.set(globalModel.id, forKey: "VeoDesktop.modelID")
+                if !globalModel.supportedReasoningEfforts.contains(where: { $0.id == defaults.string(forKey: "VeoDesktop.reasoningEffort") }) {
+                    defaults.set(globalModel.defaultReasoningEffort, forKey: "VeoDesktop.reasoningEffort")
+                }
+                if !globalModel.serviceTiers.contains(where: { $0.id == defaults.string(forKey: "VeoDesktop.serviceTier") }) {
+                    persistServiceTier(globalModel.defaultServiceTier)
+                }
             }
         } catch {
             setTransientError("Models could not be loaded: \(error.localizedDescription)", recovery: .reloadModels)
@@ -4847,14 +5687,15 @@ final class DesktopCodexStore: ObservableObject {
                 requiring: .realtimeVoice
             )
             let voices = response["voices"] as? [String: Any]
-            let values = (voices?["v2"] as? [String])
+            let values = (voices?["v3"] as? [String])
+                ?? (voices?["v2"] as? [String])
                 ?? (voices?["v1"] as? [String])
                 ?? []
             var seen = Set<String>()
             realtimeVoices = values
                 .filter { seen.insert($0).inserted }
                 .map(DesktopVoiceOption.parse)
-            let defaultVoice = voices?.string("defaultV2") ?? voices?.string("defaultV1")
+            let defaultVoice = voices?.string("defaultV3") ?? voices?.string("defaultV2") ?? voices?.string("defaultV1")
             if let selectedRealtimeVoiceID,
                realtimeVoices.contains(where: { $0.id == selectedRealtimeVoiceID }) {
                 return
@@ -5314,7 +6155,7 @@ final class DesktopCodexStore: ObservableObject {
     }
 
     private func loadAccountOverview(refreshToken: Bool = false) async {
-        guard runtimeState.isReady else { return }
+        guard runtimeState.isReady, !isLoadingAccountOverview else { return }
         let loadGeneration = UUID()
         let contextUIThreadID = selectedThreadID
         let contextWorkspacePath = hasExplicitWorkspace
@@ -5361,7 +6202,9 @@ final class DesktopCodexStore: ObservableObject {
     }
 
     private func loadAccountResources() async {
-        guard runtimeState.isReady else { return }
+        // Listing resources can itself publish account/app update notifications.
+        // Coalesce those notifications rather than spawning another MCP discovery pass.
+        guard runtimeState.isReady, !isLoadingAccountResources else { return }
         let loadGeneration = UUID()
         let contextUIThreadID = selectedThreadID
         let contextThreadID = contextUIThreadID.flatMap { runtimeThreadID(forUIThreadID: $0) }
@@ -6030,6 +6873,7 @@ final class DesktopCodexStore: ObservableObject {
     }
 
     private func removeThreadLocalState(_ threadID: String) {
+        asyncQuestions.removeThread(threadID)
         autoContinuationCoordinator.remove(threadID: threadID)
         draftsByContextID.removeValue(forKey: "thread:\(threadID)")
         attachmentsByContextID.removeValue(forKey: "thread:\(threadID)")
@@ -6124,9 +6968,11 @@ final class DesktopCodexStore: ObservableObject {
                 "threadId": runtimeID,
                 "approvalPolicy": accessMode.approvalPolicyValue,
                 "sandbox": accessMode.sandboxValue,
+                "excludeTurns": true,
             ]
             if let model = effectiveSelectedRoute?.model { params["model"] = model }
             if let tier = effectiveSelectedRoute?.serviceTier { params["serviceTier"] = tier }
+            if selectedModel?.supportsPersonality == true { params["personality"] = selectedPersonality }
             let response = try await client.request(
                 method: "thread/resume",
                 params: params
@@ -6135,6 +6981,8 @@ final class DesktopCodexStore: ObservableObject {
                   selectedThreadID == uiThreadID else { return }
             let threadObject = response["thread"] as? [String: Any]
             if let threadObject {
+                historyModeByThreadID[uiThreadID] = threadObject.string("historyMode")
+                appServer0153.selectRuntimeThread(runtimeID)
                 if let existing = findThread(uiThreadID), existing.origin == .veo {
                     let updated = DesktopThread.makeVeo(
                         id: existing.selection.bareID,
@@ -6158,14 +7006,16 @@ final class DesktopCodexStore: ObservableObject {
                     )
                     replaceThread(updated)
                     persistVeoThread(updated, isArchived: archivedThreads.contains(where: { $0.id == uiThreadID }))
-                    if let turns = threadObject["turns"] as? [[String: Any]] {
+                    if let turns = threadObject["turns"] as? [[String: Any]], !turns.isEmpty {
                         try? await threadStore.replaceTimeline(veoID: uiThreadID, turns: turns)
                     }
                 } else if let resumedThread = DesktopThread.parse(threadObject, origin: .codex) {
                     upsertThread(resumedThread)
                 }
             }
-            hydrateTimeline(from: threadObject)
+            await loadMoreHistory(replacing: false, runtimeID: runtimeID, uiThreadID: uiThreadID)
+            guard timelineLoadGeneration == loadGeneration, selectedThreadID == uiThreadID else { return }
+            _ = try? await resolveActiveTurnID(threadID: uiThreadID, forceRead: true)
             synchronizeCompletedPlanArtifacts(threadID: uiThreadID)
             if DesktopThreadSelection.parse(uiThreadID).origin == .veo {
                 let localItems = (try? await threadStore.loadTimelineItems(veoID: uiThreadID)) ?? []
@@ -6283,9 +7133,15 @@ final class DesktopCodexStore: ObservableObject {
                     "cwd": thread.cwd,
                     "approvalPolicy": deliveryAccessMode.approvalPolicyValue,
                     "sandbox": deliveryAccessMode.sandboxValue,
+                    "dynamicTools": appServer0153.dynamicToolSpecs,
                 ]
+                if capabilities.supports(.historyRevert) { startParams["historyMode"] = "paginated" }
                 if let deliveryModel { startParams["model"] = deliveryModel }
+                if let deliveryProvider = modelProviderID(for: deliveryModel) {
+                    startParams["modelProvider"] = deliveryProvider
+                }
                 if let deliveryTier { startParams["serviceTier"] = deliveryTier }
+                if selectedModel?.supportsPersonality == true { startParams["personality"] = selectedPersonality }
                 let response = try await client.request(
                     method: "thread/start",
                     params: startParams
@@ -6295,6 +7151,9 @@ final class DesktopCodexStore: ObservableObject {
                     throw CodexAppServerClientError.malformedResponse("thread/start")
                 }
                 runtimeID = createdRuntimeID
+                historyModeByThreadID[uiThreadID] = started.string("historyMode")
+                if selectedThreadID == uiThreadID { appServer0153.selectRuntimeThread(runtimeID) }
+                appServer0153.markDynamicToolsEnabled(uiThreadID: uiThreadID)
                 try await threadStore.setCodexThreadID(veoID: uiThreadID, codexThreadID: runtimeID)
                 thread.codexThreadId = runtimeID
                 replaceThread(thread)
@@ -6335,6 +7194,9 @@ final class DesktopCodexStore: ObservableObject {
                 "sandboxPolicy": deliveryAccessMode.sandboxPolicy(workspacePath: targetWorkspacePath),
             ]
             if let deliveryModel { turnParams["model"] = deliveryModel }
+            if let deliveryProvider = modelProviderID(for: deliveryModel) {
+                turnParams["modelProvider"] = deliveryProvider
+            }
             if let deliveryEffort { turnParams["effort"] = deliveryEffort }
             if let deliveryTier { turnParams["serviceTier"] = deliveryTier }
             if let collaborationMode = collaborationModePayload(
@@ -6346,6 +7208,18 @@ final class DesktopCodexStore: ObservableObject {
             ) {
                 turnParams["collaborationMode"] = collaborationMode
             }
+            var workspaceCheckpoint: DesktopWorkspaceCheckpoint?
+            if capabilities.supports(.historyRevert), historyModeByThreadID[uiThreadID] == "paginated",
+               DesktopProjectPreferences.shared.configuration(for: targetWorkspacePath).checkpointsEnabled != false {
+                if (try? await gitService.repositorySnapshot(for: URL(fileURLWithPath: targetWorkspacePath))) != nil {
+                    do {
+                        workspaceCheckpoint = try await gitService.captureCheckpoint(workspace: URL(fileURLWithPath: targetWorkspacePath), threadID: uiThreadID, payloadID: payload.id)
+                        if let workspaceCheckpoint { DesktopCheckpointLibrary.shared.save(workspaceCheckpoint) }
+                    } catch {
+                        if selectedThreadID == uiThreadID { gitMessage = "Workspace checkpoint unavailable: \(error.localizedDescription)" }
+                    }
+                }
+            }
             let response = try await client.request(
                 method: "turn/start",
                 params: turnParams
@@ -6355,6 +7229,10 @@ final class DesktopCodexStore: ObservableObject {
             }
             let startedTurnID = (response["turn"] as? [String: Any])?.string("id")
             if let turnID = startedTurnID {
+                if var checkpoint = workspaceCheckpoint {
+                    checkpoint.turnID = turnID
+                    DesktopCheckpointLibrary.shared.save(checkpoint)
+                }
                 activeTurnIDByThread[uiThreadID] = turnID
                 payloadByTurnID[turnID] = payload
                 if selectedThreadID == uiThreadID {
@@ -6552,6 +7430,85 @@ final class DesktopCodexStore: ObservableObject {
         persistInteractionSnapshot()
     }
 
+    private func enqueueOnServer(
+        _ payload: DesktopComposerPayload,
+        uiThreadID: String,
+        runtimeThreadID: String
+    ) async {
+        do {
+            _ = try await appServer0153.addServerQueue(
+                payload, runtimeThreadID: runtimeThreadID, uiThreadID: uiThreadID
+            )
+            serverQueueManagedClientIDs.insert(payload.id)
+            serverQueueUncertainClientIDs.remove(payload.id)
+            if activeTurnIDByThread[uiThreadID] == nil { await flushNextQueuedDraft(threadID: uiThreadID) }
+        } catch {
+            capabilities = client.capabilities
+            if !client.capabilities.supports(.serverQueue) {
+                // Unsupported runtimes retain the durable local queue and use the existing
+                // one-at-a-time turn/start fallback after the current turn completes.
+                serverQueueManagedClientIDs.remove(payload.id)
+                serverQueueUncertainClientIDs.remove(payload.id)
+                return
+            }
+            serverQueueUncertainClientIDs.insert(payload.id)
+            await reconcileQueueAfterUncertainMutation(
+                uiThreadID: uiThreadID, runtimeThreadID: runtimeThreadID,
+                message: error.localizedDescription
+            )
+        }
+    }
+
+    private func reconcileQueueAfterUncertainMutation(
+        uiThreadID: String,
+        runtimeThreadID: String,
+        message: String
+    ) async {
+        do {
+            let links = try await appServer0153.reconcileServerQueue(
+                runtimeThreadID: runtimeThreadID, uiThreadID: uiThreadID
+            )
+            applyReconciledServerQueueLinks(links, uiThreadID: uiThreadID)
+            if selectedThreadID == uiThreadID {
+                transientError = "Queue state was refreshed after an uncertain response. Review it before retrying."
+            }
+        } catch {
+            if selectedThreadID == uiThreadID {
+                transientError = "Queue change is uncertain and will not be replayed automatically: \(message)"
+            }
+        }
+    }
+
+    private func applyReconciledServerQueueLinks(
+        _ links: [DesktopServerQueueLink],
+        uiThreadID: String
+    ) {
+        let serverClientIDs = Set(links.map(\.clientUserMessageID))
+        let locallyManaged = Set((queuedDraftsByThreadID[uiThreadID] ?? []).map(\.id))
+            .intersection(serverQueueManagedClientIDs)
+        for deliveredID in locallyManaged.subtracting(serverClientIDs)
+            where !serverQueueUncertainClientIDs.contains(deliveredID) {
+            removeQueuedDraft(deliveredID, queueKey: uiThreadID)
+            serverQueueManagedClientIDs.remove(deliveredID)
+        }
+        var local = queuedDraftsByThreadID[uiThreadID] ?? []
+        let ordered = links.map { link -> DesktopComposerPayload in
+            let input = link.input
+            var payload = local.first { $0.id == link.clientUserMessageID }
+                ?? DesktopComposerPayload(id: link.clientUserMessageID, text: "")
+            if !input.isEmpty {
+                payload.text = input.filter { $0.string("type") == "text" }.compactMap { $0.string("text") }.joined(separator: "\n")
+                payload.attachments = input.compactMap(DesktopComposerAttachment.parse)
+            }
+            return payload
+        }
+        local.removeAll { serverClientIDs.contains($0.id) }
+        queuedDraftsByThreadID[uiThreadID] = ordered + local
+        serverQueueManagedClientIDs.formUnion(serverClientIDs)
+        serverQueueUncertainClientIDs.subtract(serverClientIDs)
+        persistInteractionSnapshot()
+    }
+
     private func removeQueuedDraft(_ id: String, queueKey: String) {
         guard var queue = queuedDraftsByThreadID[queueKey] else { return }
         queue.removeAll(where: { $0.id == id })
@@ -6582,11 +7539,39 @@ final class DesktopCodexStore: ObservableObject {
     }
 
     private func flushNextQueuedDraft(threadID: String) async {
+        guard !historyRevertInFlight else { return }
         guard activeTurnIDByThread[threadID] == nil,
               !queuedDispatchingThreadIDs.contains(threadID),
               let payload = queuedDraftsByThreadID[threadID]?.first else { return }
         queuedDispatchingThreadIDs.insert(threadID)
         defer { queuedDispatchingThreadIDs.remove(threadID) }
+        guard !queuedDeliveryInFlightIDs.contains(payload.id) else { return }
+        if serverQueueUncertainClientIDs.contains(payload.id) {
+            guard let runtimeID = runtimeThreadID(forUIThreadID: threadID) else { return }
+            await reconcileQueueAfterUncertainMutation(
+                uiThreadID: threadID, runtimeThreadID: runtimeID,
+                message: "Previous queue mutation did not return a definitive result."
+            )
+            return
+        }
+        if serverQueueManagedClientIDs.contains(payload.id)
+            || appServer0153.serverQueueID(clientID: payload.id, uiThreadID: threadID) != nil {
+            guard let runtimeID = runtimeThreadID(forUIThreadID: threadID) else { return }
+            do {
+                try await appServer0153.startServerQueue(
+                    clientID: payload.id, runtimeThreadID: runtimeID, uiThreadID: threadID
+                )
+                removeQueuedDraft(payload.id, queueKey: threadID)
+                serverQueueManagedClientIDs.remove(payload.id)
+                serverQueueUncertainClientIDs.remove(payload.id)
+            } catch {
+                await reconcileQueueAfterUncertainMutation(
+                    uiThreadID: threadID, runtimeThreadID: runtimeID,
+                    message: error.localizedDescription
+                )
+            }
+            return
+        }
         if selectedThreadID == threadID {
             isSubmittingTurn = true
         }
@@ -6659,6 +7644,11 @@ final class DesktopCodexStore: ObservableObject {
             return status.contains("progress") || status.contains("active") || status.contains("running")
         })
         guard let resolvedTurnID = runningTurn?.string("id") else {
+            let threadStatus = thread?.displayString("status")?.lowercased() ?? ""
+            if threadStatus.contains("active") || threadStatus.contains("running") || threadStatus.contains("progress") {
+                if selectedThreadID == threadID { isRunningTurn = true }
+                return nil
+            }
             activeTurnIDByThread.removeValue(forKey: threadID)
             if selectedThreadID == threadID {
                 activeTurnID = nil
@@ -6755,10 +7745,20 @@ final class DesktopCodexStore: ObservableObject {
 
     private func updateActiveThreadSettings() {
         guard runtimeState.isReady, let threadID = selectedThreadID else { return }
-        Task { await applyActiveThreadSettings(threadID: threadID) }
+        pendingSettingsThreadID = threadID
+        guard !settingsUpdateInFlight else { return }
+        settingsUpdateInFlight = true
+        Task {
+            while let nextThreadID = pendingSettingsThreadID {
+                pendingSettingsThreadID = nil
+                await applyActiveThreadSettings(threadID: nextThreadID)
+            }
+            settingsUpdateInFlight = false
+        }
     }
 
     private func applyActiveThreadSettings(threadID: String) async {
+        guard selectedThreadID == threadID else { return }
         guard capabilities.supports(.collaborationModes) else { return }
         guard let runtimeID = runtimeThreadID(forUIThreadID: threadID) else { return }
         let route = effectiveSelectedRoute
@@ -6767,16 +7767,32 @@ final class DesktopCodexStore: ObservableObject {
             "serviceTier": route?.serviceTier ?? NSNull(),
         ]
         if let model = route?.model { params["model"] = model }
+        if let provider = modelProviderID(for: route?.model) { params["modelProvider"] = provider }
         if let effort = route?.effort { params["effort"] = effort }
         if let collaborationMode = collaborationModePayload() {
             params["collaborationMode"] = collaborationMode
         }
+        if selectedModel?.supportsPersonality == true { params["personality"] = selectedPersonality }
 
         do {
             _ = try await client.request(
                 method: "thread/settings/update",
                 params: params,
                 requiring: .collaborationModes
+            )
+            guard selectedThreadID == threadID, isBusyTurn else { return }
+            let selectedRoute = effectiveSelectedRoute
+            appServer0153.scheduleLiveSettings(
+                uiThreadID: threadID,
+                runtimeThreadID: runtimeID,
+                resolveTurnID: { [weak self] in
+                    guard let self else { return nil }
+                    return try await self.resolveActiveTurnID(threadID: threadID)
+                },
+                model: selectedRoute?.model,
+                effort: selectedRoute?.effort,
+                serviceTier: selectedRoute?.serviceTier,
+                supported: capabilities.supports(.liveTurnSettings)
             )
         } catch {
             transientError = error.localizedDescription
@@ -7234,6 +8250,24 @@ final class DesktopCodexStore: ObservableObject {
         recordRuntimeNotice(method: method, severity: kind == .error ? .error : .info, title: title, detail: body)
     }
 
+    private func appendApprovalReviewTimeline(
+        method: String,
+        params: [String: Any],
+        uiThreadID: String
+    ) {
+        let reviewID = params.string("reviewId") ?? "strict-\(params.string("turnId") ?? UUID().uuidString)"
+        guard let review = appServer0153.approvalReviewsByThreadID[uiThreadID]?.first(where: { $0.id == reviewID }) else { return }
+        let body = [review.actionSummary, review.riskLevel.map { "Risk: \($0)" }, review.rationale]
+            .compactMap { $0 }.joined(separator: "\n")
+        let item = DesktopTimelineItem(
+            id: "approval-review-\(review.id)", turnID: review.turnID, kind: .activity,
+            title: review.phase == .reviewing ? "Approval review" : review.status,
+            body: body, status: review.phase == .reviewing ? "inProgress" : "completed"
+        )
+        if let index = timeline.firstIndex(where: { $0.id == item.id }) { timeline[index] = item }
+        else { timeline.append(item) }
+    }
+
     private func handle(_ event: [String: Any], route: CodexAppServerRoute) {
         guard let method = event.string("method"),
               let params = event["params"] as? [String: Any] else { return }
@@ -7259,7 +8293,45 @@ final class DesktopCodexStore: ObservableObject {
             return
         }
         if method.hasPrefix("thread/realtime/") {
+            if let runtimeID = route.threadID ?? params.string("threadId") {
+                let uiID = uiThreadID(forRuntimeThreadID: runtimeID)
+                appServer0153.handleRealtimeEvent(
+                    method: method, params: params,
+                    uiThreadID: uiID
+                )
+                if method.hasPrefix("thread/realtime/item/") {
+                    upsertRealtimeTimelineItem(uiThreadID: uiID, params: params)
+                }
+            }
             handleRealtimeEvent(method: method, params: params)
+            return
+        }
+        if method == "item/autoApprovalReview/started"
+            || method == "item/autoApprovalReview/completed"
+            || method == "autoApprovalReview/strictReviewRequired" {
+            if let runtimeID = route.threadID ?? params.string("threadId") {
+                let uiID = uiThreadID(forRuntimeThreadID: runtimeID)
+                appServer0153.handleApprovalEvent(method: method, params: params, uiThreadID: uiID)
+                if uiID == selectedThreadID { appendApprovalReviewTimeline(method: method, params: params, uiThreadID: uiID) }
+            }
+            return
+        }
+        if method == "thread/queue/changed", let runtimeID = route.threadID ?? params.string("threadId") {
+            let uiID = uiThreadID(forRuntimeThreadID: runtimeID)
+            Task {
+                if let links = try? await appServer0153.reconcileServerQueue(runtimeThreadID: runtimeID, uiThreadID: uiID) {
+                    applyReconciledServerQueueLinks(links, uiThreadID: uiID)
+                }
+            }
+            return
+        }
+        if method == "externalAgentConfig/import/progress" || method == "externalAgentConfig/import/completed" {
+            appServer0153.handleIntegrationNotification(method: method, params: params)
+            return
+        }
+        if method == "thread/reverted", let runtimeID = route.threadID ?? params.string("threadId"),
+           uiThreadID(forRuntimeThreadID: runtimeID) == selectedThreadID, !historyRevertInFlight {
+            Task { await reloadSelectedHistoryAfterRevert() }
             return
         }
         if method == "skills/changed" {
@@ -7286,10 +8358,16 @@ final class DesktopCodexStore: ObservableObject {
             return
         }
         if method == "account/rateLimits/updated" {
-            Task {
-                await loadAccountResources()
-                dispatchDueAutoContinuations()
+            if let limits = params["rateLimits"] as? [String: Any] {
+                let primary = limits["primary"] as? [String: Any]
+                let secondary = limits["secondary"] as? [String: Any]
+                accountOverview.primaryUsedPercent = primary?.number("usedPercent").map(Int.init)
+                accountOverview.secondaryUsedPercent = secondary?.number("usedPercent").map(Int.init)
+                accountOverview.primaryResetsAt = primary?.number("resetsAt").map(Date.init(timeIntervalSince1970:))
+                accountOverview.secondaryResetsAt = secondary?.number("resetsAt").map(Date.init(timeIntervalSince1970:))
+                updateWaitingAutoContinuationResetDates(Self.applicableResetDate(accountOverview))
             }
+            dispatchDueAutoContinuations()
             return
         }
         if ["warning", "configWarning", "guardianWarning", "deprecationNotice"].contains(method) {
@@ -7309,7 +8387,12 @@ final class DesktopCodexStore: ObservableObject {
             return
         }
         if method == "app/list/updated" {
-            Task { await loadAccountResources() }
+            // This is the result of an app listing refresh, not a request to list
+            // every integration again. The active listing owns its current snapshot.
+            if !isLoadingAccountResources,
+               let apps = params["data"] as? [[String: Any]] {
+                appRecords = apps.compactMap(DesktopAppRecord.parse)
+            }
             return
         }
         if method == "mcpServer/startupStatus/updated"
@@ -7325,6 +8408,11 @@ final class DesktopCodexStore: ObservableObject {
 
         let runtimeEventThreadID = route.threadID ?? params.string("threadId")
         let eventThreadID = runtimeEventThreadID.map { uiThreadID(forRuntimeThreadID: $0) }
+        if let eventThreadID, ["item/started", "item/completed"].contains(method),
+           let item = params["item"] as? [String: Any], let itemID = item.string("id") {
+            asyncQuestions.ingest(threadID: eventThreadID, itemID: itemID,
+                                  questions: DesktopAsyncQuestion.parseAgentMessage(item))
+        }
         if ["item/completed", "turn/completed", "thread/closed", "error"].contains(method) {
             // Item/turn terminal events contain authoritative snapshots. Commit every
             // buffered delta first so reconciliation never overwrites a newer chunk.
@@ -7505,6 +8593,7 @@ final class DesktopCodexStore: ObservableObject {
                 activeTurnID = nil
                 isSubmittingTurn = false
                 isRunningTurn = false
+                applyPendingOverlayReloadIfNeeded()
             }
             if let eventThreadID {
                 synchronizeCompletedPlanArtifacts(threadID: eventThreadID)
@@ -7828,6 +8917,7 @@ final class DesktopCodexStore: ObservableObject {
         with incoming: DesktopTimelineItem
     ) -> DesktopTimelineItem {
         var merged = incoming
+        if merged.asyncQuestions.isEmpty { merged.asyncQuestions = existing.asyncQuestions }
         if merged.clientID == nil { merged.clientID = existing.clientID }
         if merged.body.isEmpty
             || (merged.kind == .command && merged.body.hasPrefix("Running in ")) {
@@ -7903,6 +8993,30 @@ final class DesktopCodexStore: ObservableObject {
             realtimeTranscript = ""
         default:
             break
+        }
+    }
+
+    private func upsertRealtimeTimelineItem(uiThreadID: String, params: [String: Any]) {
+        guard selectedThreadID == uiThreadID else { return }
+        let source = params["item"] as? [String: Any]
+        let itemID = source?.string("id") ?? params.string("itemId")
+        guard let itemID,
+              let transcript = appServer0153.realtimeItemsByThreadID[uiThreadID]?.first(where: { $0.id == itemID }) else { return }
+        let item = DesktopTimelineItem(
+            id: "realtime-\(itemID)", turnID: nil,
+            kind: transcript.role == "user" ? .user : .assistant,
+            title: transcript.role == "user" ? "You · Voice" : "Codex · Voice",
+            body: transcript.text, status: transcript.isComplete ? "completed" : "inProgress"
+        )
+        if let index = timeline.firstIndex(where: { $0.id == item.id }) { timeline[index] = item }
+        else { timeline.append(item) }
+        if DesktopThreadSelection.parse(uiThreadID).origin == .veo, transcript.isComplete {
+            persistVeoItemJSON([
+                "id": item.id,
+                "type": transcript.role == "user" ? "userMessage" : "agentMessage",
+                "text": transcript.text,
+                "status": "completed",
+            ], veoID: uiThreadID, turnID: nil)
         }
     }
 

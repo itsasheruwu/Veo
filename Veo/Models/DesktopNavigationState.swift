@@ -15,6 +15,8 @@ enum DesktopSettingsAnchor: Hashable {
 
 enum DesktopSettingsCategory: String, CaseIterable, Identifiable {
     case general
+    case keyboard
+    case projects
     case appearance
     case notifications
     case terminal
@@ -28,6 +30,8 @@ enum DesktopSettingsCategory: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
+        case .keyboard: return "Keyboard Shortcuts"
+        case .projects: return "Projects"
         case .general: return "General"
         case .appearance: return "Appearance"
         case .notifications: return "Notifications"
@@ -42,6 +46,8 @@ enum DesktopSettingsCategory: String, CaseIterable, Identifiable {
 
     var detail: String {
         switch self {
+        case .keyboard: return "Commands and project actions"
+        case .projects: return "Actions and new chat defaults"
         case .general: return "Project, access, and utility model"
         case .appearance: return "Theme, accent, and materials"
         case .notifications: return "Alerts, menu bar, and sounds"
@@ -56,6 +62,8 @@ enum DesktopSettingsCategory: String, CaseIterable, Identifiable {
 
     var systemImage: String {
         switch self {
+        case .keyboard: return "keyboard"
+        case .projects: return "folder.badge.gearshape"
         case .general: return "gearshape"
         case .appearance: return "paintbrush"
         case .notifications: return "bell"

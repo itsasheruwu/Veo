@@ -5,10 +5,28 @@
 import SwiftUI
 
 struct DesktopComposerOptionsView: View {
-    @ObservedObject var store: DesktopCodexStore
+    @Bindable var store: DesktopCodexStore
     let openProject: () -> Void
+    @State private var showsSavedPrompts = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
+        Group {
+            if showsSavedPrompts {
+                DesktopPromptLibraryView(store: store) { showsSavedPrompts = false }
+            } else {
+                options
+            }
+        }
+        .padding(12)
+        .frame(width: 326)
+        .background(.regularMaterial)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: showsSavedPrompts)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(showsSavedPrompts ? "Saved prompts" : "Composer options")
+    }
+
+    private var options: some View {
         VStack(alignment: .leading, spacing: 10) {
             if !store.hasExplicitWorkspace {
                 Button(action: openProject) {
@@ -53,6 +71,17 @@ struct DesktopComposerOptionsView: View {
                 Divider()
             }
 
+            Button { store.stashPrompt() } label: {
+                optionLabel(title: "Save draft for later", detail: "Keep this prompt and its attachments.", systemImage: "tray.and.arrow.down", color: .secondary)
+            }
+            .buttonStyle(.plain)
+            .disabled(store.isSavingPrompt || store.draft.isEmpty && store.attachments.isEmpty)
+            Button { showsSavedPrompts = true } label: {
+                optionLabel(title: "Saved prompts", detail: "Restore a prompt into this draft.", systemImage: "tray", color: .secondary)
+            }
+            .buttonStyle(.plain)
+            Divider()
+
             Text("Mode")
                 .font(.system(size: 10.5, weight: .semibold))
                 .foregroundStyle(.secondary)
@@ -85,11 +114,6 @@ struct DesktopComposerOptionsView: View {
             .disabled(!store.hasExplicitWorkspace)
             .help("Keep working toward a persistent goal")
         }
-        .padding(12)
-        .frame(width: 326)
-        .background(.regularMaterial)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Composer options")
     }
 
     private var goalDetail: String {
@@ -213,7 +237,7 @@ struct DesktopComposerOptionsView: View {
 }
 
 struct DesktopComposerModePills: View {
-    @ObservedObject var store: DesktopCodexStore
+    @Bindable var store: DesktopCodexStore
 
     var body: some View {
         HStack(spacing: 6) {

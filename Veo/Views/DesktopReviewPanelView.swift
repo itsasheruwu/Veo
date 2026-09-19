@@ -11,7 +11,7 @@ struct DesktopReviewPanelView: View {
         var id: String { "\(file.id.id):\(mode.rawValue)" }
     }
 
-    @ObservedObject var store: DesktopCodexStore
+    @Bindable var store: DesktopCodexStore
     @Binding var presentsAIReview: Bool
     @AppStorage(DesktopUtilityPreferences.reviewLayoutKey) private var layoutRaw = DesktopReviewLayout.unified.rawValue
     @AppStorage(DesktopUtilityPreferences.hideWhitespaceKey) private var hidesWhitespace = false
@@ -20,6 +20,8 @@ struct DesktopReviewPanelView: View {
     @State private var selectedCommitFileIDs = Set<DesktopGitFileID>()
     @State private var branchName = ""
     @State private var showsRepositoryActions = false
+    @State private var showsPullRequests = false
+    @State private var showsCheckpoints = false
     @State private var discardPrompt: DiscardPrompt?
 
     private var layout: DesktopReviewLayout {
@@ -70,6 +72,12 @@ struct DesktopReviewPanelView: View {
             if showsRepositoryActions, let repository = store.gitRepository {
                 Divider()
                 repositoryActions(repository)
+            }
+        }
+        .sheet(isPresented: $showsCheckpoints) { DesktopCheckpointsView(store: store) }
+        .sheet(isPresented: $showsPullRequests) {
+            if let threadID = store.selectedThreadID, let repository = store.gitRepository {
+                DesktopPullRequestsView(threadID: threadID, repository: repository)
             }
         }
         .onAppear {
@@ -139,6 +147,15 @@ struct DesktopReviewPanelView: View {
             }
             .help("AI Review")
             .disabled(store.isBusyTurn)
+
+            Button { showsCheckpoints = true } label: { Image(systemName: "clock.arrow.circlepath") }
+                .help("Workspace checkpoints and recovery")
+                .disabled(store.gitRepository == nil)
+            Button { showsPullRequests = true } label: {
+                Image(systemName: "arrow.triangle.pull")
+            }
+            .help("Linked pull requests")
+            .disabled(store.gitRepository == nil || store.selectedThreadID == nil)
 
             Button {
                 showsRepositoryActions.toggle()
@@ -286,6 +303,11 @@ struct DesktopReviewPanelView: View {
                                 ) {
                                     store.applyGitHunk(.init(fileDiffID: file.id, hunkID: hunk.id))
                                 }
+                                DesktopDiffCommentEditor(path: file.path, side: file.side, hunk: hunk) { comment in
+                                    store.appendContextToDraft(comment)
+                                }
+                                .id(file.id.id + ":" + hunk.id)
+
                             }
                         }
                     }
@@ -645,7 +667,7 @@ private struct DesktopIntralineDiffText: View {
 }
 
 private struct DesktopInlineReviewCard: View {
-    @ObservedObject var store: DesktopCodexStore
+    @Bindable var store: DesktopCodexStore
     let close: () -> Void
     @State private var request = DesktopReviewRequest()
 

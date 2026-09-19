@@ -14,10 +14,13 @@ struct MarkdownMessageView: View {
     let workspaceURL: URL?
     var isStreaming = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @AppStorage(DesktopAppearancePreferences.textStreamingModeKey) private var streamingModeRaw =
+        DesktopTextStreamingMode.token.rawValue
     @State private var blockedURLMessage: String?
     @State private var displayedCharacterCount = 0
     @State private var targetCharacterCount = 0
     @State private var previousSource = ""
+    @State private var completedParagraphSource = ""
     @State private var revealTask: Task<Void, Never>?
 
     init(
@@ -37,20 +40,28 @@ struct MarkdownMessageView: View {
     }
 
     var body: some View {
-        let blocks = MarkdownBlock.parse(renderedSource)
+        let blocks = DesktopMarkdownRenderCache.blocks(for: renderedSource)
         VStack(alignment: .leading, spacing: 10) {
+            if isStreaming, blocks.isEmpty {
+                Text("Writing…")
+                    .font(.system(size: fontSize))
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("Generating response")
+            }
+
             ForEach(Array(blocks.enumerated()), id: \.element.id) { index, block in
                 switch block.kind {
                 case .prose:
+                    let attributed = Self.inlineAttributed(block.text)
                     if shouldAnimateTextStream, index == blocks.count - 1 {
                         TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: false)) { context in
                             proseText(
-                                block.text,
+                                attributed,
                                 cursorOpacity: Self.cursorOpacity(at: context.date)
                             )
                         }
                     } else {
-                        proseText(block.text)
+                        proseText(attributed)
                     }
                 case .code:
                     if block.language?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "mermaid",
@@ -66,12 +77,14 @@ struct MarkdownMessageView: View {
                 DesktopStreamingTextCursor()
             }
 
-            SafeToolArtifactListView(
-                artifacts: artifacts,
-                workspaceURL: workspaceURL,
-                blockedURL: { blockedURLMessage = $0 }
-            )
-            SafeCitationListView(citations: citations, workspaceURL: workspaceURL)
+            if !isStreaming || streamingMode != .none {
+                SafeToolArtifactListView(
+                    artifacts: artifacts,
+                    workspaceURL: workspaceURL,
+                    blockedURL: { blockedURLMessage = $0 }
+                )
+                SafeCitationListView(citations: citations, workspaceURL: workspaceURL)
+            }
 
             if let blockedURLMessage {
                 Label(blockedURLMessage, systemImage: "hand.raised.fill")
@@ -100,22 +113,38 @@ struct MarkdownMessageView: View {
         .onChange(of: reduceMotion) { _, _ in
             updateStreamingState()
         }
+        .onChange(of: streamingModeRaw) { _, _ in
+            prepareInitialReveal()
+        }
         .onDisappear {
             revealTask?.cancel()
             revealTask = nil
         }
     }
 
+    private var streamingMode: DesktopTextStreamingMode {
+        DesktopTextStreamingMode(rawValue: streamingModeRaw) ?? .token
+    }
+
+    private var usesTokenReveal: Bool {
+        isStreaming && streamingMode == .token && !reduceMotion
+    }
+
     private var shouldAnimateTextStream: Bool {
-        isStreaming && !reduceMotion && !renderedSource.isEmpty
+        isStreaming && streamingMode != .none && !reduceMotion && !renderedSource.isEmpty
     }
 
     private var renderedSource: String {
-        guard isStreaming, !reduceMotion else { return source }
-        return String(source.prefix(min(displayedCharacterCount, source.count)))
+        guard isStreaming else { return source }
+        switch streamingMode {
+        case .none: return ""
+        case .paragraph: return completedParagraphSource
+        case .token:
+            return reduceMotion ? source : String(source.prefix(displayedCharacterCount))
+        }
     }
 
-    private func proseText(_ source: String, cursorOpacity: Double? = nil) -> some View {
+    private func proseText(_ source: AttributedString, cursorOpacity: Double? = nil) -> some View {
         Text(attributedProse(source, cursorOpacity: cursorOpacity))
             .font(.system(size: fontSize))
             .lineSpacing(3)
@@ -123,8 +152,8 @@ struct MarkdownMessageView: View {
             .fixedSize(horizontal: false, vertical: true)
     }
 
-    private func attributedProse(_ source: String, cursorOpacity: Double?) -> AttributedString {
-        var attributed = Self.inlineAttributed(source)
+    private func attributedProse(_ source: AttributedString, cursorOpacity: Double?) -> AttributedString {
+        var attributed = source
         if let cursorOpacity {
             var cursor = AttributedString(" ▍")
             cursor.foregroundColor = Color.primary.opacity(cursorOpacity)
@@ -134,9 +163,12 @@ struct MarkdownMessageView: View {
     }
 
     private func prepareInitialReveal() {
+        revealTask?.cancel()
+        revealTask = nil
+        updateParagraphPresentation(source)
         previousSource = source
         targetCharacterCount = source.count
-        guard isStreaming, !reduceMotion else {
+        guard usesTokenReveal else {
             displayedCharacterCount = source.count
             return
         }
@@ -148,11 +180,12 @@ struct MarkdownMessageView: View {
     }
 
     private func receiveStreamUpdate(_ updatedSource: String) {
+        updateParagraphPresentation(updatedSource)
         let isAppend = updatedSource.hasPrefix(previousSource)
         previousSource = updatedSource
         targetCharacterCount = updatedSource.count
 
-        guard isStreaming, !reduceMotion else {
+        guard usesTokenReveal else {
             displayedCharacterCount = updatedSource.count
             return
         }
@@ -169,9 +202,10 @@ struct MarkdownMessageView: View {
     }
 
     private func updateStreamingState() {
+        updateParagraphPresentation(source)
         targetCharacterCount = source.count
         previousSource = source
-        guard isStreaming, !reduceMotion else {
+        guard usesTokenReveal else {
             revealTask?.cancel()
             revealTask = nil
             displayedCharacterCount = source.count
@@ -181,16 +215,22 @@ struct MarkdownMessageView: View {
         startRevealLoopIfNeeded()
     }
 
+    private func updateParagraphPresentation(_ source: String) {
+        guard isStreaming, streamingMode == .paragraph else {
+            completedParagraphSource = ""
+            return
+        }
+        completedParagraphSource = DesktopParagraphStreaming.completedPrefix(in: source)
+    }
+
     private func startRevealLoopIfNeeded() {
         guard revealTask == nil,
-              isStreaming,
-              !reduceMotion,
+              usesTokenReveal,
               displayedCharacterCount < targetCharacterCount else { return }
 
         revealTask = Task { @MainActor in
             while !Task.isCancelled,
-                  isStreaming,
-                  !reduceMotion,
+                  usesTokenReveal,
                   displayedCharacterCount < targetCharacterCount {
                 let remaining = targetCharacterCount - displayedCharacterCount
                 displayedCharacterCount += min(max(1, remaining / 6), 10)
@@ -198,7 +238,7 @@ struct MarkdownMessageView: View {
             }
             if !Task.isCancelled {
                 revealTask = nil
-                if isStreaming, !reduceMotion, displayedCharacterCount < targetCharacterCount {
+                if usesTokenReveal, displayedCharacterCount < targetCharacterCount {
                     startRevealLoopIfNeeded()
                 }
             }
@@ -215,13 +255,7 @@ struct MarkdownMessageView: View {
     /// `AttributedString(markdown:)` defaults to full block parsing, which throws away
     /// paragraph breaks when flattened into a single run. Inline-only keeps the whitespace.
     static func inlineAttributed(_ source: String) -> AttributedString {
-        let options = AttributedString.MarkdownParsingOptions(
-            allowsExtendedAttributes: true,
-            interpretedSyntax: .inlineOnlyPreservingWhitespace,
-            failurePolicy: .returnPartiallyParsedIfPossible
-        )
-        return (try? AttributedString(markdown: source, options: options))
-            ?? AttributedString(source)
+        DesktopMarkdownRenderCache.inlineAttributed(source)
     }
 }
 

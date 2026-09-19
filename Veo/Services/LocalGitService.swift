@@ -1209,6 +1209,158 @@ actor LocalGitService {
         return (try? fileManager.attributesOfItem(atPath: url.path)) != nil
     }
 
+    func worktrees(at workspace: URL) throws -> [DesktopWorktree] {
+        let output = try runRequired(["-C", workspace.path, "worktree", "list", "--porcelain", "-z"], operation: "listing worktrees").stdout
+        var result: [DesktopWorktree] = []
+        var path: String?
+        var branch: String?
+        for field in output.split(separator: 0, omittingEmptySubsequences: false) {
+            let value = String(decoding: field, as: UTF8.self)
+            if value.isEmpty {
+                if let path { result.append(.init(path: path, branch: branch)) }
+                path = nil; branch = nil
+            } else if value.hasPrefix("worktree ") { path = String(value.dropFirst(9)) }
+            else if value.hasPrefix("branch refs/heads/") { branch = String(value.dropFirst(18)) }
+        }
+        if let path { result.append(.init(path: path, branch: branch)) }
+        return result
+    }
+
+    func worktreeBaseBranches(at workspace: URL) throws -> [String] {
+        let text = try requiredText(["-C", workspace.path, "for-each-ref", "--format=%(refname:short)", "refs/heads", "refs/remotes"], operation: "listing branches")
+        return text.split(separator: "\n").map(String.init).filter { !$0.hasSuffix("/HEAD") }
+    }
+
+    func createWorktree(at destination: URL, branch: String, base: String, repository: DesktopGitRepositorySnapshot) throws -> DesktopWorktree {
+        let before = try validatedContext(repository)
+        guard !before.snapshot.isUnborn else { throw DesktopGitError.unbornHead }
+        guard !branch.hasPrefix("-"), !base.hasPrefix("-"), !branch.isEmpty, !base.isEmpty else { throw DesktopGitError.invalidBranchName(branch) }
+        let validatedName = try requiredText(["check-ref-format", "--branch", branch], operation: "validating branch")
+        guard validatedName == branch else { throw DesktopGitError.invalidBranchName(branch) }
+        let commit = try requiredText(["-C", repository.rootPath, "rev-parse", "--verify", "--end-of-options", base + "^{commit}"], operation: "resolving the base branch")
+        guard !fileManager.fileExists(atPath: destination.path) else { throw DesktopGitError.gitLaunchFailed("Choose a new folder for the worktree.") }
+        try runRequired(["-C", repository.rootPath, "worktree", "add", "-b", branch, "--", destination.path, commit], operation: "creating the worktree")
+        let listed = try worktrees(at: URL(fileURLWithPath: repository.rootPath))
+        guard let created = listed.first(where: { URL(fileURLWithPath: $0.path).standardizedFileURL == destination.standardizedFileURL }) else {
+            throw DesktopGitError.gitLaunchFailed("Git created the worktree but it could not be verified. Refresh the worktree list before retrying.")
+        }
+        return created
+    }
+
+    func captureCheckpoint(workspace: URL, threadID: String, payloadID: String) throws -> DesktopWorkspaceCheckpoint {
+        let before = try loadContext(for: workspace)
+        guard let head = before.snapshot.headObjectID, before.snapshot.canMutate else {
+            throw DesktopGitError.gitLaunchFailed("Checkpoints need an existing commit and a repository without conflicts or an active Git operation.")
+        }
+        let root = before.snapshot.rootPath
+        let stages = try requiredText(["--literal-pathspecs", "-C", root, "ls-files", "--stage", "--", before.snapshot.workspaceRelativePath ?? "."], operation: "checking checkpoint eligibility")
+        guard !stages.split(separator: "\n").contains(where: { $0.hasPrefix("160000 ") }) else {
+            throw DesktopGitError.gitLaunchFailed("Checkpoints are unavailable for workspaces containing submodules.")
+        }
+        let indexTree = try requiredText(["-C", root, "write-tree"], operation: "capturing staged state")
+        let temporaryIndex = fileManager.temporaryDirectory.appendingPathComponent("veo-checkpoint-index-" + UUID().uuidString)
+        defer {
+            try? fileManager.removeItem(at: temporaryIndex)
+            try? fileManager.removeItem(atPath: temporaryIndex.path + ".lock")
+        }
+        for arguments in [
+            ["-C", root, "read-tree", indexTree],
+            ["--literal-pathspecs", "-C", root, "add", "--all", "--", before.snapshot.workspaceRelativePath ?? "."]
+        ] {
+            let result = try runGit(arguments, temporaryIndex: temporaryIndex)
+            guard result.status == 0 else { throw commandFailure(result, operation: "capturing workspace files") }
+        }
+        let treeResult = try runGit(["-C", root, "write-tree"], temporaryIndex: temporaryIndex)
+        guard treeResult.status == 0 else { throw commandFailure(treeResult, operation: "capturing workspace tree") }
+        let filesTree = try requiredString(treeResult.stdout, context: "workspace tree")
+        let after = try loadContext(for: workspace)
+        guard before.snapshot.id == after.snapshot.id, before.indexEntries == after.indexEntries,
+              before.worktreeFingerprints == after.worktreeFingerprints else {
+            throw DesktopGitError.gitLaunchFailed("Files changed while saving a checkpoint. Try again after other work finishes.")
+        }
+        let id = UUID().uuidString.lowercased()
+        let filesRef = "refs/veo/checkpoints/" + id + "/files"
+        let indexRef = "refs/veo/checkpoints/" + id + "/index"
+        try runRequired(["-C", root, "update-ref", filesRef, filesTree], operation: "saving the file checkpoint")
+        try runRequired(["-C", root, "update-ref", indexRef, indexTree], operation: "saving the staging checkpoint")
+        return .init(id: id, threadID: threadID, payloadID: payloadID, workspacePath: workspace.path,
+                     repositoryPath: root, head: head, branch: before.snapshot.branchName,
+                     filesRef: filesRef, indexRef: indexRef, createdAt: .now)
+    }
+
+    /// Restores only this checkpoint's workspace. Returns a checkpoint of the state being replaced.
+    func restoreCheckpoint(_ checkpoint: DesktopWorkspaceCheckpoint, recovery backup: DesktopWorkspaceCheckpoint) throws {
+        let workspace = URL(fileURLWithPath: checkpoint.workspacePath)
+        let current = try loadContext(for: workspace)
+        guard current.snapshot.rootPath == checkpoint.repositoryPath,
+              current.snapshot.headObjectID == checkpoint.head,
+              current.snapshot.branchName == checkpoint.branch,
+              current.snapshot.canMutate else {
+            throw DesktopGitError.gitLaunchFailed("The branch, commit, or repository state changed. Checkpoint restoration is unavailable until the original branch and commit are restored.")
+        }
+        let root = checkpoint.repositoryPath
+        let scope = current.snapshot.workspaceRelativePath ?? "."
+        let snapshotPaths = try nulTerminatedStrings(runRequired(["--literal-pathspecs", "-C", root, "ls-tree", "-r", "-z", "--name-only", checkpoint.filesRef, "--", scope], operation: "reading the checkpoint").stdout, context: "checkpoint paths")
+        let oldIndexPaths = try nulTerminatedStrings(runRequired(["--literal-pathspecs", "-C", root, "ls-tree", "-r", "-z", "--name-only", checkpoint.indexRef, "--", scope], operation: "reading checkpoint staging").stdout, context: "index paths")
+        let trackedPaths = try nulTerminatedStrings(runRequired(["--literal-pathspecs", "-C", root, "ls-files", "-z", "--cached", "--", scope], operation: "reading tracked paths").stdout, context: "tracked paths")
+        let allCurrentPaths = try nulTerminatedStrings(runRequired(["--literal-pathspecs", "-C", root, "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", scope], operation: "reading current paths").stdout, context: "current paths")
+        let allPaths = Set(snapshotPaths + allCurrentPaths + oldIndexPaths)
+        let workspacePrefix = workspace.standardizedFileURL.resolvingSymlinksInPath().path + "/"
+        for path in allPaths {
+            let url = URL(fileURLWithPath: root).appendingPathComponent(path).standardizedFileURL
+            guard url.path.hasPrefix(workspacePrefix), !path.split(separator: "/").contains(".git") else {
+                throw DesktopGitError.gitLaunchFailed("Checkpoint path is outside the workspace.")
+            }
+            var parent = url.deletingLastPathComponent()
+            while parent.path.hasPrefix(workspacePrefix) {
+                if (try? fileManager.attributesOfItem(atPath: parent.path)[.type] as? FileAttributeType) == .typeSymbolicLink {
+                    throw DesktopGitError.gitLaunchFailed("A checkpoint path has a symlink parent. Restore that path manually.")
+                }
+                parent.deleteLastPathComponent()
+            }
+        }
+        let currentPathSet = Set(allCurrentPaths)
+        for path in snapshotPaths {
+            let url = URL(fileURLWithPath: root).appendingPathComponent(path)
+            if let attributes = try? fileManager.attributesOfItem(atPath: url.path) {
+                guard currentPathSet.contains(path), attributes[.type] as? FileAttributeType != .typeDirectory else {
+                    throw DesktopGitError.gitLaunchFailed("An ignored file or directory would be replaced at " + path + ". Restore it manually.")
+                }
+            }
+        }
+        let verification = try captureCheckpoint(workspace: workspace, threadID: checkpoint.threadID, payloadID: "restore-verification")
+        defer {
+            _ = try? runRequired(["-C", root, "update-ref", "-d", verification.filesRef], operation: "removing verification ref")
+            _ = try? runRequired(["-C", root, "update-ref", "-d", verification.indexRef], operation: "removing verification ref")
+        }
+        for (currentRef, savedRef) in [(verification.filesRef, backup.filesRef), (verification.indexRef, backup.indexRef)] {
+            let currentTree = try requiredText(["-C", root, "rev-parse", "--verify", currentRef], operation: "verifying current tree")
+            let savedTree = try requiredText(["-C", root, "rev-parse", "--verify", savedRef], operation: "verifying recovery tree")
+            guard currentTree == savedTree else {
+                throw DesktopGitError.gitLaunchFailed("Files changed after the recovery checkpoint was saved. Nothing was restored; retry after other work finishes.")
+            }
+        }
+        let restorePaths = Set(snapshotPaths + trackedPaths).sorted()
+        if !restorePaths.isEmpty {
+            try runRequired(["--literal-pathspecs", "-C", root, "restore", "--source=" + checkpoint.filesRef, "--worktree", "--no-recurse-submodules", "--"] + restorePaths, operation: "restoring checkpoint files")
+        }
+        let indexPaths = Set(oldIndexPaths + trackedPaths).sorted()
+        if !indexPaths.isEmpty {
+            try runRequired(["--literal-pathspecs", "-C", root, "restore", "--source=" + checkpoint.indexRef, "--staged", "--"] + indexPaths, operation: "restoring checkpoint staging")
+        }
+        // New untracked files are captured in the recovery ref before being removed.
+        for path in Set(allCurrentPaths).subtracting(snapshotPaths).sorted() {
+            let url = URL(fileURLWithPath: root).appendingPathComponent(path)
+            if fileManager.fileExists(atPath: url.path) || (try? fileManager.destinationOfSymbolicLink(atPath: url.path)) != nil {
+                let type = try fileManager.attributesOfItem(atPath: url.path)[.type] as? FileAttributeType
+                guard type == .typeRegular || type == .typeSymbolicLink else {
+                    throw DesktopGitError.gitLaunchFailed("A checkpoint path became a directory. Recovery is saved at " + backup.filesRef)
+                }
+                try fileManager.removeItem(at: url)
+            }
+        }
+    }
+
     // MARK: - Process execution
 
     @discardableResult
@@ -1254,7 +1406,7 @@ actor LocalGitService {
         return .gitCommandFailed(operation: operation, status: result.status, message: message)
     }
 
-    private func runGit(_ arguments: [String], stdin: Data? = nil) throws -> GitProcessResult {
+    private func runGit(_ arguments: [String], stdin: Data? = nil, temporaryIndex: URL? = nil) throws -> GitProcessResult {
         let process = Process()
         let outputPipe = Pipe()
         let errorPipe = Pipe()
@@ -1290,6 +1442,7 @@ actor LocalGitService {
         environment.removeValue(forKey: "DEVELOPER_DIR")
         environment.removeValue(forKey: "TOOLCHAINS")
         environment.removeValue(forKey: "SDKROOT")
+        if let temporaryIndex { environment["GIT_INDEX_FILE"] = temporaryIndex.path }
         environment["LC_ALL"] = "C"
         environment["LANG"] = "C"
         environment["GIT_TERMINAL_PROMPT"] = "0"

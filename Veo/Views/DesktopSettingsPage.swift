@@ -125,7 +125,7 @@ struct DesktopSettingsSidebarView: View {
 }
 
 struct DesktopSettingsPage: View {
-    @ObservedObject var store: DesktopCodexStore
+    @Bindable var store: DesktopCodexStore
     @ObservedObject var navigation: DesktopNavigationState
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @EnvironmentObject private var updateService: DesktopUpdateService
@@ -159,6 +159,8 @@ struct DesktopSettingsPage: View {
         DesktopMinimapMaterial.liquidGlass.rawValue
     @AppStorage(DesktopAppearancePreferences.modelPickerAppearanceKey) private var modelPickerAppearanceRaw =
         DesktopModelPickerAppearance.native.rawValue
+    @AppStorage(DesktopAppearancePreferences.textStreamingModeKey) private var textStreamingModeRaw =
+        DesktopTextStreamingMode.token.rawValue
     @AppStorage(DesktopAppearancePreferences.viewedImagesInitialExpansionKey) private var viewedImagesInitialExpansionRaw =
         DesktopViewedImagesInitialExpansion.expanded.rawValue
     @AppStorage(DesktopComposerPreferences.showsTurnStatusKey) private var showsTurnStatus = true
@@ -184,6 +186,9 @@ struct DesktopSettingsPage: View {
     @State private var highlightedSettingsAnchor: DesktopSettingsAnchor?
     @State private var selectedChangelogTag: String?
     @State private var hoveredChangelogTag: String?
+    @State private var showsEnabledModels = false
+    @State private var isAddingProvider = false
+    @State private var editingProvider: DesktopConnectedProvider?
 
     private var accentColor: Color {
         DesktopAppearancePreferences.color(fromHex: accentColorHex) ?? DesktopTheme.accent
@@ -269,6 +274,13 @@ struct DesktopSettingsPage: View {
         )
     }
 
+    private var textStreamingModeBinding: Binding<DesktopTextStreamingMode> {
+        Binding(
+            get: { DesktopTextStreamingMode(rawValue: textStreamingModeRaw) ?? .token },
+            set: { textStreamingModeRaw = $0.rawValue }
+        )
+    }
+
     private var viewedImagesInitialExpansionBinding: Binding<DesktopViewedImagesInitialExpansion> {
         Binding(
             get: {
@@ -317,7 +329,6 @@ struct DesktopSettingsPage: View {
         }
         .navigationTitle("Settings")
         .tint(accentColor)
-        .animation(.easeOut(duration: 0.16), value: navigation.settingsCategory)
         .task(id: settingsRefreshID) {
             guard navigation.page == .settings else { return }
             notifications.refreshAuthorizationStatus()
@@ -393,6 +404,16 @@ struct DesktopSettingsPage: View {
         }
     }
 
+    private var memorySettingsDetail: String {
+        guard let thread = store.selectedThread, store.selectedRuntimeThreadID != nil else {
+            return "Open a chat to change its memory setting."
+        }
+        guard store.capabilities.supports(.threadMemoryMode) else {
+            return "Memory controls aren’t supported by this Codex runtime."
+        }
+        return "Allow Codex to use memory in “\(thread.title)”."
+    }
+
     private var settingsRefreshID: String {
         "\(navigation.page)-\(navigation.settingsCategory.rawValue)"
     }
@@ -400,6 +421,10 @@ struct DesktopSettingsPage: View {
     @ViewBuilder
     private var settingsContent: some View {
         switch navigation.settingsCategory {
+        case .keyboard:
+            DesktopKeyboardSettingsView()
+        case .projects:
+            DesktopProjectSettingsView(store: store)
         case .general:
             VStack(alignment: .leading, spacing: 10) {
                 sectionTitle("Workspace defaults")
@@ -455,6 +480,118 @@ struct DesktopSettingsPage: View {
                         .toggleStyle(.switch)
                         .controlSize(.small)
                     }
+                }
+
+                sectionTitle("Current chat")
+                    .padding(.top, 16)
+
+                SettingsPanel {
+                    SettingsRow(
+                        title: "Memory",
+                        detail: memorySettingsDetail,
+                        systemImage: "brain"
+                    ) {
+                        Toggle("Memory for current chat", isOn: Binding(
+                            // Codex enables thread memory by default when no override is saved.
+                            get: { (store.selectedMemoryMode ?? .enabled) == .enabled },
+                            set: { store.setSelectedMemoryMode($0 ? .enabled : .disabled) }
+                        ))
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                        .disabled(
+                            store.selectedRuntimeThreadID == nil
+                                || !store.capabilities.supports(.threadMemoryMode)
+                                || store.appServer0153.memoryUpdatesInFlight.contains(store.selectedThreadID ?? "")
+                        )
+                    }
+                }
+
+                sectionTitle("Models")
+                    .padding(.top, 16)
+
+                SettingsPanel {
+                    Button {
+                        showsEnabledModels.toggle()
+                    } label: {
+                        SettingsRow(
+                            title: "Enabled models",
+                            detail: "Choose which models appear in the composer picker.",
+                            systemImage: "cube"
+                        ) {
+                            DesktopEnabledModelsSummary(
+                                enabledCount: store.enabledModelCount,
+                                totalCount: max(store.catalogModelCount, store.enabledModelCount)
+                            )
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .popover(isPresented: $showsEnabledModels, arrowEdge: .top) {
+                        DesktopEnabledModelsPopover(store: store)
+                    }
+                    .accessibilityLabel("Enabled models")
+                    .accessibilityValue("\(store.enabledModelCount) of \(max(store.catalogModelCount, store.enabledModelCount)) on")
+                    .accessibilityHint("Shows a list of switches for each model")
+
+                    SettingsPanelDivider()
+
+                    SettingsRow(
+                        title: "Include external models",
+                        detail: "Add API-key or OAuth providers (Kimi Code, Grok). Credentials stay in Veo and are not written to Codex.",
+                        systemImage: "arrow.triangle.branch"
+                    ) {
+                        Toggle("Include external models", isOn: Binding(
+                            get: { store.includeExternalModels },
+                            set: { store.setIncludeExternalModels($0) }
+                        ))
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                    }
+
+                    if store.includeExternalModels {
+                        let providers = store.connectedExternalProviders
+                        ForEach(Array(providers.enumerated()), id: \.element.id) { index, provider in
+                            SettingsRow(
+                                title: provider.name,
+                                detail: provider.enabledModels.isEmpty
+                                    ? "Connected · no models in the picker"
+                                    : "\(provider.enabledModels.count) model\(provider.enabledModels.count == 1 ? "" : "s") in the picker",
+                                systemImage: provider.preset?.systemImage ?? "plus.circle",
+                                nestDepth: 1,
+                                nestStyle: .branch
+                            ) {
+                                HStack(spacing: 6) {
+                                    Button("Edit") { editingProvider = provider }
+                                        .buttonStyle(.bordered)
+                                        .controlSize(.small)
+                                    Button("Remove", role: .destructive) {
+                                        store.removeExternalProvider(provider.id)
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+                                }
+                            }
+                        }
+
+                        SettingsRow(
+                            title: "Add provider",
+                            detail: "Authenticate in Veo. The Codex CLI and Codex app are not changed.",
+                            systemImage: "plus",
+                            nestDepth: 1,
+                            nestStyle: .leaf
+                        ) {
+                            Button("Add…") { isAddingProvider = true }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                        }
+                    }
+                }
+                .sheet(isPresented: $isAddingProvider) {
+                    DesktopExternalProviderSheet(store: store)
+                }
+                .sheet(item: $editingProvider) { provider in
+                    DesktopExternalProviderSheet(store: store, existing: provider)
                 }
 
                 sectionTitle("Background intelligence")
@@ -622,6 +759,27 @@ struct DesktopSettingsPage: View {
                         .toggleStyle(.switch)
                         .controlSize(.small)
                         .disabled(!store.capabilities.supports(.realtimeVoice))
+                    }
+
+                    SettingsPanelDivider()
+
+                    SettingsRow(
+                        title: "Voice history protocol",
+                        detail: "Automatic prefers the item-level v3 timeline and falls back to the existing v2 stream without enabling the microphone.",
+                        systemImage: "point.3.filled.connected.trianglepath.dotted"
+                    ) {
+                        Picker("Voice history protocol", selection: Binding(
+                            get: { store.realtimeProtocolChoice },
+                            set: { store.setRealtimeProtocolChoice($0) }
+                        )) {
+                            ForEach(DesktopRealtimeProtocolChoice.allCases) { choice in
+                                Text(choice.title).tag(choice)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .controlSize(.small)
+                        .frame(width: 130)
                     }
 
                     if store.realtimeVoiceEnabled, !store.realtimeVoices.isEmpty {
@@ -1063,7 +1221,7 @@ struct DesktopSettingsPage: View {
             }
 
         case .integrations:
-            VStack(alignment: .leading, spacing: 22) {
+            LazyVStack(alignment: .leading, spacing: 22) {
                 settingsRefreshHeader(
                     "Local integrations",
                     isLoading: store.isLoadingAccountResources,
@@ -1074,6 +1232,7 @@ struct DesktopSettingsPage: View {
                 pluginsSection
                 appsSection
                 mcpSection
+                DesktopIntegrationSetupView(store: store)
 
                 accountResourcesNote
             }
@@ -1199,24 +1358,27 @@ struct DesktopSettingsPage: View {
     private var skillsSection: some View {
         integrationSection(title: "Skills", empty: "No skills were reported.") {
             ForEach(Array(store.skillRecords.enumerated()), id: \.element.id) { index, skill in
-                if index > 0 { SettingsPanelDivider() }
-                SettingsRow(
-                    title: skill.displayName,
-                    detail: [skill.description, skillScopeName(skill.scope), skill.path]
-                        .compactMap { $0 }
-                        .filter { !$0.isEmpty }
-                        .joined(separator: " · "),
-                    systemImage: "bolt.badge.checkmark"
-                ) {
-                    Toggle("Enabled", isOn: Binding(
-                        get: { skill.enabled },
-                        set: { store.setSkillEnabled(skill, enabled: $0) }
-                    ))
-                    .labelsHidden()
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-                    .disabled(!store.capabilities.supports(method: "skills/config/write")
-                        || store.integrationMutationID != nil)
+                VStack(spacing: 0) {
+                    if index > 0 { SettingsPanelDivider() }
+                    SettingsRow(
+                        title: skill.displayName,
+                        detail: [skill.description, skillScopeName(skill.scope), skill.path]
+                            .compactMap { $0 }
+                            .filter { !$0.isEmpty }
+                            .joined(separator: " · "),
+                        systemImage: "bolt.badge.checkmark"
+                    ) {
+                        Toggle("Enabled", isOn: Binding(
+                            get: { skill.enabled },
+                            set: { store.setSkillEnabled(skill, enabled: $0) }
+                        ))
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                        .disabled(!store.capabilities.supports(method: "skills/config/write")
+                            || store.integrationMutationID != nil)
+                    }
+
                 }
             }
         }
@@ -1225,29 +1387,32 @@ struct DesktopSettingsPage: View {
     private var pluginsSection: some View {
         integrationSection(title: "Plugins", empty: "No plugins were reported.") {
             ForEach(Array(store.pluginRecords.enumerated()), id: \.element.id) { index, plugin in
-                if index > 0 { SettingsPanelDivider() }
-                SettingsRow(
-                    title: plugin.displayName,
-                    detail: [plugin.description, plugin.marketplaceName].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "),
-                    systemImage: "puzzlepiece.extension"
-                ) {
-                    if store.integrationMutationID == plugin.id {
-                        ProgressView().controlSize(.small)
-                    } else if plugin.installed {
-                        Button("Uninstall", role: .destructive) { pluginUninstallTarget = plugin }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                            .disabled(!store.capabilities.supports(method: "plugin/uninstall"))
-                    } else if plugin.canInstall {
-                        Button("Install") { pluginInstallTarget = plugin }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                            .disabled(!store.capabilities.supports(method: "plugin/install"))
-                    } else {
-                        Text(plugin.unavailableReason)
-                            .font(.system(size: 10.5, weight: .medium))
-                            .foregroundStyle(.secondary)
+                VStack(spacing: 0) {
+                    if index > 0 { SettingsPanelDivider() }
+                    SettingsRow(
+                        title: plugin.displayName,
+                        detail: [plugin.description, plugin.marketplaceName].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "),
+                        systemImage: "puzzlepiece.extension"
+                    ) {
+                        if store.integrationMutationID == plugin.id {
+                            ProgressView().controlSize(.small)
+                        } else if plugin.installed {
+                            Button("Uninstall", role: .destructive) { pluginUninstallTarget = plugin }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .disabled(!store.capabilities.supports(method: "plugin/uninstall"))
+                        } else if plugin.canInstall {
+                            Button("Install") { pluginInstallTarget = plugin }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .disabled(!store.capabilities.supports(method: "plugin/install"))
+                        } else {
+                            Text(plugin.unavailableReason)
+                                .font(.system(size: 10.5, weight: .medium))
+                                .foregroundStyle(.secondary)
+                        }
                     }
+
                 }
             }
         }
@@ -1256,28 +1421,31 @@ struct DesktopSettingsPage: View {
     private var appsSection: some View {
         integrationSection(title: "Apps", empty: "No apps were reported by this runtime.") {
             ForEach(Array(store.appRecords.enumerated()), id: \.element.id) { index, app in
-                if index > 0 { SettingsPanelDivider() }
-                SettingsRow(
-                    title: app.name,
-                    detail: app.description,
-                    systemImage: "app.connected.to.app.below.fill"
-                ) {
-                    if !app.isEnabled {
-                        Text("Disabled")
-                            .font(.system(size: 10.5, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                    } else if app.isAccessible {
-                        Text("Connected")
-                            .font(.system(size: 10.5, weight: .semibold))
-                            .foregroundStyle(.green)
-                    } else if app.installURL != nil {
-                        Button("Connect…") { store.openAppLink(app) }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                            .disabled(!store.capabilities.supports(.appsLinking))
-                    } else {
-                        Text("Unavailable").font(.system(size: 10.5)).foregroundStyle(.secondary)
+                VStack(spacing: 0) {
+                    if index > 0 { SettingsPanelDivider() }
+                    SettingsRow(
+                        title: app.name,
+                        detail: app.description,
+                        systemImage: "app.connected.to.app.below.fill"
+                    ) {
+                        if !app.isEnabled {
+                            Text("Disabled")
+                                .font(.system(size: 10.5, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                        } else if app.isAccessible {
+                            Text("Connected")
+                                .font(.system(size: 10.5, weight: .semibold))
+                                .foregroundStyle(.green)
+                        } else if app.installURL != nil {
+                            Button("Connect…") { store.openAppLink(app) }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .disabled(!store.capabilities.supports(.appsLinking))
+                        } else {
+                            Text("Unavailable").font(.system(size: 10.5)).foregroundStyle(.secondary)
+                        }
                     }
+
                 }
             }
         }
@@ -1293,38 +1461,41 @@ struct DesktopSettingsPage: View {
                     .controlSize(.small)
                     .disabled(!store.capabilities.supports(.mcpReload) || store.integrationMutationID != nil)
             }
-            SettingsPanel {
+            SettingsPanel(lazy: true) {
                 if store.mcpServerStatuses.isEmpty {
                     SettingsRow(title: "None reported", detail: "No MCP servers were reported.", systemImage: "server.rack") { EmptyView() }
                 } else {
                     ForEach(Array(store.mcpServerStatuses.enumerated()), id: \.element.id) { index, server in
-                        if index > 0 { SettingsPanelDivider() }
-                        SettingsRow(
-                            title: server.title,
-                            detail: mcpDetail(server),
-                            systemImage: "server.rack"
-                        ) {
-                            if store.integrationMutationID == "mcp:\(server.id)" {
-                                ProgressView().controlSize(.small)
-                            } else if case .starting? = server.startupState {
-                                HStack(spacing: 6) {
+                        VStack(spacing: 0) {
+                            if index > 0 { SettingsPanelDivider() }
+                            SettingsRow(
+                                title: server.title,
+                                detail: mcpDetail(server),
+                                systemImage: "server.rack"
+                            ) {
+                                if store.integrationMutationID == "mcp:\(server.id)" {
                                     ProgressView().controlSize(.small)
-                                    Text("Starting")
-                                        .font(.system(size: 10.5, weight: .medium))
-                                        .foregroundStyle(.secondary)
+                                } else if case .starting? = server.startupState {
+                                    HStack(spacing: 6) {
+                                        ProgressView().controlSize(.small)
+                                        Text("Starting")
+                                            .font(.system(size: 10.5, weight: .medium))
+                                            .foregroundStyle(.secondary)
+                                    }
+                                } else if mcpNeedsLogin(server) {
+                                    Button(server.requiresReauthentication ? "Reauthorize…" : "Authorize…") {
+                                        store.loginMCP(server)
+                                    }
+                                        .buttonStyle(.bordered)
+                                        .controlSize(.small)
+                                        .disabled(!store.capabilities.supports(.mcpOAuth))
+                                } else {
+                                    Text(mcpStatusName(server))
+                                        .font(.system(size: 10.5, weight: .semibold))
+                                        .foregroundStyle(mcpStatusColor(server))
                                 }
-                            } else if mcpNeedsLogin(server) {
-                                Button(server.requiresReauthentication ? "Reauthorize…" : "Authorize…") {
-                                    store.loginMCP(server)
-                                }
-                                    .buttonStyle(.bordered)
-                                    .controlSize(.small)
-                                    .disabled(!store.capabilities.supports(.mcpOAuth))
-                            } else {
-                                Text(mcpStatusName(server))
-                                    .font(.system(size: 10.5, weight: .semibold))
-                                    .foregroundStyle(mcpStatusColor(server))
                             }
+
                         }
                     }
                 }
@@ -1339,7 +1510,7 @@ struct DesktopSettingsPage: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             sectionTitle(title)
-            SettingsPanel {
+            SettingsPanel(lazy: true) {
                 if (title == "Skills" && store.skillRecords.isEmpty)
                     || (title == "Plugins" && store.pluginRecords.isEmpty)
                     || (title == "Apps" && store.appRecords.isEmpty) {
@@ -2125,6 +2296,22 @@ struct DesktopSettingsPage: View {
 
                 SettingsPanel {
                     SettingsRow(
+                        title: "Text streaming",
+                        detail: textStreamingModeBinding.wrappedValue.detail,
+                        systemImage: "text.alignleft"
+                    ) {
+                        SettingsSegmentedControl(
+                            "Text streaming",
+                            options: DesktopTextStreamingMode.allCases,
+                            selection: textStreamingModeBinding,
+                            title: \.title
+                        )
+                        .frame(maxWidth: 280)
+                    }
+
+                    SettingsPanelDivider()
+
+                    SettingsRow(
                         title: "Viewed images",
                         detail: "Start image rows expanded or collapsed.",
                         systemImage: "photo"
@@ -2557,11 +2744,16 @@ private struct AppearanceDiagonalSlash: Shape {
 }
 
 private struct SettingsPanel<Content: View>: View {
+    var lazy = false
     @ViewBuilder let content: () -> Content
 
     var body: some View {
-        VStack(spacing: 0) {
-            content()
+        Group {
+            if lazy {
+                LazyVStack(spacing: 0) { content() }
+            } else {
+                VStack(spacing: 0) { content() }
+            }
         }
         .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(

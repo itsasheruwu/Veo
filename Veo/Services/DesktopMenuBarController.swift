@@ -4,6 +4,7 @@
 
 import AppKit
 import Combine
+import Observation
 
 /// `MenuBarExtra(isInserted:)` can trap SwiftUI in a scene update loop and starve
 /// Veo's app-server callbacks. This narrow AppKit bridge owns only the status item;
@@ -13,18 +14,28 @@ final class DesktopMenuBarController: NSObject, ObservableObject, NSMenuDelegate
     private weak var store: DesktopCodexStore?
     private var statusItem: NSStatusItem?
     private var openWorkspace: (() -> Void)?
-    private var runningCancellable: AnyCancellable?
+    private var observationGeneration = 0
 
     func configure(store: DesktopCodexStore, openWorkspace: @escaping () -> Void) {
-        self.store = store
         self.openWorkspace = openWorkspace
-        if runningCancellable == nil {
-            runningCancellable = store.$isRunningTurn
-                .removeDuplicates()
-                .sink { [weak self] _ in
-                    self?.updateIcon()
-                }
+        guard self.store !== store else { return }
+        self.store = store
+        observationGeneration &+= 1
+        observeRunningState(generation: observationGeneration)
+    }
+
+    private func observeRunningState(generation: Int) {
+        guard generation == observationGeneration, let store else { return }
+        withObservationTracking {
+            _ = store.isRunningTurn
+        } onChange: { [weak self] in
+            // Observation fires before the mutation. Read the committed value on
+            // the next main-actor turn, then subscribe to the next change.
+            Task { @MainActor [weak self] in
+                self?.observeRunningState(generation: generation)
+            }
         }
+        updateIcon()
     }
 
     func setVisible(_ visible: Bool) {

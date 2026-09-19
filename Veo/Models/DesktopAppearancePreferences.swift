@@ -60,6 +60,30 @@ enum DesktopModelPickerAppearance: String, CaseIterable, Identifiable {
     }
 }
 
+enum DesktopTextStreamingMode: String, CaseIterable, Identifiable {
+    case none
+    case paragraph
+    case token
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .none: return "None"
+        case .paragraph: return "By paragraph"
+        case .token: return "By token"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .none: return "Show the full response when it finishes."
+        case .paragraph: return "Reveal each paragraph when it is complete."
+        case .token: return "Reveal text gradually as it arrives."
+        }
+    }
+}
+
 enum DesktopViewedImagesInitialExpansion: String, CaseIterable, Identifiable {
     case expanded
     case collapsed
@@ -107,6 +131,7 @@ enum DesktopAppearancePreferences {
     static let threadMinimapVisibleKey = "VeoDesktop.threadMinimapVisible"
     static let threadMinimapMaterialKey = "VeoDesktop.threadMinimapMaterial"
     static let modelPickerAppearanceKey = "VeoDesktop.modelPickerAppearance"
+    static let textStreamingModeKey = "VeoDesktop.textStreamingMode"
     static let viewedImagesInitialExpansionKey = "VeoDesktop.viewedImagesInitialExpansion"
 
     /// Default Veo accent (matches prior hard-coded `DesktopTheme.accent`).

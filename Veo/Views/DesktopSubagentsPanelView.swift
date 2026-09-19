@@ -5,7 +5,7 @@
 import SwiftUI
 
 struct DesktopSubagentsPanelView: View {
-    @ObservedObject var store: DesktopCodexStore
+    @Bindable var store: DesktopCodexStore
     @ObservedObject var model: DesktopUtilityPanelModel
 
     private var agents: [DesktopSubagentSummary] { store.selectedSubagents }
@@ -114,7 +114,7 @@ private struct DesktopSubagentListRow: View {
 
 private struct DesktopSubagentDetailView: View {
     let agent: DesktopSubagentSummary
-    @ObservedObject var store: DesktopCodexStore
+    @Bindable var store: DesktopCodexStore
     let back: () -> Void
 
     @State private var timeline: [DesktopTimelineItem] = []

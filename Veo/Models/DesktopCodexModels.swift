@@ -128,8 +128,8 @@ enum DesktopFollowUpBehavior: String, CaseIterable, Identifiable, Codable {
     }
 }
 
-struct DesktopComposerAttachment: Identifiable, Codable, Hashable {
-    enum Kind: String, Codable {
+struct DesktopComposerAttachment: Identifiable, Codable, Hashable, Sendable {
+    enum Kind: String, Codable, Sendable {
         case localImage
         case image
         case localAudio
@@ -526,13 +526,85 @@ struct DesktopModelOption: Identifiable, Hashable {
     let serviceTiers: [DesktopModelServiceTier]
     let defaultServiceTier: String?
     let inputModalities: Set<DesktopModelInputModality>
+    let supportsPersonality: Bool
+    let upgrade: String?
+    let upgradeCopy: String?
+    let upgradeLink: String?
+    let migrationMarkdown: String?
+    let retirementAt: Date?
+    let availabilityNotice: String?
+    let modelSpecialty: String?
+    let multiAgentVersion: String?
+
+    init(
+        id: String,
+        model: String,
+        displayName: String,
+        description: String,
+        isDefault: Bool,
+        defaultReasoningEffort: String,
+        supportedReasoningEfforts: [DesktopReasoningOption],
+        serviceTiers: [DesktopModelServiceTier],
+        defaultServiceTier: String?,
+        inputModalities: Set<DesktopModelInputModality>,
+        supportsPersonality: Bool = false,
+        upgrade: String? = nil,
+        upgradeCopy: String? = nil,
+        upgradeLink: String? = nil,
+        migrationMarkdown: String? = nil,
+        retirementAt: Date? = nil,
+        availabilityNotice: String? = nil,
+        modelSpecialty: String? = nil,
+        multiAgentVersion: String? = nil
+    ) {
+        self.id = id
+        self.model = model
+        self.displayName = displayName
+        self.description = description
+        self.isDefault = isDefault
+        self.defaultReasoningEffort = defaultReasoningEffort
+        self.supportedReasoningEfforts = supportedReasoningEfforts
+        self.serviceTiers = serviceTiers
+        self.defaultServiceTier = defaultServiceTier
+        self.inputModalities = inputModalities
+        self.supportsPersonality = supportsPersonality
+        self.upgrade = upgrade
+        self.upgradeCopy = upgradeCopy
+        self.upgradeLink = upgradeLink
+        self.migrationMarkdown = migrationMarkdown
+        self.retirementAt = retirementAt
+        self.availabilityNotice = availabilityNotice
+        self.modelSpecialty = modelSpecialty
+        self.multiAgentVersion = multiAgentVersion
+    }
 
     var userFacingDisplayName: String {
         Self.displayNameForUser(id: id, model: model, fallback: displayName)
     }
 
+    var isGPT6Astra: Bool {
+        [id, model, displayName].contains { Self.normalizedModelName($0).contains("gpt-6-astra") }
+    }
+
+    var isGPT56Family: Bool {
+        [id, model, displayName].contains { Self.normalizedModelName($0).contains("gpt-5.6") }
+    }
+
     var isGPT53CodexSpark: Bool {
         [id, model, displayName].contains { Self.normalizedModelName($0).contains("gpt-5.3-codex-spark") }
+    }
+
+    var isGrok: Bool {
+        [id, model, displayName].contains { Self.normalizedModelName($0).contains("grok") }
+    }
+
+    var isExternal: Bool {
+        id.contains("/")
+    }
+
+    var externalProviderID: String? {
+        guard isExternal else { return nil }
+        return id.split(separator: "/").first.map(String.init)
     }
 
     var supportsImageInput: Bool {
@@ -576,13 +648,25 @@ struct DesktopModelOption: Identifiable, Hashable {
             supportedReasoningEfforts: reasoning,
             serviceTiers: tiers,
             defaultServiceTier: object.string("defaultServiceTier"),
-            inputModalities: inputModalities
+            inputModalities: inputModalities,
+            supportsPersonality: object.bool("supportsPersonality") ?? false,
+            upgrade: object.string("upgrade") ?? (object["upgradeInfo"] as? [String: Any])?.string("model"),
+            upgradeCopy: (object["upgradeInfo"] as? [String: Any])?.string("upgradeCopy"),
+            upgradeLink: (object["upgradeInfo"] as? [String: Any])?.string("modelLink"),
+            migrationMarkdown: (object["upgradeInfo"] as? [String: Any])?.string("migrationMarkdown"),
+            retirementAt: (object["upgradeInfo"] as? [String: Any])?.number("retirementAt").map(Date.init(timeIntervalSince1970:)),
+            availabilityNotice: (object["availabilityNux"] as? [String: Any])?.string("message"),
+            modelSpecialty: object.string("modelSpecialty"),
+            multiAgentVersion: object.string("multiAgentVersion")
         )
     }
 
-    private static func displayNameForUser(id: String, model: String, fallback: String) -> String {
+    static func displayNameForUser(id: String, model: String, fallback: String) -> String {
         let names = [id, model, fallback].map(Self.normalizedModelName)
 
+        if names.contains(where: { $0.contains("gpt-6-astra") }) {
+            return "6 Astra"
+        }
         if names.contains(where: { $0.contains("gpt-5.3-codex-spark") }) {
             return "5.3 Spark"
         }
@@ -594,6 +678,12 @@ struct DesktopModelOption: Identifiable, Hashable {
         }
         if names.contains(where: { $0.contains("gpt-5.4") }) {
             return "5.4"
+        }
+        if names.contains(where: { $0.contains("grok-4.6") || $0.contains("grok-4-6") }) {
+            return "4.6 Grok"
+        }
+        if names.contains(where: { $0.contains("grok-4.5") || $0.contains("grok-4-5") }) {
+            return "4.5 Grok"
         }
         return fallback
     }
@@ -1106,6 +1196,7 @@ struct DesktopTimelineItem: Identifiable, Hashable {
     var artifacts: [DesktopToolArtifact] = []
     var citations: [DesktopCitationEntry] = []
     var terminalInteractions: [String] = []
+    var asyncQuestions: [DesktopAsyncQuestion] = []
 
     static func parse(_ object: [String: Any], turnID: String?) -> DesktopTimelineItem? {
         let type = object.string("type") ?? ""
@@ -1163,7 +1254,8 @@ struct DesktopTimelineItem: Identifiable, Hashable {
                 title: "Codex",
                 body: object.string("text") ?? "",
                 status: status,
-                citations: citation?.entries ?? []
+                citations: citation?.entries ?? [],
+                asyncQuestions: DesktopAsyncQuestion.parseAgentMessage(object)
             )
 
         case "veoUserInputAnswer":

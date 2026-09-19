@@ -62,6 +62,19 @@ Veo has no hosted backend, subscription, relay, phone companion, or bundled cred
 - Type `/` for native commands such as `/model`, `/permissions`, `/review`, `/browser`, `/compact`, `/fork`, `/diff`, `/terminal`, and `/usage`.
 - Keep drafts tied to their chats and copy the last response as Markdown.
 
+### Project workflows
+
+- Configure per-project model and reasoning defaults in **Settings → Projects**, while other projects inherit the global selection.
+- Save named shell actions and run them from the toolbar or a custom shortcut. Each action opens a separate terminal. Setup actions can be offered when creating a worktree.
+- Use **Worktrees** in the toolbar to create an isolated branch and checkout, choose its base branch and location, or start a chat in an existing checkout.
+- Add comments on selected patch lines to your draft from **Review**. Comments include the file, staged/unstaged side, line numbers, and captured text.
+- Open linked pull requests from **Review** to inspect GitHub status, checks, and comments. Creating a draft PR explicitly pushes committed changes through the local Git and GitHub CLIs; sign in using `gh auth login` first.
+- Save prompts and media from **Composer options**, then restore them into an existing draft. Restored media is copied into the workspace's `Attachments` folder; file mentions keep their original paths.
+- Quote an assistant response from its context menu, trim the passage, and add a comment. Sent quotes retain a source-navigation button and their captured text.
+- Customize commands and project action shortcuts in **Settings → Keyboard Shortcuts**.
+
+For chats using supported paginated Codex history, **Edit from here** restores an earlier prompt and removes later conversation. When a workspace checkpoint exists, it can also restore tracked and nonignored files and the staged split. Checkpoints are optional per project, require an existing Git commit, and do not support submodules. Older or server-queued turns may not have checkpoints. **Review → Workspace checkpoints** exposes file-only restoration and recovery copies. Restoration refuses changed branches/commits or files changed since its recovery capture; it cannot undo external actions.
+
 ### A real docked terminal
 
 The terminal is a SwiftTerm-backed interactive PTY, not a command text box. It supports shell editing, multiple tabs, live terminal resizing, and full-screen terminal applications in the current project. Expand it into a terminal workspace with up to six adjustable panes, grid presets, drag-to-rearrange, and a dedicated session sidebar.
@@ -173,14 +186,24 @@ Full access is always an explicit choice and may also be restricted by managed C
 | `⇧⌘R` | Refresh chats |
 | `⌘.` | Stop the active turn |
 | `⌘,` | Open settings |
+| `⇧⌘S` | Save prompt for later |
+| `⇧⌥⌘W` | Project worktrees |
 | `⌃\`` | Show or hide the docked terminal |
 | `⌥⌘I` | Show or hide the inspector |
 | `Return` | Send a message |
 | `Shift-Return` | Insert a newline |
 
+The configurable shortcuts above can be changed or cleared in Settings. Typing and terminal control keys remain reserved.
+
 ## Local data and network behavior
 
+GPT-6 Astra async questions appear above the composer while the agent continues working. Choose a suggestion or type an answer, then select **Send answers** to steer the active turn or continue an idle chat. **Dismiss** closes the question without sending anything. Pending questions and answer drafts survive restarts; answers enter the normal retryable message queue. This uses the local runtime's async assistant-message protocol and does not require Plan mode.
+
 Veo stores interface preferences—including the selected project, chat, access mode, appearance, terminal options, and model choices—in macOS preferences. Veo-owned chats and timeline items live under Application Support in `com.ash.Veo/Threads`.
+
+Saved prompt media lives under `com.ash.Veo/PromptLibrary` in Application Support. Workspace checkpoints use local `refs/veo/checkpoints/` Git refs, with their metadata in macOS preferences. They remain local and are not part of ordinary branch pushes.
+
+Async questions, answer drafts, and their dismissal state are stored in macOS preferences and removed when their chat is deleted.
 
 Codex credentials and Codex-owned history remain under the control of the locally installed CLI. Veo does not display or retain your authentication secrets.
 

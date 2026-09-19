@@ -42,6 +42,19 @@ enum CodexAppServerCapability: String, CaseIterable, Identifiable, Hashable {
     case threadSubscriptions
     case integrationDetails
     case accountExtras
+    case liveTurnSettings
+    case backgroundTerminals
+    case approvalAutoReview
+    case serverQueue
+    case realtimeTimeline
+    case historyRevert
+    case richModelInfo
+    case marketplaceManagement
+    case pluginSearch
+    case externalAgentImport
+    case threadMemoryMode
+    case itemHistory
+    case dynamicTools
 
     var id: String { rawValue }
 
@@ -49,7 +62,8 @@ enum CodexAppServerCapability: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .threadSearch, .threadContentSearch, .apps, .appsLinking,
              .realtimeVoice, .collaborationModes, .permissionProfiles,
-             .experimentalFeatures:
+             .experimentalFeatures, .liveTurnSettings, .backgroundTerminals,
+             .serverQueue, .realtimeTimeline, .pluginSearch, .threadMemoryMode:
             return .experimental
         default:
             return .stable
@@ -130,6 +144,36 @@ enum CodexAppServerCapability: String, CaseIterable, Identifiable, Hashable {
         case .accountExtras:
             return ["account/workspaceMessages/read", "account/rateLimitResetCredit/consume",
                     "account/sendAddCreditsNudgeEmail"]
+        case .liveTurnSettings:
+            return ["turn/settings/update"]
+        case .backgroundTerminals:
+            return ["thread/backgroundTerminals/list", "thread/backgroundTerminals/terminate",
+                    "thread/backgroundTerminals/clean"]
+        case .approvalAutoReview:
+            return ["item/autoApprovalReview/started", "item/autoApprovalReview/completed",
+                    "autoApprovalReview/strictReviewRequired", "thread/approveGuardianDeniedAction"]
+        case .serverQueue:
+            return ["thread/queue/add", "thread/queue/list", "thread/queue/update",
+                    "thread/queue/delete", "thread/queue/reorder", "thread/queue/start"]
+        case .realtimeTimeline:
+            return ["thread/timeline/list", "thread/realtime/item/started",
+                    "thread/realtime/item/transcript/delta", "thread/realtime/item/completed"]
+        case .historyRevert:
+            return ["thread/revert"]
+        case .richModelInfo:
+            return ["model/list", "modelProvider/capabilities/read"]
+        case .marketplaceManagement:
+            return ["marketplace/add", "marketplace/remove", "marketplace/upgrade"]
+        case .pluginSearch:
+            return ["plugin/search"]
+        case .externalAgentImport:
+            return ["externalAgentConfig/detect", "externalAgentConfig/import"]
+        case .threadMemoryMode:
+            return ["thread/memoryMode/set"]
+        case .itemHistory:
+            return ["thread/items/list"]
+        case .dynamicTools:
+            return ["item/tool/call"]
         }
     }
 
@@ -140,7 +184,8 @@ enum CodexAppServerCapability: String, CaseIterable, Identifiable, Hashable {
     var requiresAllMethods: Bool {
         switch self {
         case .accountLogin, .appsLinking, .commandExec, .realtimeVoice,
-             .collaborationModes, .threadSubscriptions:
+             .collaborationModes, .threadSubscriptions, .backgroundTerminals,
+             .serverQueue, .realtimeTimeline, .marketplaceManagement:
             return true
         default:
             return false

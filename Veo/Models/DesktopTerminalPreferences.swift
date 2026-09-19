@@ -39,6 +39,11 @@ enum DesktopTerminalPreferences {
         return gatedAgentCLINames.contains(command.lowercased())
     }
 
+    /// Saved actions may contain wrappers or multiple shell commands. Any explicit agent token requires consent.
+    static func projectActionMayInvokeAgentCLI(_ command: String) -> Bool {
+        command.range(of: #"(?i)(?<![a-z0-9_-])(codex|claude)(?![a-z0-9_-])"#, options: .regularExpression) != nil
+    }
+
     /// Adds the selected yolo flag to a direct Agent CLI command after the login shell
     /// has finished rewriting PATH. Returns the original line when no rewrite applies.
     static func commandLineApplyingYoloMode(_ line: String) -> String {
@@ -103,6 +108,10 @@ enum DesktopTerminalPreferences {
         let bin = agentCLIBinDirectory
         try? fm.createDirectory(at: bin, withIntermediateDirectories: true)
 
+        if !agentCLIsEnabled {
+            for name in gatedAgentCLINames { writeWrapper(named: name, in: bin, extraArguments: [], requiresConsent: true) }
+            return bin
+        }
         var activeNames: [String] = []
         if yoloClaudeEnabled {
             writeWrapper(
@@ -129,13 +138,22 @@ enum DesktopTerminalPreferences {
         return activeNames.isEmpty ? nil : bin
     }
 
-    private static func writeWrapper(named name: String, in directory: URL, extraArguments: [String]) {
+    private static func writeWrapper(named name: String, in directory: URL, extraArguments: [String], requiresConsent: Bool = false) {
         let url = directory.appendingPathComponent(name)
         let quotedExtras = extraArguments
             .map { arg in
                 "'" + arg.replacingOccurrences(of: "'", with: "'\\''") + "'"
             }
             .joined(separator: " ")
+        let consent = requiresConsent ? """
+        if [[ ! -t 0 ]]; then
+          print -u2 "Veo: Agent CLIs are disabled. Enable them in Settings > Terminal to run \(name) noninteractively."
+          exit 126
+        fi
+        print -n -- "Veo: run \(name) for this command? [y/N] "
+        read -r veo_agent_answer
+        [[ "$veo_agent_answer" == [yY] ]] || exit 126
+        """ : ""
         let script = """
         #!/bin/zsh
         emulate -L zsh
@@ -146,6 +164,7 @@ enum DesktopTerminalPreferences {
           print -u2 "\(name): command not found"
           exit 127
         fi
+        \(consent)
         exec "$real" \(quotedExtras) "$@"
         """
         do {

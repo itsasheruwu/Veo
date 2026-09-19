@@ -6,7 +6,7 @@ import AppKit
 import SwiftUI
 
 struct DesktopTerminalWorkspaceView: View {
-    @ObservedObject var store: DesktopCodexStore
+    @Bindable var store: DesktopCodexStore
     @ObservedObject var hub: DesktopLocalTerminalHub
     @Binding var isWorkspace: Bool
     @Binding var isPresented: Bool
@@ -76,6 +76,8 @@ struct DesktopTerminalWorkspaceView: View {
             .fixedSize()
             .disabled(!store.hasExplicitWorkspace)
             .help("Terminal grid layout")
+
+            DesktopBackgroundAgentTerminalsButton(store: store)
 
             Button {
                 split(.horizontal)
@@ -342,7 +344,9 @@ private struct DesktopTerminalWorkspaceLeaf: View {
     let isFocused: Bool
     let onClose: () -> Void
     @Environment(\.veoAccent) private var veoAccent
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isDropTarget = false
+    @State private var isFileDropTargeted = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -355,10 +359,10 @@ private struct DesktopTerminalWorkspaceLeaf: View {
         .overlay {
             Rectangle()
                 .stroke(
-                    isDropTarget
+                    isFileDropTargeted || isDropTarget
                         ? veoAccent.opacity(0.85)
                         : (isFocused ? veoAccent.opacity(0.55) : Color.white.opacity(0.06)),
-                    lineWidth: isDropTarget ? 2 : 1
+                    lineWidth: isFileDropTargeted || isDropTarget ? 2 : 1
                 )
                 .allowsHitTesting(false)
         }
@@ -481,16 +485,21 @@ private struct DesktopTerminalWorkspaceLeaf: View {
                         session: session,
                         hub: hub,
                         viewportSize: geo.size,
-                        requestsFocus: isFocused
+                        requestsFocus: isFocused,
+                        isFileDropTargeted: $isFileDropTargeted
                     )
                         .frame(width: geo.size.width, height: geo.size.height)
                         .clipped()
                 }
                 .id(session.id)
                 .clipped()
-                .blur(radius: hub.agentCLIPermissionPrompt?.sessionID == session.id ? 5 : 0)
+                .blur(radius: workspaceDropOrPermissionBlur)
                 .allowsHitTesting(hub.agentCLIPermissionPrompt?.sessionID != session.id)
             }
+
+            DesktopTerminalDropOverlay(
+                isActive: isFileDropTargeted && hub.agentCLIPermissionPrompt?.sessionID != session.id
+            )
 
             if let prompt = hub.agentCLIPermissionPrompt, prompt.sessionID == session.id {
                 DesktopAgentCLIPermissionOverlay(prompt: prompt, hub: hub)
@@ -499,6 +508,19 @@ private struct DesktopTerminalWorkspaceLeaf: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .clipped()
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: isFileDropTargeted)
         .animation(.easeOut(duration: 0.16), value: hub.isAgentCLIPermissionPromptPresented)
+        .onChange(of: session.id) { _, _ in
+            isFileDropTargeted = false
+        }
+        .onDisappear {
+            isFileDropTargeted = false
+        }
+    }
+
+    private var workspaceDropOrPermissionBlur: CGFloat {
+        if hub.agentCLIPermissionPrompt?.sessionID == session.id { return 5 }
+        if isFileDropTargeted { return 8 }
+        return 0
     }
 }

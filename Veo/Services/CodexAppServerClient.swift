@@ -68,7 +68,7 @@ final class CodexAppServerClient {
 
     var isRunning: Bool { process?.isRunning == true }
 
-    func start() async throws {
+    func start(overlay: CodexAppServerLaunchOverlay? = nil) async throws {
         if isRunning, standardInput != nil { return }
 
         guard let executableURL = Self.resolveCodexExecutable() else {
@@ -87,7 +87,16 @@ final class CodexAppServerClient {
         let errorPipe = Pipe()
 
         process.executableURL = executableURL
-        process.arguments = ["app-server", "--stdio"]
+        var arguments = ["app-server", "--stdio"]
+        if let overlay {
+            arguments.append(contentsOf: overlay.arguments)
+            var environment = ProcessInfo.processInfo.environment
+            for (key, value) in overlay.environment {
+                environment[key] = value
+            }
+            process.environment = environment
+        }
+        process.arguments = arguments
         process.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
         process.standardInput = inputPipe
         process.standardOutput = outputPipe
@@ -459,7 +468,7 @@ final class CodexAppServerClient {
         return nil
     }
 
-    private static func resolveCodexExecutable() -> URL? {
+    nonisolated static func resolveCodexExecutable() -> URL? {
         let environment = ProcessInfo.processInfo.environment
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         var candidates: [String] = []

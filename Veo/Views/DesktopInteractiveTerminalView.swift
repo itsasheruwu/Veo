@@ -6,14 +6,16 @@ import AppKit
 import SwiftUI
 
 struct DesktopInteractiveTerminalPanel: View {
-    @ObservedObject var store: DesktopCodexStore
+    @Bindable var store: DesktopCodexStore
     @ObservedObject var hub: DesktopLocalTerminalHub
     @Binding var isPresented: Bool
     @Binding var isWorkspace: Bool
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var panelHeight: CGFloat = 288
     @State private var dragStartHeight: CGFloat = 288
     @State private var isDraggingResize = false
+    @State private var isFileDropTargeted = false
 
     private let minHeight: CGFloat = 140
     private let maxHeight: CGFloat = 520
@@ -138,6 +140,8 @@ struct DesktopInteractiveTerminalPanel: View {
                     .controlSize(.mini)
             }
 
+            DesktopBackgroundAgentTerminalsButton(store: store)
+
             Spacer(minLength: 8)
 
             Button {
@@ -243,24 +247,44 @@ struct DesktopInteractiveTerminalPanel: View {
             // and Claude/Ink TUIs shatter when PTY cols disagree with the renderer.
             ZStack {
                 GeometryReader { geo in
-                    DesktopTerminalView(session: session, hub: hub, viewportSize: geo.size)
+                    DesktopTerminalView(
+                        session: session,
+                        hub: hub,
+                        viewportSize: geo.size,
+                        isFileDropTargeted: $isFileDropTargeted
+                    )
                         .frame(width: geo.size.width, height: geo.size.height)
                 }
                 .id(session.id)
-                .blur(radius: hub.isAgentCLIPermissionPromptPresented ? 5 : 0)
+                .blur(radius: dropOrPermissionBlur)
                 .allowsHitTesting(!hub.isAgentCLIPermissionPromptPresented)
+
+                DesktopTerminalDropOverlay(isActive: isFileDropTargeted && hub.agentCLIPermissionPrompt == nil)
 
                 if let prompt = hub.agentCLIPermissionPrompt {
                     DesktopAgentCLIPermissionOverlay(prompt: prompt, hub: hub)
                         .transition(.opacity.combined(with: .scale(scale: 0.98)))
                 }
             }
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: isFileDropTargeted)
             .animation(.easeOut(duration: 0.16), value: hub.isAgentCLIPermissionPromptPresented)
+            .onChange(of: session.id) { _, _ in
+                isFileDropTargeted = false
+            }
+            .onDisappear {
+                isFileDropTargeted = false
+            }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             Color.black.opacity(0.35)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+    }
+
+    private var dropOrPermissionBlur: CGFloat {
+        if hub.isAgentCLIPermissionPromptPresented { return 5 }
+        if isFileDropTargeted { return 8 }
+        return 0
     }
 
     private func ensureSession(relocateExisting: Bool = false) {

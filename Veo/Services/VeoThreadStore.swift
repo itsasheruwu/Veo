@@ -356,10 +356,13 @@ actor VeoThreadStore {
         return DesktopThreadSelection.veo(String(cString: text)).storageKey
     }
 
-    func replaceTimeline(veoID: String, turns: [[String: Any]]) throws {
+    func replaceTimeline(veoID: String, turns: [[String: Any]], pruningRemovedTurns: Bool = false) throws {
         try openIfNeeded()
         let bare = DesktopThreadSelection.parse(veoID).bareID
-        let localPresentationItems = try loadLocalPresentationItems(veoID: bare)
+        let retainedTurnIDs = Set(turns.compactMap { $0.string("id") })
+        let localPresentationItems = try loadLocalPresentationItems(veoID: bare).filter { item in
+            !pruningRemovedTurns || item.turnID.map { retainedTurnIDs.contains($0) } == true
+        }
         try exec("BEGIN IMMEDIATE;")
         do {
             for table in ["items", "turns"] {

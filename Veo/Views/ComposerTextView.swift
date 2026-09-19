@@ -18,6 +18,8 @@ struct ComposerTextView: NSViewRepresentable {
     var focusToken: Int
     /// Returns true when the Return keypress was consumed as a send; false inserts a newline.
     var onSubmit: () -> Bool
+    /// Gives the send transition a weak reference for a snapshot before the draft clears.
+    var onTextViewReady: (NSTextView) -> Void = { _ in }
     /// Moves the active autocomplete row. Returns false when no palette is open.
     var onMoveAutocomplete: (Int) -> Bool = { _ in false }
     /// Accepts the active autocomplete row. Returns false when no palette is open.
@@ -57,6 +59,7 @@ struct ComposerTextView: NSViewRepresentable {
         guard let textView = scrollView.documentView as? ComposerNSTextView else { return }
 
         context.coordinator.parent = self
+        onTextViewReady(textView)
 
         var needsDisplay = false
         let desiredFont = NSFont.systemFont(ofSize: fontSize)

@@ -339,7 +339,7 @@ struct DesktopWorkspaceView: View {
     @EnvironmentObject private var menuBarController: DesktopMenuBarController
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.openWindow) private var openWindow
-    @ObservedObject var store: DesktopCodexStore
+    @Bindable var store: DesktopCodexStore
     @ObservedObject var navigation: DesktopNavigationState
     @State private var inspectorVisible = false
     @State private var utilityPanelExpanded = false
@@ -529,6 +529,15 @@ struct DesktopWorkspaceView: View {
             )
             utilityPanel.setSubagentsAvailable(!store.selectedSubagents.isEmpty)
         }
+        .sheet(isPresented: Binding(get: { store.requestedWorktreeProject != nil }, set: { if !$0 { store.requestedWorktreeProject = nil } })) {
+            if let project = store.requestedWorktreeProject {
+                DesktopWorktreePicker(store: store, projectURL: project) { action, directory in
+                    showsInteractiveTerminal = true
+                    isTerminalWorkspace = false
+                    terminalHub.runProjectAction(action, in: directory)
+                }
+            }
+        }
         .onOpenURL { url in
             guard let scheme = url.scheme?.lowercased(), ["http", "https"].contains(scheme) else { return }
             navigation.showWorkspace()
@@ -579,7 +588,7 @@ struct DesktopWorkspaceView: View {
                 } label: {
                     Label("New chat", systemImage: "square.and.pencil")
                 }
-                .help("New chat (⌘N)")
+                .help("New chat")
             }
 
             if store.canToggleTemporaryChat {
@@ -591,6 +600,25 @@ struct DesktopWorkspaceView: View {
                     }
                     .help(store.isTemporaryChat ? "Temporary chat on" : "Make this chat temporary")
                     .accessibilityLabel(store.isTemporaryChat ? "Temporary chat on" : "Make this chat temporary")
+                }
+            }
+
+            ToolbarItem(id: "worktrees", placement: .primaryAction) {
+                Button {
+                    store.requestedWorktreeProject = URL(fileURLWithPath: DesktopProjectPreferences.shared.projectPath(for: store.effectiveWorkspaceURL.path))
+                } label: { Label("Worktrees", systemImage: "arrow.triangle.branch") }
+                .help("Create or reuse a project worktree")
+                .keyboardShortcut(DesktopKeyboardPreferences.shared.shortcut(for: "worktrees"))
+                .disabled(store.currentWorkspaceKind != .project)
+            }
+
+            ToolbarItem(id: "project-actions", placement: .primaryAction) {
+                DesktopProjectActionsMenu(path: store.effectiveWorkspaceURL.path, enabled: store.hasExplicitWorkspace) { action in
+                    showsInteractiveTerminal = true
+                    isTerminalWorkspace = false
+                    terminalHub.runProjectAction(action, in: store.effectiveWorkspaceURL)
+                } configure: {
+                    navigation.showSettings(.projects)
                 }
             }
 
@@ -616,7 +644,7 @@ struct DesktopWorkspaceView: View {
                     Label("Terminal", systemImage: "terminal")
                 }
                 .help(showsInteractiveTerminal ? "Hide terminal panel" : "Show workspace terminal panel")
-                .keyboardShortcut("`", modifiers: .control)
+                .keyboardShortcut(DesktopKeyboardPreferences.shared.shortcut(for: "terminal"))
                 .disabled(!store.hasExplicitWorkspace)
             }
 
@@ -968,7 +996,7 @@ private final class ToolbarWindowReaderView: NSView {
 private struct DesktopPendingRequestView: View {
     @Environment(\.veoAccent) private var veoAccent
     let request: DesktopPendingRequest
-    @ObservedObject var store: DesktopCodexStore
+    @Bindable var store: DesktopCodexStore
     @State private var mcpValues: [String: String] = [:]
 
     private var canSubmitMCPForm: Bool {
@@ -1196,7 +1224,7 @@ private struct DesktopSidebarView: View {
     @Environment(\.veoAccent) private var veoAccent
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @EnvironmentObject private var updateService: DesktopUpdateService
-    @ObservedObject var store: DesktopCodexStore
+    @Bindable var store: DesktopCodexStore
     let openSettings: () -> Void
     let openUpdates: () -> Void
     @AppStorage("VeoDesktop.collapsedProjectPaths") private var collapsedProjectPathsJSON = "[]"
@@ -2351,7 +2379,7 @@ private struct DesktopSidebarView: View {
 
 private struct DesktopRenameThreadView: View {
     let thread: DesktopThread
-    @ObservedObject var store: DesktopCodexStore
+    @Bindable var store: DesktopCodexStore
     @Environment(\.dismiss) private var dismiss
     @State private var name: String
 
@@ -2394,7 +2422,7 @@ private struct DesktopForkThreadView: View {
     private static let allHistory = "__all_history__"
 
     let thread: DesktopThread
-    @ObservedObject var store: DesktopCodexStore
+    @Bindable var store: DesktopCodexStore
     @Environment(\.dismiss) private var dismiss
     @State private var boundaries: [DesktopTurnBoundary] = []
     @State private var selectedBoundaryID = Self.allHistory
@@ -2775,7 +2803,7 @@ private struct DesktopConversationTurnDivider: View {
 private struct DesktopConversationView: View {
     @Environment(\.veoAccent) private var veoAccent
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @ObservedObject var store: DesktopCodexStore
+    @Bindable var store: DesktopCodexStore
     @ObservedObject var terminalHub: DesktopLocalTerminalHub
     @Binding var showsInteractiveTerminal: Bool
     @Binding var isTerminalWorkspace: Bool
@@ -2801,6 +2829,7 @@ private struct DesktopConversationView: View {
     @State private var minimapTurns: [DesktopThreadMinimapTurn] = []
     @State private var minimapAnalysisRequest: DesktopThreadMinimapAnalysisRequest?
     @Namespace private var composerTransitionNamespace
+    @State private var messageSendTransition = DesktopMessageSendTransition()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -2824,6 +2853,10 @@ private struct DesktopConversationView: View {
                         )
                     } else {
                         conversation
+                            .transition(.identity)
+                            .transaction { transaction in
+                                if messageSendTransition.isPresenting { transaction.animation = nil }
+                            }
                     }
                 }
             }
@@ -2854,6 +2887,9 @@ private struct DesktopConversationView: View {
                 composerHeight = height
             }
             .animation(composerTransitionAnimation, value: showsEmptyChat)
+            .overlay { DesktopMessageSendOverlay(transition: messageSendTransition) }
+            .coordinateSpace(name: DesktopMessageSendTransition.coordinateSpace)
+            .clipped()
 
             if showsInteractiveTerminal, !isTerminalWorkspace {
                 DesktopInteractiveTerminalPanel(
@@ -2865,7 +2901,13 @@ private struct DesktopConversationView: View {
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .animation(.easeInOut(duration: 0.16), value: showsInteractiveTerminal)
+        .environment(messageSendTransition)
+        .onChange(of: store.selectedThreadID) { _, _ in messageSendTransition.cancel() }
+        .onChange(of: reduceMotion) { _, enabled in
+            if enabled { messageSendTransition.cancel() }
+        }
+        .onDisappear { messageSendTransition.cancel() }
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.16), value: showsInteractiveTerminal)
         .animation(.easeInOut(duration: 0.16), value: isTerminalWorkspace)
         .onChange(of: showsInteractiveTerminal) { _, shown in
             if !shown {
@@ -2896,7 +2938,7 @@ private struct DesktopConversationView: View {
     private var conversation: some View {
         GeometryReader { viewport in
             ScrollViewReader { proxy in
-                let timelineEntries = DesktopTimelineEntry.make(from: store.timeline)
+                let timelineEntries = store.timelineEntries
                 let activeTimelineItemIDs = store.selectedActiveTimelineItemIDs
                 let hasCurrentMinimapSnapshot = showsThreadMinimap
                     && minimapSnapshotThreadID == store.selectedThreadID
@@ -2910,7 +2952,7 @@ private struct DesktopConversationView: View {
                     : nil
                 let minimapSnapshotTaskID = [
                     store.selectedThreadID ?? "new",
-                    String(store.timelineRevision),
+                    store.isBusyTurn ? "streaming" : String(store.timelineRevision),
                     store.isBusyTurn ? "streaming" : "idle",
                     showsThreadMinimap ? "visible" : "hidden",
                 ].joined(separator: "|")
@@ -2931,6 +2973,22 @@ private struct DesktopConversationView: View {
                     HStack(spacing: 0) {
                         ScrollView {
                             LazyVStack(alignment: .leading, spacing: 20) {
+                        if store.historyNextCursor != nil {
+                            Button {
+                                store.loadMoreHistory()
+                            } label: {
+                                if store.isLoadingMoreHistory {
+                                    ProgressView().controlSize(.small)
+                                } else {
+                                    Label("Load earlier history", systemImage: "clock.arrow.circlepath")
+                                }
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .disabled(store.isLoadingMoreHistory)
+                            .frame(maxWidth: .infinity)
+                            .accessibilityLabel("Load earlier conversation history")
+                        }
                         if store.isLoadingTimeline {
                             DesktopTimelineSkeleton()
                         } else {
@@ -3129,12 +3187,12 @@ private struct DesktopConversationView: View {
                     scheduleScrollToEndIfPinned(proxy, animated: false)
                 }
                 .onChange(of: store.isRunningTurn) { _, _ in
-                    scheduleScrollToEndIfPinned(proxy, animated: true)
+                    scheduleScrollToEndIfPinned(proxy, animated: !messageSendTransition.isPresenting)
                 }
                 .onChange(of: store.isSubmittingTurn) { _, isSubmitting in
                     guard isSubmitting else { return }
                     isPinnedToBottom = true
-                    scheduleScrollToEndIfPinned(proxy, animated: true)
+                    scheduleScrollToEndIfPinned(proxy, animated: !messageSendTransition.isPresenting)
                 }
                 .onChange(of: store.selectedThreadID) { _, _ in
                     isPinnedToBottom = true
@@ -3157,7 +3215,7 @@ private struct DesktopConversationView: View {
                 .onChange(of: store.timelineNavigationItemID) { _, itemID in
                     guard let itemID else { return }
                     stopFollowingTail()
-                    withAnimation(.easeOut(duration: 0.2)) {
+                    withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
                         proxy.scrollTo(itemID, anchor: .center)
                     }
                     store.consumeTimelineNavigation()
@@ -3381,7 +3439,7 @@ private struct DesktopConversationView: View {
 }
 
 private struct DesktopEmptyChatView: View {
-    @ObservedObject var store: DesktopCodexStore
+    @Bindable var store: DesktopCodexStore
     let composerTransitionNamespace: Namespace.ID
 
     var body: some View {
@@ -3402,7 +3460,7 @@ private struct DesktopEmptyChatView: View {
 }
 
 private struct DesktopWelcomeView: View {
-    @ObservedObject var store: DesktopCodexStore
+    @Bindable var store: DesktopCodexStore
 
     var body: some View {
         VStack(spacing: 0) {
@@ -3425,6 +3483,7 @@ private struct DesktopWelcomeView: View {
 }
 
 private struct DesktopTimelineRow: View {
+    @Environment(DesktopMessageSendTransition.self) private var messageSendTransition: DesktopMessageSendTransition?
     let store: DesktopCodexStore
     @Environment(\.veoAccent) private var veoAccent
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -3437,19 +3496,63 @@ private struct DesktopTimelineRow: View {
     @State private var isDetailExpanded = false
     @State private var showsFullCommandOutput = false
     @State private var blockedArtifactURLMessage: String?
+    @State private var confirmsHistoryRevert = false
+    @State private var showsQuoteEditor = false
+    @State private var confirmsEditFromHere = false
 
     var body: some View {
-        switch item.kind {
-        case .user:
-            userRow
-        case .assistant:
-            assistantRow
-        case .reasoning:
-            reasoningRow
-        case .command, .fileChange, .activity, .plan, .planUpdate, .imageView:
-            activityRow
-        case .error:
-            errorRow
+        Group {
+            switch item.kind {
+            case .user:
+                userRow
+            case .assistant:
+                assistantRow
+            case .reasoning:
+                reasoningRow
+            case .command, .fileChange, .activity, .plan, .planUpdate, .imageView:
+                activityRow
+            case .error:
+                errorRow
+            }
+        }
+        .contextMenu {
+            if item.kind == .assistant {
+                Button("Quote response…") { showsQuoteEditor = true }
+            }
+            if item.kind == .user, item.turnID != nil {
+                Button("Edit from here…") { confirmsEditFromHere = true }
+                    .disabled(!store.canRevertSelectedHistory)
+            }
+            if item.turnID != nil {
+                Button("Revert history to before this turn…", role: .destructive) {
+                    confirmsHistoryRevert = true
+                }
+                .disabled(!store.canRevertSelectedHistory)
+                .help("Available for chats created with paginated Codex history when no turn is running.")
+            }
+        }
+        .confirmationDialog("Edit this prompt and remove later conversation?", isPresented: $confirmsEditFromHere, titleVisibility: .visible) {
+            Button("Revert history, keep files", role: .destructive) { store.editFromHere(item, restoreFiles: false) }
+            Button("Revert history and restore workspace files", role: .destructive) { store.editFromHere(item, restoreFiles: true) }
+                .disabled(store.checkpoint(for: item) == nil)
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The prompt and attachments return to your draft. Restoring files replaces tracked and nonignored workspace files and staged changes with the saved checkpoint, including removing new files. A recovery checkpoint is saved first. External actions are not undone.")
+        }
+        .sheet(isPresented: $showsQuoteEditor) {
+            DesktopQuoteEditor(item: item, threadID: store.selectedThreadID ?? "") { store.appendContextToDraft($0) }
+        }
+        .confirmationDialog(
+            "Revert conversation history?",
+            isPresented: $confirmsHistoryRevert,
+            titleVisibility: .visible
+        ) {
+            Button("Remove this turn and everything after it", role: .destructive) {
+                if let turnID = item.turnID { store.revertHistory(before: turnID) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes conversation history from this point onward. Files in the project are not reverted.")
         }
     }
 
@@ -3461,22 +3564,46 @@ private struct DesktopTimelineRow: View {
                     Text(item.body)
                         .font(.system(size: 14))
                         .textSelection(.enabled)
+                        .modifier(DesktopSendGeometry(part: .text, role: .message(item.clientID)))
+                }
+                ForEach(Array(DesktopQuoteReference.parse(item.body).enumerated()), id: \.offset) { _, reference in
+                    Button("Go to quoted response", systemImage: "quote.bubble") { store.navigateToQuote(reference) }
+                        .buttonStyle(.borderless).font(.caption)
                 }
                 if !item.attachments.isEmpty {
-                    DesktopAttachmentStrip(attachments: item.attachments)
+                    DesktopAttachmentStrip(attachments: item.attachments, sendRole: .message(item.clientID))
+                }
+                if item.turnID != nil {
+                    Button("Edit from here…", systemImage: "pencil") { confirmsEditFromHere = true }
+                        .buttonStyle(.borderless)
+                        .font(.caption)
+                        .disabled(!store.canRevertSelectedHistory)
                 }
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
             .background(Color.primary.opacity(0.065), in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+            .modifier(DesktopSendGeometry(part: .bubble, role: .message(item.clientID)))
+            .opacity(messageSendTransition?.presents(item.clientID) == true ? 0 : 1)
+            .animation(nil, value: messageSendTransition?.presents(item.clientID))
         }
     }
 
     private var assistantRow: some View {
         VStack(alignment: .leading, spacing: 7) {
-            Text("Codex")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.secondary)
+            HStack {
+                Text("Codex")
+                    .font(.system(size: 12, weight: .semibold))
+                Spacer(minLength: 12)
+                Button { showsQuoteEditor = true } label: {
+                    Label("Quote response", systemImage: "quote.bubble")
+                }
+                .labelStyle(.iconOnly)
+                .buttonStyle(.borderless)
+                .help("Quote response")
+                .disabled(item.body.isEmpty)
+            }
+            .foregroundStyle(.secondary)
             MarkdownMessageView(
                 source: item.body,
                 artifacts: item.artifacts,
@@ -3799,10 +3926,11 @@ private struct DesktopTimelineSkeleton: View {
 }
 
 private struct DesktopComposerView: View {
+    @Environment(DesktopMessageSendTransition.self) private var messageSendTransition: DesktopMessageSendTransition?
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.veoAccent) private var veoAccent
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @ObservedObject var store: DesktopCodexStore
+    @Bindable var store: DesktopCodexStore
     var isWelcome = false
     var transitionNamespace: Namespace.ID?
     var onOpenSubagent: (String) -> Void = { _ in }
@@ -3853,6 +3981,13 @@ private struct DesktopComposerView: View {
             properties: composerMaterial == .liquidGlass ? .frame : .position,
             isSource: isWelcome
         ))
+    }
+
+    private func submitDraft() {
+        store.sendDraft { payload in
+            guard !reduceMotion else { return }
+            messageSendTransition?.begin(payload)
+        }
     }
 
     private var composerMaterial: DesktopComposerMaterial {
@@ -3906,6 +4041,10 @@ private struct DesktopComposerView: View {
 
     private var composerCard: some View {
         VStack(spacing: 0) {
+            if !store.selectedAsyncQuestions.isEmpty {
+                DesktopAsyncQuestionsView(store: store)
+                Divider()
+            }
             if let request = store.selectedUserInputRequest, !isWelcome {
                 DesktopAskQuestionsComposerView(
                     request: request,
@@ -3928,6 +4067,11 @@ private struct DesktopComposerView: View {
                     .foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            if !isWelcome {
+                DesktopApprovalReviewPanel(store: store)
+                DesktopThreadCapabilityBar(store: store)
             }
 
             if !store.composerSuggestions.isEmpty {
@@ -3953,7 +4097,8 @@ private struct DesktopComposerView: View {
             if !store.attachments.isEmpty {
                 DesktopAttachmentStrip(
                     attachments: store.attachments,
-                    onRemove: store.removeAttachment
+                    onRemove: store.removeAttachment,
+                    sendRole: .composer
                 )
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .allowsHitTesting(store.visionFallbackStatus == nil)
@@ -3973,14 +4118,16 @@ private struct DesktopComposerView: View {
                 onSubmit: {
                     if store.executeComposerCommandIfPresent() { return true }
                     guard store.canSend else { return false }
-                    store.sendDraft()
+                    submitDraft()
                     return true
                 },
+                onTextViewReady: { messageSendTransition?.registerTextView($0) },
                 onMoveAutocomplete: store.moveComposerSuggestionSelection,
                 onAcceptAutocomplete: store.acceptSelectedComposerSuggestion,
                 onDismissAutocomplete: store.dismissComposerSuggestions
             )
             .accessibilityLabel("Message Codex")
+            .modifier(DesktopSendGeometry(part: .text, role: .composer))
 
             HStack(spacing: 8) {
                 Button {
@@ -4140,7 +4287,7 @@ private struct DesktopComposerView: View {
                 }
 
                 Button {
-                    store.sendDraft()
+                    submitDraft()
                 } label: {
                     Image(systemName: "arrow.up")
                         .font(.system(size: 12, weight: .bold))
@@ -4377,7 +4524,7 @@ private struct ComposerTransitionGeometry: ViewModifier {
 }
 
 private struct DesktopQueuedDraftsPopover: View {
-    @ObservedObject var store: DesktopCodexStore
+    @Bindable var store: DesktopCodexStore
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -4395,7 +4542,7 @@ private struct DesktopQueuedDraftsPopover: View {
 
             ScrollView {
                 VStack(spacing: 10) {
-                    ForEach(store.selectedQueuedDrafts) { payload in
+                    ForEach(Array(store.selectedQueuedDrafts.enumerated()), id: \.element.id) { index, payload in
                         VStack(alignment: .leading, spacing: 8) {
                             TextField(
                                 "Queued message",
@@ -4418,6 +4565,21 @@ private struct DesktopQueuedDraftsPopover: View {
                                     .font(.system(size: 10.5))
                                     .foregroundStyle(.tertiary)
                                 Spacer()
+                                Button {
+                                    store.moveQueuedDraft(payload.id, offset: -1)
+                                } label: { Image(systemName: "arrow.up") }
+                                .buttonStyle(.plain)
+                                .disabled(index == 0)
+                                .help("Move earlier")
+                                .accessibilityLabel("Move queued message earlier")
+
+                                Button {
+                                    store.moveQueuedDraft(payload.id, offset: 1)
+                                } label: { Image(systemName: "arrow.down") }
+                                .buttonStyle(.plain)
+                                .disabled(index == store.selectedQueuedDrafts.count - 1)
+                                .help("Move later")
+                                .accessibilityLabel("Move queued message later")
                                 Button("Remove", role: .destructive) {
                                     store.removeQueuedDraft(payload.id)
                                 }
@@ -4448,81 +4610,6 @@ private struct DesktopQueuedDraftsPopover: View {
             .frame(maxHeight: 340)
         }
         .frame(width: 390)
-    }
-}
-
-private struct DesktopAttachmentStrip: View {
-    let attachments: [DesktopComposerAttachment]
-    var onRemove: ((String) -> Void)? = nil
-
-    var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(attachments) { attachment in
-                    DesktopAttachmentPreview(attachment: attachment, onRemove: onRemove)
-                }
-            }
-        }
-    }
-}
-
-private struct DesktopAttachmentPreview: View {
-    let attachment: DesktopComposerAttachment
-    let onRemove: ((String) -> Void)?
-
-    var body: some View {
-        HStack(spacing: 7) {
-            preview
-            Text(attachment.name)
-                .font(.system(size: 10.5, weight: .medium))
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .frame(maxWidth: 180)
-            if let onRemove {
-                Button {
-                    onRemove(attachment.id)
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Remove \(attachment.name)")
-            }
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-        )
-        .help(attachment.source)
-    }
-
-    @ViewBuilder
-    private var preview: some View {
-        if attachment.kind == .localImage,
-           let image = NSImage(contentsOfFile: attachment.source) {
-            Image(nsImage: image)
-                .resizable()
-                .scaledToFill()
-                .frame(width: 34, height: 28)
-                .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
-        } else {
-            Image(systemName: symbolName)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .frame(width: 18)
-        }
-    }
-
-    private var symbolName: String {
-        switch attachment.kind {
-        case .localImage, .image: return "photo"
-        case .localAudio, .audio: return "waveform"
-        case .fileMention: return "doc.text"
-        case .skill: return "bolt.badge.checkmark"
-        }
     }
 }
 

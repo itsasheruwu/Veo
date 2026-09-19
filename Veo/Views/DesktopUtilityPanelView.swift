@@ -5,7 +5,7 @@
 import SwiftUI
 
 struct DesktopUtilityPanelView: View {
-    @ObservedObject var store: DesktopCodexStore
+    @Bindable var store: DesktopCodexStore
     @ObservedObject var model: DesktopUtilityPanelModel
     @AppStorage(DesktopAppearancePreferences.rightSidebarMaterialKey) private var rightSidebarMaterialRaw =
         DesktopSidebarMaterial.mica.rawValue

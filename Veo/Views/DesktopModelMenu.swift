@@ -6,7 +6,7 @@ import AppKit
 import SwiftUI
 
 struct DesktopModelMenu: View {
-    @ObservedObject var store: DesktopCodexStore
+    @Bindable var store: DesktopCodexStore
     @AppStorage(DesktopAppearancePreferences.modelPickerAppearanceKey) private var pickerAppearanceRaw =
         DesktopModelPickerAppearance.native.rawValue
     @Environment(\.colorScheme) private var colorScheme
@@ -14,7 +14,7 @@ struct DesktopModelMenu: View {
     @State private var isTriggerHovered = false
 
     private var catalog: DesktopModelCatalogPresentation {
-        DesktopModelCatalogPresentation(models: store.models)
+        DesktopModelCatalogPresentation(models: store.visibleModels)
     }
 
     private var selectedVariant: DesktopGPT56Variant? {
@@ -23,12 +23,12 @@ struct DesktopModelMenu: View {
 
     private var collapsedModelTitle: String {
         guard let variant = selectedVariant else { return store.modelDisplayName }
-        return "GPT-5.6 \(variant.title)"
+        return variant == .astra ? "GPT-6 Astra" : "GPT-5.6 \(variant.title)"
     }
 
     private var sliderModelTitle: String {
         guard let variant = selectedVariant else { return store.modelDisplayName }
-        return "5.6 \(variant.title)"
+        return variant == .astra ? "6 Astra" : "5.6 \(variant.title)"
     }
 
     private var pickerAppearance: DesktopModelPickerAppearance {
@@ -63,13 +63,18 @@ struct DesktopModelMenu: View {
         if isFastModeEnabled || isUltraFastModeEnabled {
             if isUltraFastModeEnabled {
                 SparkBoltPair(
-                    color: SliderPickerPalette.peakText(colorScheme),
+                    color: SliderPickerPalette.peakText(colorScheme, isAstra: store.selectedModel?.isGPT6Astra == true),
                     fontSize: 10
                 )
             } else {
-                Image(systemName: "bolt.fill")
+                Text(Image(systemName: "bolt.fill"))
                     .font(.system(size: 10, weight: .semibold))
+                    .baselineOffset(
+                        (NSFont.systemFont(ofSize: 12, weight: .medium).capHeight
+                         - NSFont.systemFont(ofSize: 10, weight: .semibold).capHeight) / 2
+                    )
                     .foregroundStyle(.yellow)
+                    .accessibilityHidden(true)
             }
         }
     }
@@ -89,7 +94,7 @@ struct DesktopModelMenu: View {
         }
         .contentShape(Rectangle())
         .buttonStyle(.plain)
-        .disabled(store.models.isEmpty)
+        .disabled(store.visibleModels.isEmpty)
         .help(store.routingMode == .auto ? "Veo routes work across the GPT-5.6 family." : (store.selectedModel?.description ?? "Codex model"))
         .accessibilityLabel("Model settings")
         .accessibilityValue(
@@ -108,10 +113,12 @@ struct DesktopModelMenu: View {
     }
 
     private func nativeModelLabel(showsReasoning: Bool) -> some View {
-        HStack(spacing: 6) {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
             speedIndicator
 
-            if let selectedVariant {
+            if store.selectedModel?.isGrok == true {
+                DesktopGrokMark(fontSize: 12)
+            } else if let selectedVariant {
                 DesktopGPT56VariantIcon(variant: selectedVariant, fontSize: 12)
             } else {
                 Image(systemName: "cube")
@@ -151,10 +158,12 @@ struct DesktopModelMenu: View {
 
     private func sliderModelLabel(showsReasoning: Bool) -> some View {
         ZStack {
-            HStack(spacing: 5) {
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
                 speedIndicator
 
-                if let selectedVariant {
+                if store.selectedModel?.isGrok == true {
+                    DesktopGrokMark(fontSize: 12)
+                } else if let selectedVariant {
                     DesktopGPT56VariantIcon(variant: selectedVariant, fontSize: 12)
                 }
 
@@ -167,7 +176,7 @@ struct DesktopModelMenu: View {
                     Text(store.reasoningDisplayName)
                         .foregroundStyle(
                             isPeakReasoningSelected
-                                ? SliderPickerPalette.peakText(colorScheme)
+                                ? SliderPickerPalette.peakText(colorScheme, isAstra: store.selectedModel?.isGPT6Astra == true)
                                 : Color.secondary
                         )
                         .lineLimit(1)
@@ -214,26 +223,41 @@ private enum SliderPickerMetrics {
 }
 
 private enum SliderPickerPalette {
-    /// Blue → violet → magenta ramp shared by the track fill and the peak caption.
-    static func fill(isPeak: Bool) -> LinearGradient {
+    /// Midnight blue and icy starlight drawn from the GPT-6 reference.
+    static func fill(isPeak: Bool, isAstra: Bool) -> LinearGradient {
+        if !isAstra {
+            let colors = isPeak
+                ? [Color(red: 0.29, green: 0.35, blue: 0.91), Color(red: 0.55, green: 0.30, blue: 0.98), Color(red: 0.76, green: 0.31, blue: 0.94)]
+                : [Color(red: 0.07, green: 0.34, blue: 0.77), Color(red: 0.12, green: 0.35, blue: 0.84), Color(red: 0.36, green: 0.31, blue: 0.93)]
+            return LinearGradient(stops: [
+                .init(color: colors[0], location: 0),
+                .init(color: colors[1], location: isPeak ? 0.55 : 0.62),
+                .init(color: colors[2], location: 1),
+            ], startPoint: .leading, endPoint: .trailing)
+        }
         let stops: [Gradient.Stop] = isPeak
             ? [
-                .init(color: Color(red: 0.29, green: 0.35, blue: 0.91), location: 0),
-                .init(color: Color(red: 0.55, green: 0.30, blue: 0.98), location: 0.55),
-                .init(color: Color(red: 0.76, green: 0.31, blue: 0.94), location: 1),
+                .init(color: Color(red: 0.015, green: 0.07, blue: 0.24), location: 0),
+                .init(color: Color(red: 0.025, green: 0.18, blue: 0.46), location: 0.55),
+                .init(color: Color(red: 0.08, green: 0.36, blue: 0.68), location: 1),
             ]
             : [
                 .init(color: Color(red: 0.07, green: 0.34, blue: 0.77), location: 0),
                 .init(color: Color(red: 0.12, green: 0.35, blue: 0.84), location: 0.62),
-                .init(color: Color(red: 0.36, green: 0.31, blue: 0.93), location: 1),
+                .init(color: Color(red: 0.18, green: 0.52, blue: 0.88), location: 1),
             ]
         return LinearGradient(stops: stops, startPoint: .leading, endPoint: .trailing)
     }
 
-    static func peakText(_ scheme: ColorScheme) -> Color {
-        scheme == .dark
-            ? Color(red: 0.72, green: 0.56, blue: 1.0)
-            : Color(red: 0.40, green: 0.13, blue: 0.84)
+    static func peakText(_ scheme: ColorScheme, isAstra: Bool) -> Color {
+        if !isAstra {
+            return scheme == .dark
+                ? Color(red: 0.72, green: 0.56, blue: 1.0)
+                : Color(red: 0.40, green: 0.13, blue: 0.84)
+        }
+        return scheme == .dark
+            ? Color(red: 0.57, green: 0.81, blue: 1.0)
+            : Color(red: 0.07, green: 0.32, blue: 0.65)
     }
 
     static var track: Color { Color.primary.opacity(0.09) }
@@ -242,7 +266,8 @@ private enum SliderPickerPalette {
 }
 
 private struct DesktopModelSliderAdvancedPicker: View {
-    @ObservedObject var store: DesktopCodexStore
+    @State private var showsModelDetails = false
+    @Bindable var store: DesktopCodexStore
     let catalog: DesktopModelCatalogPresentation
 
     @Environment(\.colorScheme) private var colorScheme
@@ -263,7 +288,7 @@ private struct DesktopModelSliderAdvancedPicker: View {
 
     private var compactModelTitle: String {
         guard let variant = selectedVariant else { return store.modelDisplayName }
-        return "5.6 \(variant.title)"
+        return variant == .astra ? "6 Astra" : "5.6 \(variant.title)"
     }
 
     private var reasoningOptions: [DesktopReasoningOption] {
@@ -388,7 +413,7 @@ private struct DesktopModelSliderAdvancedPicker: View {
                     } label: {
                         if isSparkModel {
                             SparkBoltPair(
-                                color: SliderPickerPalette.peakText(colorScheme),
+                                color: SliderPickerPalette.peakText(colorScheme, isAstra: store.selectedModel?.isGPT6Astra == true),
                                 fontSize: 12
                             )
                         } else {
@@ -397,7 +422,7 @@ private struct DesktopModelSliderAdvancedPicker: View {
                                 .foregroundStyle(
                                     isFastModeEnabled
                                         ? (isPeakSelected
-                                            ? SliderPickerPalette.peakText(colorScheme)
+                                            ? SliderPickerPalette.peakText(colorScheme, isAstra: store.selectedModel?.isGPT6Astra == true)
                                             : Color(red: 0.11, green: 0.40, blue: 0.85))
                                         : Color.secondary
                                 )
@@ -420,7 +445,7 @@ private struct DesktopModelSliderAdvancedPicker: View {
             Group {
                 if let peakCaption {
                     Text(peakCaption)
-                        .foregroundStyle(SliderPickerPalette.peakText(colorScheme))
+                        .foregroundStyle(SliderPickerPalette.peakText(colorScheme, isAstra: store.selectedModel?.isGPT6Astra == true))
                         .frame(maxWidth: .infinity, alignment: .leading)
                 } else {
                     HStack(spacing: 0) {
@@ -448,6 +473,8 @@ private struct DesktopModelSliderAdvancedPicker: View {
             DesktopReasoningSlider(
                 options: reasoningOptions,
                 selectedIndex: selectedReasoningIndex,
+                isAstra: store.selectedModel?.isGPT6Astra == true,
+                isFastModeEnabled: isFastModeEnabled,
                 isEngaged: $isSliderEngaged,
                 previewIndex: $previewReasoningIndex
             ) { index in
@@ -507,6 +534,18 @@ private struct DesktopModelSliderAdvancedPicker: View {
                     .help("Reset to default")
                     .accessibilityLabel("Reset to default")
                 }
+
+                SliderPickerQuietButton {
+                    showsModelDetails = true
+                } label: {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 14, height: 16)
+                }
+                .help("Model details and personality")
+                .accessibilityLabel("Model details and personality")
+                .popover(isPresented: $showsModelDetails) { DesktopModelDetailsView(store: store) }
             }
             .frame(height: SliderPickerMetrics.rowHeight)
         }
@@ -517,16 +556,24 @@ private struct DesktopModelSliderAdvancedPicker: View {
         DesktopAdvancedMenuRow(
             title: "Model",
             value: compactModelTitle,
-            isEnabled: !store.models.isEmpty,
+            isEnabled: !store.visibleModels.isEmpty,
             header: "Model",
             items: { modelMenuItems }
         )
     }
 
     private var modelMenuItems: [DesktopMenuItemSpec] {
-        var items: [DesktopMenuItemSpec] = []
+        var items: [DesktopMenuItemSpec] = catalog.astraModels.map { model in
+            DesktopMenuItemSpec(
+                title: model.userFacingDisplayName,
+                systemImage: "star.fill",
+                isSelected: store.routingMode == .direct && store.selectedModelID == model.id,
+                action: { store.selectModel(model.id) }
+            )
+        }
 
         if catalog.preferredGPT56Model != nil {
+            if !items.isEmpty { items.append(.separator) }
             items.append(
                 DesktopMenuItemSpec(
                     title: "5.6 Auto",
@@ -540,6 +587,7 @@ private struct DesktopModelSliderAdvancedPicker: View {
                 items.append(
                     DesktopMenuItemSpec(
                         title: "5.6 \(option.variant.title)",
+                        systemImage: option.variant.systemImage,
                         isSelected: store.routingMode == .direct && store.selectedModelID == option.model.id,
                         action: { store.selectModel(option.model.id) }
                     )
@@ -552,7 +600,9 @@ private struct DesktopModelSliderAdvancedPicker: View {
             for model in catalog.otherModels {
                 items.append(
                     DesktopMenuItemSpec(
-                        title: model.displayName,
+                        title: model.userFacingDisplayName,
+                        systemImage: catalog.identitySystemImage(for: model),
+                        assetImage: catalog.identityAssetImage(for: model),
                         isSelected: store.routingMode == .direct && store.selectedModelID == model.id,
                         action: { store.selectModel(model.id) }
                     )
@@ -567,7 +617,7 @@ private struct DesktopModelSliderAdvancedPicker: View {
         DesktopAdvancedMenuRow(
             title: "Effort",
             value: store.routingMode == .auto ? "Auto" : store.reasoningDisplayName,
-            valueTint: isPeakSelected ? SliderPickerPalette.peakText(colorScheme) : nil,
+            valueTint: isPeakSelected ? SliderPickerPalette.peakText(colorScheme, isAstra: store.selectedModel?.isGPT6Astra == true) : nil,
             isEnabled: !reasoningOptions.isEmpty,
             header: "Effort",
             items: {
@@ -591,8 +641,10 @@ private struct DesktopModelSliderAdvancedPicker: View {
         DesktopAdvancedMenuRow(
             title: "Speed",
             value: speedTitle,
-            valueTint: isUltraFastModeEnabled ? SliderPickerPalette.peakText(colorScheme) : nil,
-            isEnabled: store.routingMode == .direct && store.selectedModel != nil,
+            valueTint: isUltraFastModeEnabled ? SliderPickerPalette.peakText(colorScheme, isAstra: store.selectedModel?.isGPT6Astra == true) : nil,
+            isEnabled: store.routingMode == .direct
+                && store.selectedModel != nil
+                && (isSparkModel || fastTier != nil),
             header: "Speed",
             items: { speedMenuItems }
         )
@@ -732,6 +784,8 @@ private struct DesktopAdvancedMenuRow: View {
 
 private struct DesktopMenuItemSpec {
     var title: String
+    var systemImage: String? = nil
+    var assetImage: String? = nil
     var subtitle: String = ""
     var isEnabled: Bool = true
     var isSelected: Bool = false
@@ -772,6 +826,14 @@ private final class DesktopMenuAnchor: NSObject, ObservableObject {
                 action: #selector(handleMenuSelection(_:)),
                 keyEquivalent: ""
             )
+            if let assetImage = spec.assetImage, let named = NSImage(named: assetImage) {
+                let image = named.copy() as? NSImage ?? named
+                image.size = NSSize(width: 14, height: 14)
+                image.isTemplate = true
+                item.image = image
+            } else {
+                item.image = spec.systemImage.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil) }
+            }
             item.target = self
             item.tag = actions.count
             item.isEnabled = spec.isEnabled
@@ -855,6 +917,8 @@ private struct DesktopMenuAnchorView: NSViewRepresentable {
 private struct DesktopReasoningSlider: View {
     let options: [DesktopReasoningOption]
     let selectedIndex: Int
+    let isAstra: Bool
+    let isFastModeEnabled: Bool
     @Binding var isEngaged: Bool
     /// Stop the pointer is currently over, before it is committed to the store.
     @Binding var previewIndex: Int?
@@ -895,12 +959,14 @@ private struct DesktopReasoningSlider: View {
                     .frame(height: SliderPickerMetrics.trackHeight)
 
                 Capsule()
-                    .fill(SliderPickerPalette.fill(isPeak: isPeak))
+                    .fill(SliderPickerPalette.fill(isPeak: isPeak, isAstra: isAstra))
                     .frame(width: width, height: SliderPickerMetrics.trackHeight)
                     .overlay {
                         if isPeak {
                             DesktopSliderStarfield(
-                                size: CGSize(width: width, height: SliderPickerMetrics.trackHeight)
+                                size: CGSize(width: width, height: SliderPickerMetrics.trackHeight),
+                                isAstra: isAstra,
+                                isFastModeEnabled: isFastModeEnabled
                             )
                         }
                     }
@@ -1003,6 +1069,19 @@ private struct DesktopReasoningSlider: View {
 /// drag a dozen views through layout on every frame.
 private struct DesktopSliderStarfield: View {
     let size: CGSize
+    let isAstra: Bool
+    let isFastModeEnabled: Bool
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var phaseOrigin = Date.now
+    @State private var accumulatedTravel: CGFloat = 0
+
+    // Points per second: about 50 seconds across the track, or 17 in Fast Mode.
+    private func speed(fast: Bool) -> CGFloat { fast ? 12 : 4 }
+
+    private func travel(at date: Date) -> CGFloat {
+        accumulatedTravel + (reduceMotion ? 0 : CGFloat(date.timeIntervalSince(phaseOrigin)) * speed(fast: isFastModeEnabled))
+    }
 
     private static let stars: [(x: CGFloat, y: CGFloat, size: CGFloat, opacity: Double)] = [
         (0.06, 0.34, 1.6, 0.55), (0.11, 0.68, 1.1, 0.34), (0.18, 0.24, 1.3, 0.42),
@@ -1013,18 +1092,50 @@ private struct DesktopSliderStarfield: View {
     ]
 
     var body: some View {
-        Canvas(opaque: false, rendersAsynchronously: false) { context, canvasSize in
-            for star in Self.stars {
-                let rect = CGRect(
-                    x: star.x * canvasSize.width - star.size / 2,
-                    y: star.y * canvasSize.height - star.size / 2,
-                    width: star.size,
-                    height: star.size
-                )
-                context.fill(Path(ellipseIn: rect), with: .color(.white.opacity(star.opacity)))
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: reduceMotion)) { timeline in
+            Canvas(opaque: false, rendersAsynchronously: false) { context, canvasSize in
+                let period = canvasSize.width + 8
+                let offset = travel(at: timeline.date).truncatingRemainder(dividingBy: period)
+                for star in Self.stars {
+                    let x = (star.x * period + offset).truncatingRemainder(dividingBy: period) - 4
+                    let rect = CGRect(
+                        x: x - star.size / 2,
+                        y: star.y * canvasSize.height - star.size / 2,
+                        width: star.size,
+                        height: star.size
+                    )
+                    context.fill(Path(ellipseIn: rect), with: .color(.white.opacity(star.opacity)))
+                    if star.size >= 1.9 {
+                        let center = CGPoint(x: rect.midX, y: rect.midY)
+                        context.fill(Path(ellipseIn: rect.insetBy(dx: -2.5, dy: -2.5)), with: .radialGradient(
+                            Gradient(colors: [(isAstra ? Color.cyan : Color.purple).opacity(0.65), .clear]),
+                            center: center, startRadius: 0, endRadius: 4
+                        ))
+                        var rays = Path()
+                        rays.move(to: CGPoint(x: center.x - 3.5, y: center.y))
+                        rays.addLine(to: CGPoint(x: center.x + 3.5, y: center.y))
+                        rays.move(to: CGPoint(x: center.x, y: center.y - 4))
+                        rays.addLine(to: CGPoint(x: center.x, y: center.y + 4))
+                        context.stroke(rays, with: .color(.white.opacity(0.85)), lineWidth: 0.6)
+                    }
+                }
             }
         }
         .frame(width: size.width, height: size.height)
+        .onChange(of: isFastModeEnabled) { oldValue, _ in
+            let now = Date.now
+            if !reduceMotion {
+                accumulatedTravel += CGFloat(now.timeIntervalSince(phaseOrigin)) * speed(fast: oldValue)
+            }
+            phaseOrigin = now
+        }
+        .onChange(of: reduceMotion) { oldValue, _ in
+            let now = Date.now
+            if !oldValue {
+                accumulatedTravel += CGFloat(now.timeIntervalSince(phaseOrigin)) * speed(fast: isFastModeEnabled)
+            }
+            phaseOrigin = now
+        }
         .clipShape(Capsule())
         .allowsHitTesting(false)
     }
@@ -1074,7 +1185,7 @@ private struct SliderPickerQuietButton<Label: View>: View {
 }
 
 private struct DesktopModelStudioPicker: View {
-    @ObservedObject var store: DesktopCodexStore
+    @Bindable var store: DesktopCodexStore
     let catalog: DesktopModelCatalogPresentation
     @Environment(\.veoAccent) private var veoAccent
     @State private var page: Page = .details
@@ -1116,6 +1227,24 @@ private struct DesktopModelStudioPicker: View {
                                 sectionDivider
                                 fastModeSection(tier: fastTier)
                             }
+
+                            if model.supportsPersonality {
+                                sectionDivider
+                                personalitySection
+                            }
+
+                            if model.availabilityNotice != nil || model.upgrade != nil
+                                || model.modelSpecialty != nil || model.multiAgentVersion != nil {
+                                sectionDivider
+                                richModelDetails(model)
+                            }
+                        }
+
+                        if let liveStatus = store.appServer0153.liveSettingsState.label {
+                            sectionDivider
+                            Label(liveStatus, systemImage: "arrow.triangle.2.circlepath")
+                                .font(.system(size: 10.5, weight: .medium))
+                                .foregroundStyle(.secondary)
                         }
                     }
                     .transition(.move(edge: .leading).combined(with: .opacity))
@@ -1143,7 +1272,7 @@ private struct DesktopModelStudioPicker: View {
                 sectionTitle("Model")
                 Spacer()
 
-                if !catalog.otherModels.isEmpty {
+                if !catalog.astraModels.isEmpty || !catalog.otherModels.isEmpty {
                     pageButton(systemName: "arrow.right", label: "Show all models") {
                         withAnimation(.easeInOut(duration: 0.2)) {
                             page = .modelList
@@ -1164,6 +1293,8 @@ private struct DesktopModelStudioPicker: View {
                 StudioSelectionRow(
                     title: model.userFacingDisplayName,
                     description: model.description,
+                    systemImage: catalog.identitySystemImage(for: model),
+                    assetImage: catalog.identityAssetImage(for: model),
                     isSelected: true,
                     action: {}
                 )
@@ -1184,6 +1315,14 @@ private struct DesktopModelStudioPicker: View {
 
                 sectionTitle("Models")
                 Spacer()
+            }
+
+            ForEach(catalog.astraModels) { model in
+                modelRow(model)
+            }
+
+            if !catalog.astraModels.isEmpty, catalog.preferredGPT56Model != nil || !catalog.otherModels.isEmpty {
+                sectionDivider
             }
 
             if let familyModel = catalog.preferredGPT56Model {
@@ -1356,6 +1495,54 @@ private struct DesktopModelStudioPicker: View {
         }
     }
 
+    private var personalitySection: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            sectionTitle("Personality")
+            Picker("Personality", selection: Binding(
+                get: { store.selectedPersonality },
+                set: { store.selectPersonality($0) }
+            )) {
+                Text("None").tag("none")
+                Text("Friendly").tag("friendly")
+                Text("Pragmatic").tag("pragmatic")
+            }
+            .pickerStyle(.segmented)
+            .controlSize(.small)
+            .help("Supported by this model. During a running turn, personality changes apply to the next turn.")
+        }
+    }
+
+    private func richModelDetails(_ model: DesktopModelOption) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            sectionTitle("Model details")
+            if let notice = model.availabilityNotice {
+                Label(notice, systemImage: "info.circle").foregroundStyle(.secondary)
+            }
+            if let specialty = model.modelSpecialty {
+                Label(specialty, systemImage: "scope").foregroundStyle(.secondary)
+            }
+            if let version = model.multiAgentVersion, version != "disabled" {
+                Label("Multi-agent runtime \(version.uppercased())", systemImage: "person.3").foregroundStyle(.secondary)
+            }
+            if let upgrade = model.upgrade {
+                Label(model.upgradeCopy ?? "Upgrade available: \(upgrade)", systemImage: "arrow.up.circle")
+                    .foregroundStyle(.orange)
+            }
+            let provider = store.appServer0153.modelProviderCapabilities
+            if provider.isAvailable {
+                let capabilityText = [
+                    provider.webSearch ? "Web search" : nil,
+                    provider.imageGeneration ? "Image generation" : nil,
+                    provider.namespaceTools ? "Namespaced tools" : nil,
+                ].compactMap { $0 }.joined(separator: " · ")
+                Text(capabilityText.isEmpty ? "No additional provider capabilities reported" : capabilityText)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .font(.system(size: 10.5))
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
     private var variantSelection: Binding<DesktopGPT56Variant?> {
         Binding(
             get: { selectedVariant },
@@ -1417,6 +1604,8 @@ private struct DesktopModelStudioPicker: View {
         StudioSelectionRow(
             title: model.userFacingDisplayName,
             description: model.description,
+            systemImage: catalog.identitySystemImage(for: model),
+            assetImage: catalog.identityAssetImage(for: model),
             isSelected: store.selectedModelID == model.id
         ) {
             selectModelAndShowDetails(model.id)
@@ -1466,6 +1655,8 @@ private extension DesktopModelServiceTier {
 private struct StudioSelectionRow: View {
     let title: String
     let description: String
+    var systemImage: String? = nil
+    var assetImage: String? = nil
     let isSelected: Bool
     let action: () -> Void
 
@@ -1481,7 +1672,16 @@ private struct StudioSelectionRow: View {
                     .frame(width: 14, height: 16)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
+                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                        if systemImage == "star.fill" {
+                            DesktopGPT56VariantIcon(variant: .astra, fontSize: 12.5)
+                        } else if assetImage == DesktopGrokMark.assetName {
+                            DesktopGrokMark(fontSize: 12.5)
+                        } else if let systemImage {
+                            Image(systemName: systemImage)
+                        }
+                        Text(title)
+                    }
                         .font(.system(size: 12.5, weight: .medium))
                         .foregroundStyle(.primary)
                         .lineLimit(1)
@@ -1518,6 +1718,7 @@ private enum DesktopGPT56Variant: String, CaseIterable, Hashable {
     case luna
     case terra
     case sol
+    case astra
 
     var title: String { rawValue.capitalized }
 
@@ -1527,6 +1728,7 @@ private enum DesktopGPT56Variant: String, CaseIterable, Hashable {
         case .luna: return "moon.fill"
         case .terra: return "globe.americas.fill"
         case .sol: return "sun.max.fill"
+        case .astra: return "star.fill"
         }
     }
 }
@@ -1540,7 +1742,10 @@ private struct DesktopGPT56VariantIcon: View {
 
     var body: some View {
         Group {
-            if let systemImage = variant.systemImage {
+            if variant == .astra {
+                Text(Image(systemName: "star.fill"))
+                    .font(.system(size: fontSize, weight: .medium))
+            } else if let systemImage = variant.systemImage {
                 Image(systemName: systemImage)
                     .font(.system(size: fontSize, weight: .medium))
                     .frame(width: fontSize + 1, height: fontSize + 2)
@@ -1560,6 +1765,26 @@ private struct DesktopGPT56VariantIcon: View {
     }
 }
 
+/// Official Grok product mark (black-hole G), tinted like the GPT-5.6 glyphs.
+private struct DesktopGrokMark: View {
+    static let assetName = "GrokMark"
+    let fontSize: CGFloat
+
+    var body: some View {
+        Image(Self.assetName)
+            .renderingMode(.template)
+            .resizable()
+            .scaledToFit()
+            .frame(width: fontSize + 1, height: fontSize + 1)
+            .alignmentGuide(.firstTextBaseline) { dimensions in
+                dimensions.height * 0.82
+            }
+            .foregroundStyle(.secondary)
+            .accessibilityHidden(true)
+            .allowsHitTesting(false)
+    }
+}
+
 private struct DesktopModelCatalogPresentation {
     struct VariantModel {
         let variant: DesktopGPT56Variant
@@ -1572,8 +1797,12 @@ private struct DesktopModelCatalogPresentation {
         models.filter(isGPT56)
     }
 
+    var astraModels: [DesktopModelOption] {
+        models.filter(\.isGPT6Astra)
+    }
+
     var otherModels: [DesktopModelOption] {
-        models.filter { !isGPT56($0) }
+        models.filter { !isGPT56($0) && !$0.isGPT6Astra }
     }
 
     var variantModels: [VariantModel] {
@@ -1596,7 +1825,17 @@ private struct DesktopModelCatalogPresentation {
         modelSearchText(model).contains("gpt-5.6")
     }
 
+    func identitySystemImage(for model: DesktopModelOption) -> String? {
+        if model.isGrok { return nil }
+        return variant(for: model)?.systemImage
+    }
+
+    func identityAssetImage(for model: DesktopModelOption) -> String? {
+        model.isGrok ? DesktopGrokMark.assetName : nil
+    }
+
     func variant(for model: DesktopModelOption) -> DesktopGPT56Variant? {
+        if model.isGPT6Astra { return .astra }
         guard isGPT56(model) else { return nil }
         let text = modelSearchText(model)
         return DesktopGPT56Variant.allCases

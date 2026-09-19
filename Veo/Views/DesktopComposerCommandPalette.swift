@@ -8,7 +8,7 @@ import SwiftUI
 struct DesktopComposerAutocompletePanel: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.veoAccent) private var veoAccent
-    @ObservedObject var store: DesktopCodexStore
+    @Bindable var store: DesktopCodexStore
     @AppStorage(DesktopAppearancePreferences.composerMaterialKey) private var composerMaterialRaw =
         DesktopComposerMaterial.liquidGlass.rawValue
 

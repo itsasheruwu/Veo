@@ -98,12 +98,34 @@ final class DesktopLocalTerminalSession: ObservableObject, Identifiable {
         guard isRunning, masterFD >= 0, !data.isEmpty else { return }
         data.withUnsafeBytes { buffer in
             guard let base = buffer.bindMemory(to: UInt8.self).baseAddress else { return }
-            _ = Darwin.write(masterFD, base, buffer.count)
+            var offset = 0
+            while offset < buffer.count {
+                let count = Darwin.write(masterFD, base.advanced(by: offset), buffer.count - offset)
+                if count > 0 { offset += count }
+                else if count < 0 && errno == EINTR { continue }
+                else {
+                    startupError = "Terminal input could not be delivered completely. Cancel the line before retrying."
+                    break
+                }
+            }
         }
     }
 
     func write(_ text: String) {
         write(Data(text.utf8))
+    }
+
+    /// Quoted POSIX path for inserting a dropped file into the shell prompt.
+    static func quotedShellPath(_ path: String) -> String {
+        "'" + path.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    static func droppedPathPayload(from urls: [URL]) -> String {
+        let quoted = urls
+            .filter { $0.isFileURL }
+            .map { quotedShellPath($0.standardizedFileURL.path) }
+        guard !quoted.isEmpty else { return "" }
+        return quoted.joined(separator: " ") + " "
     }
 
     func resize(columns: Int, rows: Int) {
@@ -660,6 +682,23 @@ final class DesktopLocalTerminalHub: ObservableObject {
         return session
     }
 
+    /// A dedicated PTY prevents a saved command being typed into a running program.
+    func runProjectAction(_ action: DesktopProjectAction, in directory: URL) {
+        guard agentCLIPermissionPrompt == nil, action.command.utf8.count <= 32_768 else { return }
+        let session = addTab(in: directory, columns: 100, rows: 28)
+        guard session.isRunning else { return }
+        let command = DesktopTerminalPreferences.commandLineApplyingYoloMode(action.command)
+        session.recordSubmittedCommand(command)
+        // Bracketed paste keeps multiline scripts intact until the explicit Enter.
+        session.write("\u{1b}[200~" + command + "\u{1b}[201~")
+        if !DesktopTerminalPreferences.agentCLIsEnabled,
+           DesktopTerminalPreferences.projectActionMayInvokeAgentCLI(command) {
+            requestAgentCLIPermission(sessionID: session.id, commandLine: command)
+        } else {
+            session.write("\r")
+        }
+    }
+
     func selectTab(_ id: UUID) {
         guard tabs.contains(where: { $0.id == id }) else { return }
         selectedTabID = id
@@ -703,6 +742,7 @@ final class DesktopLocalTerminalHub: ObservableObject {
 
     func relocateAll(to directory: URL, columns: Int, rows: Int) {
         for tab in tabs {
+            if URL(fileURLWithPath: tab.workingDirectoryPath).standardizedFileURL.resolvingSymlinksInPath() == directory.standardizedFileURL.resolvingSymlinksInPath() { continue }
             if tab.isRunning || tab.isStarting {
                 tab.restart(in: directory, columns: columns, rows: rows)
             } else {

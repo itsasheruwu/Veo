@@ -72,8 +72,8 @@ struct DesktopTurnStatusView: View {
                             onOpenThread: store.selectRuntimeThread
                         )
                     }
-                    .help("Show GPT-5.6 Auto workflow")
-                    .accessibilityLabel("GPT-5.6 Auto, \(autoWorkflow.stageTitle). Show workflow details")
+                    .help("Show \(autoWorkflow.modelTitle) workflow")
+                    .accessibilityLabel("\(autoWorkflow.modelTitle), \(autoWorkflow.stageTitle). Show workflow details")
                 }
 
                 if autoWorkflow != nil, (!subagents.isEmpty || plan != nil || changes != nil) {
@@ -194,7 +194,7 @@ private struct DesktopAutoWorkflowPopover: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 3) {
-                Text("GPT-5.6 Auto")
+                Text(state.modelTitle)
                     .font(.system(size: 13, weight: .semibold))
                 Text("Live stages from Codex collaboration events")
                     .font(.system(size: 10.5))
@@ -254,7 +254,7 @@ private struct DesktopAutoWorkflowPopover: View {
         .modifier(DesktopFloatingMaterialSurface(material: material))
         .padding(8)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("GPT-5.6 Auto workflow details")
+        .accessibilityLabel("\(state.modelTitle) workflow details")
     }
 
     @ViewBuilder

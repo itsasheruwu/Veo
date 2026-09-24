@@ -2603,7 +2603,7 @@ private struct DesktopThreadRow: View {
                             .padding(.horizontal, 4)
                             .padding(.vertical, 1.5)
                             .background(veoAccent.opacity(0.1), in: Capsule())
-                            .accessibilityLabel("GPT-5.6 Auto")
+                            .accessibilityLabel("Auto route")
                     }
                 }
                 if let searchSnippet, !searchSnippet.isEmpty {
@@ -4302,7 +4302,7 @@ private struct DesktopComposerView: View {
                 .accessibilityLabel(sendButtonHelp)
                 .layoutPriority(1)
 
-                if store.isRunningTurn {
+                if store.isRunningTurn || store.isRoutingSelectedModel {
                     Button {
                         store.stopTurn()
                     } label: {

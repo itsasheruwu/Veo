@@ -1,6 +1,6 @@
 # Veo Privacy Notice
 
-**Last updated:** August 6, 2026
+**Last updated:** September 24, 2026
 
 This notice explains how Veo, a native macOS application maintained by Ash, handles information. It describes the open-source app in this repository and does not cover services independently operated by Codex providers or tools that you choose to use.
 
@@ -29,7 +29,7 @@ Veo uses standard macOS preferences to remember lightweight interface state, inc
 
 - the last selected project and thread
 - the selected access mode
-- model, reasoning-effort, and service-tier choices
+- model, reasoning-effort, service-tier, and Auto-routing choices
 - per-thread plan-mode selections
 - sidebar organization, sorting, collapse state, and manual ordering
 
@@ -37,15 +37,17 @@ These preferences remain on the Mac until they are changed or removed by you or 
 
 ## 4. Project files, credentials, and chat history
 
-Veo does not bundle, request, or separately store your OpenAI credentials. Authentication is managed by the installed Codex CLI.
+Veo does not bundle or separately store your Codex account credentials; the installed Codex CLI manages that sign-in. If you configure other model providers or Jev routing, Veo stores the API keys or tokens you provide in the macOS Keychain. Optional browser sign-ins use WebKit website data and may also use Keychain AutoFill.
 
-Project files remain in folders you control. Veo-owned chats and timeline items are stored locally under Application Support (`com.ash.Veo/Threads`). Codex configuration, credentials, and Codex CLI thread history remain in locations managed by you and the Codex CLI. Deleting Veo does not automatically delete project files or Codex CLI data because they are not stored in the app bundle.
+Project files remain in folders you control. Veo-owned chats and timeline items are stored locally under Application Support (`com.ash.Veo/Threads`). Saved prompt media is stored under `com.ash.Veo/PromptLibrary`; optional workspace checkpoints use local Git refs. Codex configuration, credentials, and Codex CLI thread history remain in locations managed by you and the Codex CLI. Deleting Veo does not automatically delete project files or Codex CLI data because they are not stored in the app bundle.
 
 ## 5. Network and third-party processing
 
-The Veo source in this repository does not contain its own network client or analytics SDK. However, the Codex subprocess may send prompts, file context, tool results, and related information to OpenAI or another provider according to your Codex configuration. Tools run by Codex may also access network services.
+Veo has no analytics SDK or Veo-operated backend. The Codex subprocess may send prompts, file context, tool results, and related information to OpenAI or another provider according to your Codex configuration. Tools run by Codex may also access network services.
 
-That processing is controlled by the provider, your Codex configuration, the selected project, and the access level you grant. Review the applicable provider terms and privacy policy, including the [OpenAI Privacy Policy](https://openai.com/policies/privacy-policy/) when using Codex with OpenAI.
+Veo also makes direct network requests for features you choose to use. Configured external model providers receive the requests needed to run their models. If you enable Auto routing with Jev and provide a key, Veo sends up to the first 24,000 characters of a new chat's first prompt, along with descriptions of eligible model/effort/speed routes, to TypeSafe AI (`api.typesafe.ai`) to choose a route. Jev is optional; the Utility router uses your selected utility model instead. The in-app browser loads websites you visit, and update checks, GitHub integration, and public-resource previews contact their respective services.
+
+Third-party processing and retention follow each provider's terms and privacy policy. Review the services you configure, including the [OpenAI Privacy Policy](https://openai.com/policies/privacy-policy/) when using Codex with OpenAI. Veo does not control data held by those services.
 
 ## 6. Access levels and local actions
 
@@ -56,8 +58,9 @@ When you choose the corresponding actions, Veo may ask Finder to reveal a projec
 ## 7. Retention and deletion
 
 - Veo preferences remain until changed or removed.
-- Veo-owned chats remain under Application Support until you delete them in the app or remove that data.
-- Project files remain until you modify or delete them.
+- Veo-owned chats and saved prompt media remain under Application Support until you delete them in the app or remove that data.
+- Optional provider keys and tokens remain in the macOS Keychain until removed through Veo or Keychain management.
+- Project files and optional local Git checkpoints remain until you modify or delete them.
 - Codex credentials and Codex CLI thread history follow the Codex CLI's storage and retention behavior.
 - Any information sent to a configured provider follows that provider's retention practices.
 

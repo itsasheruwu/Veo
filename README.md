@@ -57,7 +57,9 @@ Veo has no hosted backend, subscription, relay, phone companion, or bundled cred
 ### A composer that knows the workspace
 
 - Choose Agentic, Plan, or Debug interaction, plus the model, reasoning effort, service tier, and access mode reported by the connected Codex runtime.
-- Select GPT-5.6 Auto to route implementation and review across available GPT-5.6 variants with explicit fallbacks when a lane is unavailable.
+- Select GPT-5.6 Auto or 6 Auto to route implementation and review across available family variants with explicit fallbacks when a lane is unavailable.
+- Optionally let Auto choose a model, reasoning level, and speed from the first prompt using Jev or your Utility model, then keep that route for the chat. Jev routing sends the first prompt to TypeSafe AI.
+- Set a supported model’s context window to a preset or custom token limit; Auto uses the model’s suggested limit.
 - Attach files and structured context, mention project files, and queue or steer follow-up messages.
 - Type `/` for native commands such as `/model`, `/permissions`, `/review`, `/browser`, `/compact`, `/fork`, `/diff`, `/terminal`, and `/usage`.
 - Keep drafts tied to their chats and copy the last response as Markdown.
@@ -207,7 +209,7 @@ Async questions, answer drafts, and their dismissal state are stored in macOS pr
 
 Codex credentials and Codex-owned history remain under the control of the locally installed CLI. Veo does not display or retain your authentication secrets.
 
-Veo does not operate an analytics service or a product backend. The Codex subprocess may contact OpenAI or another configured provider, tools may access external services, and interface features such as site icons may retrieve public resources. Those requests follow the feature you use and the permissions granted to the task.
+Veo does not operate an analytics service or a product backend. The Codex subprocess may contact OpenAI or another configured provider, and tools may access external services. Configured external models make direct provider requests. If you opt into Auto routing with Jev, Veo sends up to the first 24,000 characters of a new chat’s first prompt to TypeSafe AI to choose its model, reasoning, and speed; the Utility router instead uses your selected utility model. API keys and tokens for optional providers are stored in macOS Keychain. Browser pages, updates, GitHub integration, and interface resources may also make network requests. See the Privacy Notice for details.
 
 Read the [Privacy Notice](Legal/PRIVACY_POLICY.md) and [Terms of Use](Legal/TERMS_OF_USE.md) for details.
 

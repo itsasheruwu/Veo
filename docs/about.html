@@ -86,11 +86,12 @@ Legal/                    <span class="c">Privacy notice and terms</span></pre>
       <tbody>
         <tr><td>Interface preferences</td><td>macOS preferences — selected project and chat, access mode, appearance, terminal options, model choices</td></tr>
         <tr><td>Veo chats &amp; timeline</td><td>SQLite under Application Support, in <code>com.ash.Veo/Threads</code></td></tr>
-        <tr><td>Codex credentials &amp; history</td><td>Owned by the locally installed CLI. Veo never displays or retains your authentication secrets</td></tr>
+        <tr><td>Codex credentials &amp; history</td><td>Owned by the locally installed CLI. Veo does not store your Codex account credentials</td></tr>
+        <tr><td>Optional provider keys &amp; tokens</td><td>Stored in the macOS Keychain when you configure an external model provider or Jev routing</td></tr>
         <tr><td>Projectless scratch files</td><td>An app-managed workspace, kept until the chat is permanently deleted</td></tr>
       </tbody>
     </table>
-    <p class="lede mt-32">Veo does not operate an analytics service or a product backend. The Codex subprocess may contact OpenAI or another configured provider, tools may reach external services, and interface features such as site icons may fetch public resources — each following the feature you use and the permissions you granted.</p>
+    <p class="lede mt-32">Veo does not operate an analytics service or a product backend. The Codex subprocess and configured external models may contact their providers, and tools may reach external services. If you enable Jev Auto routing, Veo sends up to the first 24,000 characters of a new chat’s first prompt to TypeSafe AI to select a route. Browser pages, update checks, GitHub integration, and public-resource previews can also make direct network requests. Jev is optional and Auto routing is off by default.</p>
     <p class="faint mt-32">Details in the <a href="https://github.com/itsasheruwu/Veo/blob/main/Legal/PRIVACY_POLICY.md" style="color:var(--accent)">Privacy Notice</a> and <a href="https://github.com/itsasheruwu/Veo/blob/main/Legal/TERMS_OF_USE.md" style="color:var(--accent)">Terms of Use</a>.</p>
   </div>
 </section>

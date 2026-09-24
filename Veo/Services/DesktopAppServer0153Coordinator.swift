@@ -103,7 +103,7 @@ final class DesktopAppServer0153Coordinator {
         uiThreadID: String,
         runtimeThreadID: String,
         resolveTurnID: @escaping () async throws -> String?,
-        model: String?, effort: String?, serviceTier: String?,
+        model: String?, modelProvider: String?, effort: String?, serviceTier: String?,
         supported: Bool
     ) {
         liveSettingsGeneration += 1
@@ -126,6 +126,7 @@ final class DesktopAppServer0153Coordinator {
                 guard generation == self.liveSettingsGeneration else { return }
                 var params: [String: Any] = ["threadId": runtimeThreadID, "turnId": turnID]
                 if let model { params["model"] = model }
+                if let modelProvider { params["modelProvider"] = modelProvider }
                 if let effort { params["effort"] = effort }
                 params["serviceTier"] = serviceTier ?? NSNull()
                 let response = try await self.client.request(

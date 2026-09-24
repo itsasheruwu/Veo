@@ -187,6 +187,7 @@ struct DesktopSettingsPage: View {
     @State private var selectedChangelogTag: String?
     @State private var hoveredChangelogTag: String?
     @State private var showsEnabledModels = false
+    @State private var showsJevKeySettings = false
     @State private var isAddingProvider = false
     @State private var editingProvider: DesktopConnectedProvider?
 
@@ -427,7 +428,100 @@ struct DesktopSettingsPage: View {
             DesktopProjectSettingsView(store: store)
         case .general:
             VStack(alignment: .leading, spacing: 10) {
+                sectionTitle("Auto router")
+
+                SettingsPanel {
+                    SettingsRow(
+                        title: "Enable Auto router",
+                        detail: "Choose a model, reasoning level, and permitted speed once from the first prompt.",
+                        systemImage: "sparkles"
+                    ) {
+                        Toggle("Enable Auto router", isOn: $store.autoModelSelectionEnabled)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .controlSize(.small)
+                    }
+
+                    if store.autoModelSelectionEnabled {
+                        SettingsPanelDivider()
+
+                        SettingsRow(
+                            title: "Router",
+                            detail: store.autoRouterMode == .jev
+                                ? "Send the first prompt to TypeSafe AI for Jev routing."
+                                : "Use \(store.utilityModelDisplayName) at Low reasoning in Fast mode.",
+                            systemImage: "arrow.triangle.branch",
+                            nestDepth: 1,
+                            nestStyle: .branch
+                        ) {
+                            Picker("Router", selection: $store.autoRouterMode) {
+                                ForEach(DesktopAutoRouterMode.allCases) { mode in
+                                    Text(mode.title).tag(mode)
+                                }
+                            }
+                            .labelsHidden()
+                            .pickerStyle(.segmented)
+                            .frame(width: 150)
+                            .accessibilityLabel("Auto router mode")
+                        }
+
+                        SettingsPanelDivider()
+
+                        SettingsRow(
+                            title: "Fast mode",
+                            detail: store.autoSpeedPolicy == .allow
+                                ? "Auto may spend more usage for speed when the task benefits from it."
+                                : "Auto will not choose Fast or Ultrafast routes.",
+                            systemImage: "bolt",
+                            nestDepth: 1,
+                            nestStyle: .branch
+                        ) {
+                            Picker("Fast mode", selection: $store.autoSpeedPolicy) {
+                                ForEach(DesktopAutoSpeedPolicy.allCases) { policy in
+                                    Text(policy.title).tag(policy)
+                                }
+                            }
+                            .labelsHidden()
+                            .pickerStyle(.segmented)
+                            .frame(width: 170)
+                            .accessibilityLabel("Allow Auto to use Fast mode")
+                        }
+
+                        SettingsPanelDivider()
+
+                        SettingsRow(
+                            title: "Allow Ultra reasoning",
+                            detail: "Permit Auto to choose Ultra only for the rare tasks that truly need it.",
+                            systemImage: "brain.head.profile",
+                            nestDepth: 1,
+                            nestStyle: store.autoRouterMode == .jev ? .branch : .leaf
+                        ) {
+                            Toggle("Allow Auto router to pick Ultra reasoning", isOn: $store.autoRouterAllowsUltraReasoning)
+                                .labelsHidden()
+                                .toggleStyle(.switch)
+                                .controlSize(.small)
+                        }
+
+                        if store.autoRouterMode == .jev {
+                            SettingsPanelDivider()
+
+                            SettingsRow(
+                                title: "Jev API key",
+                                detail: "Stored in Keychain and used only for first-turn routing.",
+                                systemImage: "key",
+                                nestDepth: 1,
+                                nestStyle: .leaf
+                            ) {
+                                Button("API key…") { showsJevKeySettings = true }
+                                    .controlSize(.small)
+                            }
+                        }
+                    }
+                }
+                .sheet(isPresented: $showsJevKeySettings) { DesktopJevKeySettings() }
+
                 sectionTitle("Workspace defaults")
+                    .padding(.top, 16)
 
                 SettingsPanel {
                     SettingsRow(
@@ -600,7 +694,7 @@ struct DesktopSettingsPage: View {
                 SettingsPanel {
                     SettingsRow(
                         title: "Utility model",
-                        detail: "Used for minimap topics, automatic chat names, and image analysis for text-only models. Reasoning stays Low.",
+                        detail: "Used for minimap topics, automatic chat names, image analysis, and Utility routing. Reasoning stays Low; routing uses Fast mode.",
                         systemImage: "sparkles"
                     ) {
                         Picker("Utility model", selection: Binding(
@@ -616,7 +710,7 @@ struct DesktopSettingsPage: View {
                         .controlSize(.small)
                         .frame(width: 170)
                         .disabled(store.utilityModelOptions.isEmpty)
-                        .help("Choose the model Veo uses for automatic titles, minimap topic detection, and image analysis for text-only models.")
+                        .help("Choose the model Veo uses for automatic titles, minimap topic detection, image analysis, and Utility-mode Auto routing.")
                         .accessibilityLabel("Utility model")
                         .accessibilityValue(store.utilityModelDisplayName)
                     }
@@ -3046,7 +3140,11 @@ private struct SettingsRow<Trailing: View>: View {
     var body: some View {
         HStack(spacing: nestStyle.isNested ? 8 : 14) {
             if nestStyle.isNested {
-                SettingsNestGuide(style: nestStyle)
+                // The guide itself is drawn over the completed row below so its
+                // rail includes the row's vertical padding. This spacer reserves
+                // the same horizontal lane for the elbow.
+                Color.clear
+                    .frame(width: 14)
             }
 
             settingsRowIcon
@@ -3073,6 +3171,15 @@ private struct SettingsRow<Trailing: View>: View {
         .padding(.vertical, 12)
         .frame(minHeight: 68)
         .contentShape(Rectangle())
+        .overlay(alignment: .leading) {
+            if nestStyle.isNested {
+                SettingsNestGuide(style: nestStyle)
+                    .padding(.leading, nestIndent)
+                    // Bridge the one-point divider between adjacent nested rows.
+                    .padding(.vertical, -1)
+                    .allowsHitTesting(false)
+            }
+        }
     }
 
     @ViewBuilder

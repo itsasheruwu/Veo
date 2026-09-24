@@ -257,9 +257,15 @@ struct DesktopComposerPayload: Identifiable, Codable, Hashable {
     let model: String?
     let reasoningEffort: String?
     let serviceTier: String?
+    /// Frozen at enqueue time so switching models or preferences cannot retarget a queued turn.
+    var contextWindow: Int?
     let interactionMode: DesktopInteractionMode
     let routingMode: DesktopModelRoutingMode
     let autoRoutePlan: DesktopAutoRoutePlan?
+    var autoModelSelectionEnabled: Bool = false
+    var autoRouterMode: DesktopAutoRouterMode = .jev
+    var autoSpeedPolicy: DesktopAutoSpeedPolicy = .disallow
+    var autoRouterAllowsUltraReasoning: Bool = false
     var visionFallback: DesktopVisionFallbackContext?
     let planHandoff: DesktopPlanHandoff?
 
@@ -271,6 +277,7 @@ struct DesktopComposerPayload: Identifiable, Codable, Hashable {
         model: String? = nil,
         reasoningEffort: String? = nil,
         serviceTier: String? = nil,
+        contextWindow: Int? = nil,
         interactionMode: DesktopInteractionMode = .agentic,
         routingMode: DesktopModelRoutingMode = .direct,
         autoRoutePlan: DesktopAutoRoutePlan? = nil,
@@ -285,6 +292,7 @@ struct DesktopComposerPayload: Identifiable, Codable, Hashable {
         self.model = model
         self.reasoningEffort = reasoningEffort
         self.serviceTier = serviceTier
+        self.contextWindow = contextWindow
         self.interactionMode = interactionMode
         self.routingMode = routingMode
         self.autoRoutePlan = autoRoutePlan
@@ -302,16 +310,25 @@ struct DesktopComposerPayload: Identifiable, Codable, Hashable {
         case model
         case reasoningEffort
         case serviceTier
+        case contextWindow
         case interactionMode
         case routingMode
         case autoRoutePlan
         case visionFallback
         case planHandoff
+        case autoModelSelectionEnabled
+        case autoRouterMode
+        case autoSpeedPolicy
+        case autoRouterAllowsUltraReasoning
         case isPlanMode
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        autoModelSelectionEnabled = try container.decodeIfPresent(Bool.self, forKey: .autoModelSelectionEnabled) ?? false
+        autoRouterMode = try container.decodeIfPresent(DesktopAutoRouterMode.self, forKey: .autoRouterMode) ?? .jev
+        autoSpeedPolicy = try container.decodeIfPresent(DesktopAutoSpeedPolicy.self, forKey: .autoSpeedPolicy) ?? .disallow
+        autoRouterAllowsUltraReasoning = try container.decodeIfPresent(Bool.self, forKey: .autoRouterAllowsUltraReasoning) ?? false
         id = try container.decode(String.self, forKey: .id)
         text = try container.decode(String.self, forKey: .text)
         createdAt = try container.decode(Date.self, forKey: .createdAt)
@@ -323,6 +340,7 @@ struct DesktopComposerPayload: Identifiable, Codable, Hashable {
         model = try container.decodeIfPresent(String.self, forKey: .model)
         reasoningEffort = try container.decodeIfPresent(String.self, forKey: .reasoningEffort)
         serviceTier = try container.decodeIfPresent(String.self, forKey: .serviceTier)
+        contextWindow = try container.decodeIfPresent(Int.self, forKey: .contextWindow)
         if let savedMode = try container.decodeIfPresent(
             DesktopInteractionMode.self,
             forKey: .interactionMode
@@ -341,6 +359,10 @@ struct DesktopComposerPayload: Identifiable, Codable, Hashable {
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(autoModelSelectionEnabled, forKey: .autoModelSelectionEnabled)
+        try container.encode(autoRouterMode, forKey: .autoRouterMode)
+        try container.encode(autoSpeedPolicy, forKey: .autoSpeedPolicy)
+        try container.encode(autoRouterAllowsUltraReasoning, forKey: .autoRouterAllowsUltraReasoning)
         try container.encode(id, forKey: .id)
         try container.encode(text, forKey: .text)
         try container.encode(createdAt, forKey: .createdAt)
@@ -349,6 +371,7 @@ struct DesktopComposerPayload: Identifiable, Codable, Hashable {
         try container.encodeIfPresent(model, forKey: .model)
         try container.encodeIfPresent(reasoningEffort, forKey: .reasoningEffort)
         try container.encodeIfPresent(serviceTier, forKey: .serviceTier)
+        try container.encodeIfPresent(contextWindow, forKey: .contextWindow)
         try container.encode(interactionMode, forKey: .interactionMode)
         try container.encode(routingMode, forKey: .routingMode)
         try container.encodeIfPresent(autoRoutePlan, forKey: .autoRoutePlan)
@@ -496,7 +519,7 @@ struct DesktopReasoningOption: Identifiable, Hashable {
         case "medium": return "Medium"
         case "high": return "High"
         case "xhigh": return "Extra"
-        case "max": return "Max"
+        case "max": return "Maximum"
         case "ultra": return "Ultra"
         default: return id.replacingOccurrences(of: "_", with: " ").capitalized
         }
@@ -507,6 +530,15 @@ struct DesktopModelServiceTier: Identifiable, Hashable {
     let id: String
     let name: String
     let description: String
+
+    var isFastModeTier: Bool {
+        [id, name].contains { value in
+            let normalized = value.lowercased()
+                .replacingOccurrences(of: "_", with: "-")
+                .replacingOccurrences(of: " ", with: "-")
+            return normalized == "fast" || normalized == "fast-mode"
+        }
+    }
 }
 
 enum DesktopModelInputModality: String, Hashable {
@@ -586,6 +618,18 @@ struct DesktopModelOption: Identifiable, Hashable {
         [id, model, displayName].contains { Self.normalizedModelName($0).contains("gpt-6-astra") }
     }
 
+    var isGPT6Sol: Bool {
+        [id, model, displayName].contains { Self.normalizedModelName($0).contains("gpt-6-sol") }
+    }
+
+    var isGPT6Luna: Bool {
+        [id, model, displayName].contains { Self.normalizedModelName($0).contains("gpt-6-luna") }
+    }
+
+    var isGPT6Family: Bool {
+        isGPT6Astra || isGPT6Sol || isGPT6Luna
+    }
+
     var isGPT56Family: Bool {
         [id, model, displayName].contains { Self.normalizedModelName($0).contains("gpt-5.6") }
     }
@@ -596,6 +640,13 @@ struct DesktopModelOption: Identifiable, Hashable {
 
     var isGrok: Bool {
         [id, model, displayName].contains { Self.normalizedModelName($0).contains("grok") }
+    }
+
+    var isGrok47FastVariant: Bool {
+        [id, model].contains { value in
+            let normalized = Self.normalizedModelName(value)
+            return normalized == "grok-4.7-fast" || normalized.hasSuffix("/grok-4.7-fast")
+        }
     }
 
     var isExternal: Bool {
@@ -667,6 +718,24 @@ struct DesktopModelOption: Identifiable, Hashable {
         if names.contains(where: { $0.contains("gpt-6-astra") }) {
             return "6 Astra"
         }
+        if names.contains(where: { $0.contains("gpt-6-sol") }) {
+            return "6 Sol"
+        }
+        if names.contains(where: { $0.contains("gpt-6-luna") }) {
+            return "6 Luna"
+        }
+        if names.contains(where: { $0.contains("gpt-5.6-luna") }) {
+            return "5.6 Luna"
+        }
+        if names.contains(where: { $0.contains("gpt-5.6-terra") }) {
+            return "5.6 Terra"
+        }
+        if names.contains(where: { $0.contains("gpt-5.6-sol") }) {
+            return "5.6 Sol"
+        }
+        if names.contains(where: { $0 == "gpt-5.6" || $0.hasPrefix("gpt-5.6-") }) {
+            return "5.6"
+        }
         if names.contains(where: { $0.contains("gpt-5.3-codex-spark") }) {
             return "5.3 Spark"
         }
@@ -678,6 +747,12 @@ struct DesktopModelOption: Identifiable, Hashable {
         }
         if names.contains(where: { $0.contains("gpt-5.4") }) {
             return "5.4"
+        }
+        if names.contains(where: { $0.contains("grok-4.7-fast") || $0.contains("grok-4-7-fast") }) {
+            return "4.7 Grok Fast"
+        }
+        if names.contains(where: { $0.contains("grok-4.7") || $0.contains("grok-4-7") }) {
+            return "4.7 Grok"
         }
         if names.contains(where: { $0.contains("grok-4.6") || $0.contains("grok-4-6") }) {
             return "4.6 Grok"

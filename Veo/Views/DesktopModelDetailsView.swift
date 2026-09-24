@@ -10,7 +10,7 @@ struct DesktopModelDetailsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                if store.routingMode == .auto {
+                if store.routingMode.isFamilyAuto {
                     autoDetails
                 } else if let model = store.selectedModel {
                     VStack(alignment: .leading, spacing: 5) {
@@ -94,8 +94,8 @@ struct DesktopModelDetailsView: View {
     private var autoDetails: some View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 5) {
-                Text("5.6 Auto").font(.headline)
-                Text("Veo coordinates models for the task, with separate implementation and review when multi-agent support is available.")
+                Text(store.routingMode.autoFamily?.title ?? "Auto").font(.headline)
+                Text("Veo coordinates the \(store.routingMode.autoFamily?.productName ?? "model") family, with separate implementation and review when multi-agent support is available.")
                     .foregroundStyle(.secondary)
             }
             if let plan = store.resolvedAutoRoutePlan {

@@ -110,6 +110,7 @@ enum DesktopExternalProviderPreset: String, CaseIterable, Identifiable, Sendable
             ]
         case .grokOAuth:
             return [
+                ("grok-4.7", "4.7 Grok"),
                 ("grok-4.6", "4.6 Grok"),
                 ("grok-4.5", "4.5 Grok"),
                 ("grok-4", "4 Grok"),
@@ -129,12 +130,25 @@ struct DesktopExternalModelRecord: Identifiable, Codable, Equatable, Hashable, S
     var upstreamID: String
     var displayName: String
     var enabled: Bool
+    /// Only populated from provider-advertised metadata, never from a native template.
+    var contextWindow: Int?
+    var maxContextWindow: Int?
 
-    init(id: String, upstreamID: String, displayName: String, enabled: Bool) {
+    init(id: String, upstreamID: String, displayName: String, enabled: Bool,
+         contextWindow: Int? = nil, maxContextWindow: Int? = nil) {
         self.id = id
         self.upstreamID = upstreamID
         self.displayName = displayName
         self.enabled = enabled
+        self.contextWindow = contextWindow
+        self.maxContextWindow = maxContextWindow
+    }
+
+    var reliableContextLimits: DesktopContextWindowLimits? {
+        return DesktopContextWindowLimits(
+            suggested: nil,
+            maximum: maxContextWindow ?? contextWindow ?? 0
+        )
     }
 }
 

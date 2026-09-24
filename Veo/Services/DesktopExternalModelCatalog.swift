@@ -53,14 +53,17 @@ enum DesktopExternalModelCatalog {
     @MainActor
     static func launchOverlay() async throws -> CodexAppServerLaunchOverlay? {
         let preferences = DesktopModelCatalogPreferences.shared
-        guard preferences.hasEnabledExternalModels else { return nil }
-        let published = preferences.publishedExternalModels
-        guard !published.isEmpty else { return nil }
+        let providers = preferences.providers
+        let published = externalModelsForOverlay(
+            enabledModels: preferences.publishedExternalModels,
+            providers: providers
+        )
 
         var environment: [String: String] = [:]
         var arguments: [String] = []
-        let connected = preferences.providers.filter { provider in
-            provider.models.contains(where: \.enabled)
+        let publishedIDs = Set(published.map(\.id))
+        let connected = providers.filter { provider in
+            provider.models.contains { $0.enabled && publishedIDs.contains($0.id) }
         }
         let oauthBases = try DesktopOAuthForwarder.shared.prepare(providers: connected)
         for provider in connected {
@@ -83,13 +86,12 @@ enum DesktopExternalModelCatalog {
             arguments += tomlString("model_providers.\(provider.id).wire_api", provider.wireAPI.rawValue)
             arguments += tomlBool("model_providers.\(provider.id).requires_openai_auth", false)
         }
-        guard !environment.isEmpty else {
+        guard connected.isEmpty || !environment.isEmpty else {
             throw DesktopExternalModelCatalogError.catalogWrite(
                 "An external provider is enabled but its credential is missing from Keychain."
             )
         }
 
-        let providers = preferences.providers
         let url = try await Task.detached(priority: .userInitiated) {
             try writeMergedCatalog(published: published, providers: providers)
         }.value
@@ -130,7 +132,7 @@ enum DesktopExternalModelCatalog {
         }
         let rows = object["data"] as? [[String: Any]] ?? []
         var seen = Set<String>()
-        let models: [DesktopExternalModelRecord] = rows.compactMap { row in
+        var models: [DesktopExternalModelRecord] = rows.compactMap { row in
             guard let upstream = row["id"] as? String, !upstream.isEmpty, seen.insert(upstream).inserted else {
                 return nil
             }
@@ -147,7 +149,28 @@ enum DesktopExternalModelCatalog {
                 id: catalogID,
                 upstreamID: upstream,
                 displayName: display,
-                enabled: false
+                enabled: false,
+                contextWindow: contextWindow(from: row),
+                maxContextWindow: maximumContextWindow(from: row)
+            )
+        }
+        if provider.preset == .grokOAuth, seen.insert("grok-4.7").inserted {
+            let upstreamID = "grok-4.7"
+            let catalogID = DesktopConnectedProvider.catalogModelID(
+                providerID: provider.id,
+                upstreamID: upstreamID
+            )
+            models.append(
+                DesktopExternalModelRecord(
+                    id: catalogID,
+                    upstreamID: upstreamID,
+                    displayName: DesktopModelOption.displayNameForUser(
+                        id: catalogID,
+                        model: upstreamID,
+                        fallback: "4.7 Grok"
+                    ),
+                    enabled: false
+                )
             )
         }
         if models.isEmpty, let fallback = fallbackRecords(for: provider), !fallback.isEmpty {
@@ -169,6 +192,20 @@ enum DesktopExternalModelCatalog {
         }
     }
 
+    private static func contextWindow(from row: [String: Any]) -> Int? {
+        positiveInteger(row["context_window"] ?? row["context_length"])
+    }
+
+    private static func maximumContextWindow(from row: [String: Any]) -> Int? {
+        positiveInteger(row["max_context_window"] ?? row["max_context_length"])
+    }
+
+    private static func positiveInteger(_ value: Any?) -> Int? {
+        guard let number = value as? NSNumber else { return nil }
+        let integer = number.intValue
+        return integer > 0 && NSNumber(value: integer) == number ? integer : nil
+    }
+
     private static func writeMergedCatalog(
         published: [DesktopExternalModelRecord],
         providers: [DesktopConnectedProvider]
@@ -176,7 +213,7 @@ enum DesktopExternalModelCatalog {
         try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
         var root = try nativeCatalogRoot()
         var models = root["models"] as? [[String: Any]] ?? []
-        let existing = Set(models.compactMap { $0["slug"] as? String })
+        var existing = Set(models.compactMap { $0["slug"] as? String })
         for index in models.indices {
             let slug = (models[index]["slug"] as? String ?? "").lowercased()
             if slug.contains("gpt-6-astra") {
@@ -185,6 +222,45 @@ enum DesktopExternalModelCatalog {
         }
         guard let template = models.first(where: { ($0["visibility"] as? String) == "list" }) ?? models.first else {
             throw DesktopExternalModelCatalogError.catalogWrite("The native Codex catalog has no models to clone.")
+        }
+        if let gpt6Template = models.first(where: { ($0["slug"] as? String) == "gpt-6-astra" }) {
+            for (slug, title) in [("gpt-6-sol", "Sol"), ("gpt-6-luna", "Luna")] where !existing.contains(slug) {
+                var entry = gpt6Template
+                entry["slug"] = slug
+                entry["display_name"] = "GPT-6-\(title)"
+                entry["description"] = "GPT-6 \(title), available with Standard and Fast processing."
+                entry["visibility"] = "list"
+                entry["supported_in_api"] = true
+                entry["default_reasoning_level"] = "medium"
+                entry["supported_reasoning_levels"] = gpt6ReasoningLevels
+                entry["additional_speed_tiers"] = ["fast"]
+                entry["service_tiers"] = [openAIFastServiceTier]
+                entry["model_messages"] = NSNull()
+                entry["availability_nux"] = NSNull()
+                entry["upgrade"] = NSNull()
+                models.append(entry)
+                existing.insert(slug)
+            }
+        }
+        if let solIndex = models.firstIndex(where: {
+            canonicalModelID($0["slug"] as? String ?? "") == "gpt-6-sol"
+        }) {
+            var reasoningLevels = models[solIndex]["supported_reasoning_levels"] as? [Any]
+                ?? gpt6ReasoningLevels.map { $0 as [String: Any] }
+            let alreadySupportsUltra = reasoningLevels.contains { level in
+                guard let level = level as? [String: Any],
+                      let effort = level["effort"] as? String else {
+                    return false
+                }
+                return effort.caseInsensitiveCompare("ultra") == .orderedSame
+            }
+            if !alreadySupportsUltra {
+                reasoningLevels.append([
+                    "effort": "ultra",
+                    "description": "Maximum reasoning with automatic task delegation.",
+                ])
+            }
+            models[solIndex]["supported_reasoning_levels"] = reasoningLevels
         }
         let providerByModelID = Dictionary(
             uniqueKeysWithValues: providers.flatMap { provider in
@@ -204,6 +280,25 @@ enum DesktopExternalModelCatalog {
         let data = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
         try data.write(to: catalogURL, options: .atomic)
         return catalogURL
+    }
+
+    private static func externalModelsForOverlay(
+        enabledModels: [DesktopExternalModelRecord],
+        providers: [DesktopConnectedProvider]
+    ) -> [DesktopExternalModelRecord] {
+        var result = enabledModels.filter { !isGrok47Fast($0.upstreamID) }
+        let includedIDs = Set(result.map(\.id))
+        for provider in providers {
+            for base in provider.models where base.enabled && isGrok47(base.upstreamID) {
+                guard let fast = provider.models.first(where: { isGrok47Fast($0.upstreamID) }),
+                      includedIDs.contains(base.id),
+                      !includedIDs.contains(fast.id) else { continue }
+                var companion = fast
+                companion.enabled = true
+                result.append(companion)
+            }
+        }
+        return result
     }
 
     private static var nativeCatalogCacheURL: URL {
@@ -293,7 +388,7 @@ enum DesktopExternalModelCatalog {
         entry["supported_in_api"] = true
         entry["default_reasoning_level"] = reasoning.defaultEffort
         entry["supported_reasoning_levels"] = reasoning.levels
-        entry["service_tiers"] = []
+        entry["service_tiers"] = grok47FastTier(for: record, provider: provider).map { [$0] } ?? []
         entry["additional_speed_tiers"] = []
         entry["base_instructions"] = """
         You are \(displayName), a coding assistant in Veo. Follow the user's instructions \
@@ -304,8 +399,73 @@ enum DesktopExternalModelCatalog {
         entry["supports_search_tool"] = false
         entry["upgrade"] = NSNull()
         entry["availability_nux"] = NSNull()
+        if let limits = record.reliableContextLimits {
+            if let suggested = limits.suggested { entry["context_window"] = suggested }
+            entry["max_context_window"] = limits.maximum
+        }
         if entry["priority"] is Int { entry["priority"] = 80 }
         return entry
+    }
+
+    /// Codex does not expose these limits through model/list. Read the same
+    /// bundled catalog already used to build Veo's local model overlay.
+    static func nativeContextLimits() -> [String: DesktopContextWindowLimits] {
+        guard let root = try? nativeCatalogRoot(),
+              let rows = root["models"] as? [[String: Any]] else { return [:] }
+        var result: [String: DesktopContextWindowLimits] = [:]
+        for row in rows {
+            guard let slug = row["slug"] as? String,
+                  let suggested = positiveInteger(row["context_window"]),
+                  let maximum = positiveInteger(row["max_context_window"]),
+                  let limits = DesktopContextWindowLimits(suggested: suggested, maximum: maximum) else { continue }
+            result[slug] = limits
+        }
+        return result
+    }
+
+    private static let openAIFastServiceTier: [String: String] = [
+        "id": "priority",
+        "name": "Fast",
+        "description": "Fast processing; uses more of your limits.",
+    ]
+
+    private static let gpt6ReasoningLevels: [[String: String]] = [
+        ["effort": "none", "description": "No reasoning effort."],
+        ["effort": "low", "description": "Some reasoning, still fast."],
+        ["effort": "medium", "description": "More thinking for harder work."],
+        ["effort": "high", "description": "Deeper reasoning for complex problems."],
+        ["effort": "xhigh", "description": "Extra reasoning depth for complex problems."],
+        ["effort": "max", "description": "Maximum reasoning depth."],
+    ]
+
+    private static func grok47FastTier(
+        for record: DesktopExternalModelRecord,
+        provider: DesktopConnectedProvider?
+    ) -> [String: String]? {
+        guard isGrok47(record.upstreamID),
+              let provider,
+              provider.preset == .grokOAuth else {
+            return nil
+        }
+        let fastModel = provider.models.first(where: { isGrok47Fast($0.upstreamID) })?.upstreamID
+            ?? "grok-4.7-fast"
+        return [
+            "id": "model-variant:\(provider.id):\(fastModel)",
+            "name": "Fast",
+            "description": "Use the Grok 4.7 Fast model variant.",
+        ]
+    }
+
+    private static func isGrok47(_ upstreamID: String) -> Bool {
+        canonicalModelID(upstreamID) == "grok-4.7"
+    }
+
+    private static func isGrok47Fast(_ upstreamID: String) -> Bool {
+        canonicalModelID(upstreamID) == "grok-4.7-fast"
+    }
+
+    private static func canonicalModelID(_ value: String) -> String {
+        value.lowercased().split(separator: "/").last.map(String.init) ?? value.lowercased()
     }
 
     private static func reasoningProfile(for upstreamID: String) -> (defaultEffort: String, levels: [[String: String]]) {
@@ -314,6 +474,9 @@ enum DesktopExternalModelCatalog {
         let medium = ["effort": "medium", "description": "More thinking for harder work."]
         let high = ["effort": "high", "description": "Deeper reasoning for complex problems."]
         let xhigh = ["effort": "xhigh", "description": "Maximum reasoning depth."]
+        if id.contains("grok-4.7") || id.contains("grok-4-7") {
+            return ("high", [low, medium, high, xhigh])
+        }
         if id.contains("grok-4.6") || id.contains("grok-4-6") {
             return ("high", [low, medium, high, xhigh])
         }

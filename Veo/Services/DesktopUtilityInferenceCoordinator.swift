@@ -47,6 +47,7 @@ final class DesktopUtilityInferenceCoordinator {
         outputSchema: [String: Any],
         model: String,
         effort: String = "low",
+        serviceTier: String? = nil,
         cwd: String
     ) async throws -> String {
         try await infer(
@@ -54,6 +55,7 @@ final class DesktopUtilityInferenceCoordinator {
             outputSchema: outputSchema,
             model: model,
             effort: effort,
+            serviceTier: serviceTier,
             cwd: cwd
         )
     }
@@ -66,6 +68,7 @@ final class DesktopUtilityInferenceCoordinator {
         outputSchema: [String: Any],
         model: String,
         effort: String = "low",
+        serviceTier: String? = nil,
         cwd: String
     ) async throws -> String {
         let inferenceID = UUID()
@@ -77,6 +80,7 @@ final class DesktopUtilityInferenceCoordinator {
                 outputSchema: outputSchema,
                 model: model,
                 effort: effort,
+                serviceTier: serviceTier,
                 cwd: cwd
             )
         }, onCancel: { [weak self] in
@@ -92,21 +96,24 @@ final class DesktopUtilityInferenceCoordinator {
         outputSchema: [String: Any],
         model: String,
         effort: String,
+        serviceTier: String?,
         cwd: String
     ) async throws -> String {
         try Task.checkCancellation()
+        var startParams: [String: Any] = [
+            "cwd": cwd,
+            "model": model,
+            "ephemeral": true,
+            "approvalPolicy": "never",
+            "sandbox": "read-only",
+            "baseInstructions": "You perform a private Veo utility task. Do not use tools. Return only the JSON required by the output schema.",
+            "developerInstructions": "Never inspect files, run commands, browse, or modify state. Analyze only input supplied directly by the application.",
+            "threadSource": "veoUtility",
+        ]
+        if let serviceTier { startParams["serviceTier"] = serviceTier }
         let response = try await client.request(
             method: "thread/start",
-            params: [
-                "cwd": cwd,
-                "model": model,
-                "ephemeral": true,
-                "approvalPolicy": "never",
-                "sandbox": "read-only",
-                "baseInstructions": "You perform a private Veo utility task. Do not use tools. Return only the JSON required by the output schema.",
-                "developerInstructions": "Never inspect files, run commands, browse, or modify state. Analyze only input supplied directly by the application.",
-                "threadSource": "veoUtility",
-            ]
+            params: startParams
         )
         guard let thread = response["thread"] as? [String: Any],
               let threadID = thread["id"] as? String else {
@@ -136,7 +143,8 @@ final class DesktopUtilityInferenceCoordinator {
                     input: input,
                     outputSchema: outputSchema,
                     model: model,
-                    effort: effort
+                    effort: effort,
+                    serviceTier: serviceTier
                 )
             }
         }
@@ -147,21 +155,24 @@ final class DesktopUtilityInferenceCoordinator {
         input: [[String: Any]],
         outputSchema: [String: Any],
         model: String,
-        effort: String
+        effort: String,
+        serviceTier: String?
     ) async {
         do {
+            var turnParams: [String: Any] = [
+                "threadId": threadID,
+                "input": input,
+                "model": model,
+                "effort": effort,
+                "summary": "none",
+                "approvalPolicy": "never",
+                "sandboxPolicy": ["type": "readOnly", "networkAccess": false],
+                "outputSchema": outputSchema,
+            ]
+            if let serviceTier { turnParams["serviceTier"] = serviceTier }
             let response = try await client.request(
                 method: "turn/start",
-                params: [
-                    "threadId": threadID,
-                    "input": input,
-                    "model": model,
-                    "effort": effort,
-                    "summary": "none",
-                    "approvalPolicy": "never",
-                    "sandboxPolicy": ["type": "readOnly", "networkAccess": false],
-                    "outputSchema": outputSchema,
-                ]
+                params: turnParams
             )
             let turn = response["turn"] as? [String: Any]
             let turnID = turn?["id"] as? String

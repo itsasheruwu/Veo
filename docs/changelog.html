@@ -29,17 +29,41 @@
 <section class="page-head">
   <div class="wrap">
     <h1>Changelog</h1>
-    <p class="lede">Every Veo release, newest first. Tags and signed assets live on <a href="https://github.com/itsasheruwu/Veo/releases" style="color:var(--accent)">GitHub Releases</a>.</p>
+    <p class="lede">Every Veo release, newest first. Tags and installer assets live on <a href="https://github.com/itsasheruwu/Veo/releases" style="color:var(--accent)">GitHub Releases</a>.</p>
   </div>
 </section>
 
 <div class="wrap" style="padding-bottom:40px">
 
+  <article class="release" id="v2-3-0">
+    <div class="side">
+      <div class="ver">2.3</div>
+      <div class="date">24 Sep 2026</div>
+      <span class="tag">Latest</span>
+    </div>
+    <div>
+      <div class="block">
+        <h3>Auto chooses once, then stays put</h3>
+        <p>Opt into first-turn Auto routing to choose a model, reasoning effort, and speed from the models you have enabled. Use Jev with your own API key or your configured Utility model. The chosen route stays with the chat, with controls for Fast mode and Ultra reasoning and a visible fallback if routing is unavailable. Jev sends up to the first 24,000 characters of the first prompt to TypeSafe AI.</p>
+      </div>
+      <div class="block">
+        <h3>GPT-6 family routing</h3>
+        <p>GPT-6 Sol and Luna join Astra in the picker when available. The new 6 Auto route can coordinate the family for implementation, escalation, and review, while retaining explicit single-model fallbacks if multi-agent support or a variant is unavailable.</p>
+      </div>
+      <div class="block">
+        <h3>Context and provider controls</h3>
+        <p>Set a supported model’s context window from presets or a custom token count, with model-specific limits and a return to default. Provider model metadata now supplies context limits where available. Grok 4.7 and its Fast variant gain more reliable catalog and request handling.</p>
+      </div>
+      <div class="block">
+        <p class="faint"><a href="downloads.html" style="color:var(--accent)">Download 2.3</a> · <a href="https://github.com/itsasheruwu/Veo/releases/tag/v2.3.0" style="color:var(--accent)">Tag v2.3.0</a></p>
+      </div>
+    </div>
+  </article>
+
   <article class="release" id="v2-2-0">
     <div class="side">
       <div class="ver">2.2</div>
       <div class="date">18 Sep 2026</div>
-      <span class="tag">Latest</span>
     </div>
     <div>
       <div class="block">
@@ -63,7 +87,7 @@
         <p>Drop files onto a terminal pane to insert quoted paths. Customize command shortcuts in Settings. When the connected CLI supports it, Veo surfaces background agent terminals, live turn settings, and richer approval review, with smoother streamed Markdown.</p>
       </div>
       <div class="block">
-        <p class="faint"><a href="downloads.html" style="color:var(--accent)">Download 2.2</a> · <a href="https://github.com/itsasheruwu/Veo/releases/tag/v2.2.0" style="color:var(--accent)">Tag v2.2.0</a></p>
+        <p class="faint"><a href="https://github.com/itsasheruwu/Veo/releases/download/v2.2.0/Veo-2.2-macOS-universal.dmg" style="color:var(--accent)">Download 2.2</a> · <a href="https://github.com/itsasheruwu/Veo/releases/tag/v2.2.0" style="color:var(--accent)">Tag v2.2.0</a></p>
       </div>
     </div>
   </article>
@@ -389,9 +413,9 @@
   <div class="wrap">
     <div class="cta">
       <h2>Update from inside the app.</h2>
-      <p>Veo 1.2 and later check for releases themselves and verify the signature before installing.</p>
+      <p>Veo 1.2 and later check for releases themselves and check the downloaded app’s ad-hoc signature for integrity before installing.</p>
       <div class="hero-actions" style="margin-bottom:0">
-        <a class="btn btn-primary btn-lg" href="downloads.html">Get Veo 2.2</a>
+        <a class="btn btn-primary btn-lg" href="downloads.html">Get Veo 2.3</a>
       </div>
     </div>
   </div>

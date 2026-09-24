@@ -97,7 +97,12 @@ final class DesktopCodexStore {
         let payload = DesktopComposerPayload(
             id: current.answerClientID, text: text, accessMode: accessMode,
             model: selectedModel?.model, reasoningEffort: selectedReasoningEffort,
-            serviceTier: selectedServiceTier, interactionMode: interactionMode
+            serviceTier: selectedServiceTier,
+            contextWindow: requestedContextWindow(
+                for: selectedModel?.model,
+                usesAuto: autoModelSelectionEnabled || hasLockedAutoModel || routingMode.isFamilyAuto
+            ),
+            interactionMode: interactionMode
         )
         autoContinuationCoordinator.cancel(threadID: current.threadID, detail: "Answered a question.")
         // Persist in the normal outbox before closing the question. Transport
@@ -194,8 +199,73 @@ final class DesktopCodexStore {
     private(set) var accountOverviewMessage: String?
     private(set) var accountResourcesMessage: String?
     var models: [DesktopModelOption] = []
+    private(set) var contextLimitsByModelID: [String: DesktopContextWindowLimits] = [:]
+    private var contextChoicesByModelID: [String: DesktopContextWindowChoice] = [:]
+    private var pendingContextRollbackByModelID: [String: DesktopContextWindowChoice] = [:]
+    private var appliedContextByRuntimeID: [String: String] = [:]
     /// Bumps when enabled-model or external-provider preferences change so pickers refresh.
     private(set) var catalogPreferenceRevision = 0
+    var autoModelSelectionEnabled = UserDefaults.standard.bool(forKey: "VeoDesktop.autoModelSelectionEnabled") {
+        didSet { defaults.set(autoModelSelectionEnabled, forKey: "VeoDesktop.autoModelSelectionEnabled") }
+    }
+    var autoRouterMode = DesktopAutoRouterMode(
+        rawValue: UserDefaults.standard.string(forKey: DesktopAutoRouterPreferences.modeKey) ?? ""
+    ) ?? .jev {
+        didSet { defaults.set(autoRouterMode.rawValue, forKey: DesktopAutoRouterPreferences.modeKey) }
+    }
+    var autoSpeedPolicy = DesktopAutoSpeedPolicy(
+        rawValue: UserDefaults.standard.string(forKey: DesktopAutoRouterPreferences.speedPolicyKey) ?? ""
+    ) ?? .disallow {
+        didSet { defaults.set(autoSpeedPolicy.rawValue, forKey: DesktopAutoRouterPreferences.speedPolicyKey) }
+    }
+    var autoRouterAllowsUltraReasoning = UserDefaults.standard.bool(
+        forKey: DesktopAutoRouterPreferences.allowsUltraReasoningKey
+    ) {
+        didSet {
+            defaults.set(
+                autoRouterAllowsUltraReasoning,
+                forKey: DesktopAutoRouterPreferences.allowsUltraReasoningKey
+            )
+        }
+    }
+    private var autoRoutingTasks: [String: Task<DesktopAutoRouterSelection, Error>] = [:]
+    private var autoModelChoices: [String: String] = UserDefaults.standard.dictionary(forKey: "VeoDesktop.autoModelChoices") as? [String: String] ?? [:]
+    private var autoModelEfforts: [String: String] = UserDefaults.standard.dictionary(forKey: "VeoDesktop.autoModelEfforts") as? [String: String] ?? [:]
+    private var autoModelServiceTiers: [String: String] = UserDefaults.standard.dictionary(forKey: "VeoDesktop.autoModelServiceTiers") as? [String: String] ?? [:]
+    private var autoModelSpeedPolicies: [String: String] = UserDefaults.standard.dictionary(forKey: "VeoDesktop.autoModelSpeedPolicies") as? [String: String] ?? [:]
+    private var autoModelRoutingIssues = UserDefaults.standard.dictionary(forKey: "VeoDesktop.autoModelRoutingIssues") as? [String: String] ?? [:]
+    var autoModelRoutingDetail: String? {
+        selectedThreadID.flatMap { autoModelRoutingIssues[$0] }
+    }
+    var isRoutingSelectedModel: Bool { selectedThreadID.map { autoRoutingTasks[$0] != nil } ?? false }
+    var hasLockedAutoModel: Bool { selectedThreadID.map { autoModelChoices[$0] != nil } ?? false }
+    var displayedAutoSpeedPolicy: DesktopAutoSpeedPolicy {
+        guard let id = selectedThreadID,
+              let rawValue = autoModelSpeedPolicies[id],
+              let policy = DesktopAutoSpeedPolicy(rawValue: rawValue) else {
+            return autoSpeedPolicy
+        }
+        return policy
+    }
+    var autoModelRoutingStatus: String? {
+        guard let id = selectedThreadID, let model = autoModelChoices[id] else { return nil }
+        let selectedOption = models.first(where: { $0.model == model })
+        let modelName = selectedOption?.userFacingDisplayName ?? model
+        let effort = autoModelEfforts[id].map {
+            DesktopReasoningOption(id: $0, description: "").title
+        }
+        let speed: String?
+        if selectedOption?.isGPT53CodexSpark == true {
+            speed = "Ultrafast"
+        } else if let tierID = autoModelServiceTiers[id],
+                  selectedOption?.serviceTiers.first(where: { $0.id == tierID })?.isFastModeTier == true {
+            speed = "Fast"
+        } else {
+            speed = nil
+        }
+        let details = [effort, speed].compactMap { $0 }.joined(separator: " · ")
+        return "Auto chose \(modelName)" + (details.isEmpty ? "" : " · \(details)")
+    }
     var selectedModelID: String?
     var selectedReasoningEffort: String?
     var selectedServiceTier: String?
@@ -330,6 +400,23 @@ final class DesktopCodexStore {
         self.realtimeAudio = resolvedRealtimeAudio
         self.temporaryWorkspaceService = temporaryWorkspaceService
         self.defaults = defaults
+        self.contextChoicesByModelID = defaults.data(forKey: "VeoDesktop.contextChoicesByModelID")
+            .flatMap { try? JSONDecoder().decode([String: DesktopContextWindowChoice].self, from: $0) } ?? [:]
+        self.autoModelSelectionEnabled = defaults.bool(forKey: "VeoDesktop.autoModelSelectionEnabled")
+        self.autoRouterMode = DesktopAutoRouterMode(
+            rawValue: defaults.string(forKey: DesktopAutoRouterPreferences.modeKey) ?? ""
+        ) ?? .jev
+        self.autoSpeedPolicy = DesktopAutoSpeedPolicy(
+            rawValue: defaults.string(forKey: DesktopAutoRouterPreferences.speedPolicyKey) ?? ""
+        ) ?? .disallow
+        self.autoRouterAllowsUltraReasoning = defaults.bool(
+            forKey: DesktopAutoRouterPreferences.allowsUltraReasoningKey
+        )
+        self.autoModelChoices = defaults.dictionary(forKey: "VeoDesktop.autoModelChoices") as? [String: String] ?? [:]
+        self.autoModelEfforts = defaults.dictionary(forKey: "VeoDesktop.autoModelEfforts") as? [String: String] ?? [:]
+        self.autoModelServiceTiers = defaults.dictionary(forKey: "VeoDesktop.autoModelServiceTiers") as? [String: String] ?? [:]
+        self.autoModelSpeedPolicies = defaults.dictionary(forKey: "VeoDesktop.autoModelSpeedPolicies") as? [String: String] ?? [:]
+        self.autoModelRoutingIssues = defaults.dictionary(forKey: "VeoDesktop.autoModelRoutingIssues") as? [String: String] ?? [:]
         self.asyncQuestions = DesktopAsyncQuestionStore(defaults: defaults)
         self.autoContinuationCoordinator = DesktopAutoContinuationCoordinator(defaults: defaults)
 
@@ -747,6 +834,7 @@ final class DesktopCodexStore {
         _ = catalogPreferenceRevision
         let preferences = DesktopModelCatalogPreferences.shared
         return models.filter { model in
+            if model.isGrok47FastVariant { return false }
             if model.isExternal {
                 return preferences.isExternalModelEnabled(model.id)
             }
@@ -766,7 +854,7 @@ final class DesktopCodexStore {
             groups.append(
                 DesktopEnabledModelGroup(
                     id: "gpt56",
-                    title: "GPT-5.6",
+                    title: "5.6",
                     rows: gpt56.map { model in
                         DesktopEnabledModelRow(
                             id: model.id,
@@ -778,13 +866,13 @@ final class DesktopCodexStore {
             )
         }
 
-        let astra = models.filter { $0.isGPT6Astra && !$0.isExternal }
-        if !astra.isEmpty {
+        let gpt6 = models.filter { $0.isGPT6Family && !$0.isExternal }
+        if !gpt6.isEmpty {
             groups.append(
                 DesktopEnabledModelGroup(
-                    id: "astra",
-                    title: "Astra",
-                    rows: astra.map { model in
+                    id: "gpt6",
+                    title: "GPT-6",
+                    rows: gpt6.map { model in
                         DesktopEnabledModelRow(
                             id: model.id,
                             title: model.userFacingDisplayName,
@@ -795,7 +883,7 @@ final class DesktopCodexStore {
             )
         }
 
-        let otherNative = models.filter { !$0.isExternal && !$0.isGPT56Family && !$0.isGPT6Astra }
+        let otherNative = models.filter { !$0.isExternal && !$0.isGPT56Family && !$0.isGPT6Family }
         if !otherNative.isEmpty {
             groups.append(
                 DesktopEnabledModelGroup(
@@ -926,9 +1014,9 @@ final class DesktopCodexStore {
 
     private func fallbackSelectionIfNeeded() {
         let visible = visibleModels
-        if routingMode == .auto {
-            let hasGPT56 = visible.contains { $0.isGPT56Family }
-            if !hasGPT56, let first = visible.first {
+        if let family = routingMode.autoFamily {
+            let hasFamilyModel = visible.contains(where: family.contains)
+            if !hasFamilyModel, let first = visible.first {
                 selectModel(first.id)
             }
             return
@@ -954,20 +1042,33 @@ final class DesktopCodexStore {
     }
 
     var modelDisplayName: String {
-        routingMode == .auto ? "GPT-5.6 Auto" : (selectedModel?.userFacingDisplayName ?? "Model")
+        if let threadID = selectedThreadID, let model = autoModelChoices[threadID] {
+            return models.first(where: { $0.model == model })?.userFacingDisplayName ?? model
+        }
+        if autoModelSelectionEnabled { return "Auto" }
+        return routingMode.autoFamily?.title ?? (selectedModel?.userFacingDisplayName ?? "Model")
     }
 
     var resolvedAutoRoutePlan: DesktopAutoRoutePlan? {
-        guard hasLoadedAutoCapabilities else { return nil }
-        return try? DesktopAutoRoutePlan.resolve(models: visibleModels, experimentalFeatures: experimentalFeatures)
+        guard hasLoadedAutoCapabilities, let family = routingMode.autoFamily else { return nil }
+        return try? DesktopAutoRoutePlan.resolve(
+            models: visibleModels,
+            experimentalFeatures: experimentalFeatures,
+            family: family
+        )
     }
 
     var autoRouteErrorMessage: String? {
+        guard let family = routingMode.autoFamily else { return nil }
         guard hasLoadedAutoCapabilities else {
-            return "Checking GPT-5.6 Auto capabilities…"
+            return "Checking \(family.title) capabilities…"
         }
         do {
-            _ = try DesktopAutoRoutePlan.resolve(models: visibleModels, experimentalFeatures: experimentalFeatures)
+            _ = try DesktopAutoRoutePlan.resolve(
+                models: visibleModels,
+                experimentalFeatures: experimentalFeatures,
+                family: family
+            )
             return nil
         } catch {
             return error.localizedDescription
@@ -985,7 +1086,7 @@ final class DesktopCodexStore {
     }
 
     var utilityModelDisplayName: String {
-        resolvedUtilityModel?.displayName ?? "GPT-5.6 Luna"
+        resolvedUtilityModel?.userFacingDisplayName ?? "5.6 Luna"
     }
 
     var utilityModelOptions: [DesktopModelOption] {
@@ -1087,7 +1188,7 @@ final class DesktopCodexStore {
     }
 
     var isBusyTurn: Bool {
-        isSubmittingTurn || isRunningTurn
+        isSubmittingTurn || isRunningTurn || isRoutingSelectedModel
     }
 
     /// Group only when timeline content changes, not when scrolling or composer state changes.
@@ -1203,7 +1304,7 @@ final class DesktopCodexStore {
             timeline: timeline,
             isTurnRunning: isBusyTurn,
             selectedPlan: resolvedAutoRoutePlan,
-            isAutoSelected: routingMode == .auto
+            isAutoSelected: routingMode.isFamilyAuto
         )
     }
 
@@ -4455,6 +4556,7 @@ final class DesktopCodexStore {
     }
 
     func selectModel(_ id: String) {
+        guard !autoModelSelectionEnabled else { return }
         guard let model = visibleModels.first(where: { $0.id == id }) ?? models.first(where: { $0.id == id }) else { return }
         let isNewDirectModel = selectedModelID != model.id
         setRoutingMode(.direct)
@@ -4471,6 +4573,69 @@ final class DesktopCodexStore {
         updateActiveThreadSettings()
     }
 
+    var selectedContextChoice: DesktopContextWindowChoice {
+        guard routingMode == .direct, !autoModelSelectionEnabled, !hasLockedAutoModel,
+              let id = selectedModel?.id else { return .default }
+        guard contextLimitsByModelID[id] != nil else { return .default }
+        return contextChoicesByModelID[id] ?? .default
+    }
+
+    var selectedContextLimits: DesktopContextWindowLimits? {
+        guard let model = selectedModel else { return nil }
+        return contextLimitsByModelID[model.id]
+    }
+
+    var canSelectContextOverride: Bool {
+        routingMode == .direct && !autoModelSelectionEnabled && !hasLockedAutoModel
+            && selectedContextLimits != nil
+    }
+
+    @discardableResult
+    func selectContextChoice(_ choice: DesktopContextWindowChoice) -> Bool {
+        guard let model = selectedModel else { return false }
+        if choice.kind != .default {
+            guard canSelectContextOverride, let limits = selectedContextLimits else { return false }
+            guard let tokens = choice.tokens, tokens > 0, tokens <= limits.maximum else { return false }
+        }
+        let previous = contextChoicesByModelID[model.id] ?? .default
+        guard previous != choice else { return true }
+        if pendingContextRollbackByModelID[model.id] == nil {
+            pendingContextRollbackByModelID[model.id] = previous
+        }
+        if choice.kind == .default {
+            contextChoicesByModelID.removeValue(forKey: model.id)
+        } else {
+            contextChoicesByModelID[model.id] = choice
+        }
+        persistContextChoices()
+        return true
+    }
+
+    private func persistContextChoices() {
+        if let data = try? JSONEncoder().encode(contextChoicesByModelID) {
+            defaults.set(data, forKey: "VeoDesktop.contextChoicesByModelID")
+        }
+    }
+
+    private func restorePreviousContextChoice(for modelName: String?) {
+        guard let model = modelOption(for: modelName),
+              let previous = pendingContextRollbackByModelID.removeValue(forKey: model.id) else { return }
+        if previous.kind == .default {
+            contextChoicesByModelID.removeValue(forKey: model.id)
+        } else {
+            contextChoicesByModelID[model.id] = previous
+        }
+        persistContextChoices()
+    }
+
+    private func requestedContextWindow(for modelName: String?, usesAuto: Bool) -> Int? {
+        guard let model = modelOption(for: modelName),
+              let limits = contextLimitsByModelID[model.id] else { return nil }
+        if usesAuto { return limits.suggested }
+        let choice = contextChoicesByModelID[model.id] ?? .default
+        return choice.kind == .default ? limits.suggested : choice.tokens
+    }
+
     private func modelProviderID(for modelName: String?) -> String? {
         guard let modelName, !modelName.isEmpty else { return nil }
         if let match = models.first(where: { $0.id == modelName || $0.model == modelName }) {
@@ -4480,8 +4645,45 @@ final class DesktopCodexStore {
             ?? (modelName.contains("/") ? String(modelName.split(separator: "/").first ?? "") : nil)
     }
 
+    private func modelVariantRequest(for serviceTier: String?) -> (model: String, providerID: String)? {
+        guard let serviceTier, serviceTier.hasPrefix("model-variant:") else { return nil }
+        let parts = serviceTier.dropFirst("model-variant:".count)
+            .split(separator: ":", maxSplits: 1)
+        guard parts.count == 2 else { return nil }
+        return (String(parts[1]), String(parts[0]))
+    }
+
+    private func resolvedRoute(
+        model: String,
+        effort: String?,
+        serviceTier: String?,
+        autoRoutePlan: DesktopAutoRoutePlan?
+    ) -> EffectiveSelectedRoute {
+        if let variant = modelVariantRequest(for: serviceTier) {
+            return EffectiveSelectedRoute(
+                model: variant.model,
+                effort: effort,
+                serviceTier: nil,
+                modelProviderID: variant.providerID,
+                autoRoutePlan: autoRoutePlan
+            )
+        }
+        return EffectiveSelectedRoute(
+            model: model,
+            effort: effort,
+            serviceTier: serviceTier,
+            modelProviderID: modelProviderID(for: model),
+            autoRoutePlan: autoRoutePlan
+        )
+    }
+
     func selectAutoRouting() {
-        setRoutingMode(.auto)
+        selectAutoRouting(family: .gpt56)
+    }
+
+    func selectAutoRouting(family: DesktopAutoRouteFamily) {
+        guard !autoModelSelectionEnabled else { return }
+        setRoutingMode(family == .gpt6 ? .autoGPT6 : .auto)
         updateActiveThreadSettings()
     }
 
@@ -4710,6 +4912,10 @@ final class DesktopCodexStore {
             model: route.model,
             reasoningEffort: route.effort,
             serviceTier: route.serviceTier,
+            contextWindow: requestedContextWindow(
+                for: route.model,
+                usesAuto: autoModelSelectionEnabled || hasLockedAutoModel || routingMode.isFamilyAuto
+            ),
             interactionMode: .agentic,
             routingMode: routingMode,
             autoRoutePlan: route.autoRoutePlan,
@@ -4801,15 +5007,16 @@ final class DesktopCodexStore {
         let message = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard canSend else { return }
         let autoPlan: DesktopAutoRoutePlan?
-        if routingMode == .auto {
+        if let family = routingMode.autoFamily, !autoModelSelectionEnabled && !hasLockedAutoModel {
             guard hasLoadedAutoCapabilities else {
-                transientError = "GPT-5.6 Auto is still checking Codex capabilities. Try again in a moment."
+                transientError = "\(family.title) is still checking Codex capabilities. Try again in a moment."
                 return
             }
             do {
                 autoPlan = try DesktopAutoRoutePlan.resolve(
                     models: models,
-                    experimentalFeatures: experimentalFeatures
+                    experimentalFeatures: experimentalFeatures,
+                    family: family
                 )
             } catch {
                 transientError = error.localizedDescription
@@ -4818,7 +5025,7 @@ final class DesktopCodexStore {
         } else {
             autoPlan = nil
         }
-        let payload = DesktopComposerPayload(
+        var payload = DesktopComposerPayload(
             id: autoPlan.map { $0.clientIDPrefix + UUID().uuidString } ?? UUID().uuidString,
             text: message,
             attachments: attachments,
@@ -4826,17 +5033,25 @@ final class DesktopCodexStore {
             model: autoPlan?.parent.model ?? selectedModel?.model,
             reasoningEffort: autoPlan?.parent.effort ?? selectedReasoningEffort,
             serviceTier: autoPlan == nil ? selectedServiceTier : nil,
+            contextWindow: requestedContextWindow(
+                for: autoPlan?.parent.model ?? selectedModel?.model,
+                usesAuto: autoModelSelectionEnabled || hasLockedAutoModel || routingMode.isFamilyAuto
+            ),
             interactionMode: interactionMode,
-            routingMode: routingMode,
+            routingMode: (autoModelSelectionEnabled || hasLockedAutoModel) ? .direct : routingMode,
             autoRoutePlan: autoPlan
         )
 
+        payload.autoModelSelectionEnabled = autoModelSelectionEnabled || hasLockedAutoModel
+        payload.autoRouterMode = autoRouterMode
+        payload.autoSpeedPolicy = autoSpeedPolicy
+        payload.autoRouterAllowsUltraReasoning = autoRouterAllowsUltraReasoning
         let requestedThreadID = selectedThreadID
         let draftContextID = currentDraftContextID
         let queueKey = requestedThreadID ?? draftContextID
         let originNewChatGenerationID = requestedThreadID == nil ? newChatGenerationID : nil
 
-        let imageAttachments = localImagesRequiringVisionFallback(for: payload)
+        let imageAttachments = payload.autoModelSelectionEnabled ? [] : localImagesRequiringVisionFallback(for: payload)
         guard !imageAttachments.isEmpty else {
             submitPreparedDraft(
                 payload,
@@ -4988,6 +5203,104 @@ final class DesktopCodexStore {
         return models.first { option in
             option.model.caseInsensitiveCompare(modelName) == .orderedSame
                 || option.id.caseInsensitiveCompare(modelName) == .orderedSame
+        }
+    }
+
+    private func contextSignature(_ tokens: Int?) -> String {
+        tokens.map(String.init) ?? "runtime-default"
+    }
+
+    /// Context is session configuration, not a live thread setting. Rejoin an
+    /// idle session before its next turn so a model switch cannot silently keep
+    /// the previous model's window.
+    private func ensureContextConfigured(
+        runtimeID: String,
+        uiThreadID: String,
+        model: String?,
+        choiceModelName: String?,
+        providerID: String?,
+        serviceTier: String?,
+        contextWindow: Int?,
+        cwd: String,
+        accessMode: DesktopAccessMode
+    ) async throws {
+        let signature = contextSignature(contextWindow)
+        guard appliedContextByRuntimeID[runtimeID] != signature else {
+            if let id = modelOption(for: choiceModelName)?.id {
+                pendingContextRollbackByModelID.removeValue(forKey: id)
+            }
+            return
+        }
+        // After a relaunch the prior session's context is unknown. Older runtimes
+        // cannot rejoin it, so allow unchanged chats to continue without claiming
+        // that the requested context was applied. Explicit edits still fail safely.
+        let canContinueWithoutRejoin = appliedContextByRuntimeID[runtimeID] == nil
+            && (modelOption(for: choiceModelName).map { pendingContextRollbackByModelID[$0.id] == nil } ?? true)
+        if canContinueWithoutRejoin, !capabilities.supports(.threadSubscriptions) {
+            return
+        }
+        guard activeTurnIDByThread[uiThreadID] == nil,
+              !(selectedThreadID == uiThreadID && isRunningTurn) else {
+            throw CodexAppServerClientError.invalidInput(
+                "Context will apply after the current turn finishes."
+            )
+        }
+        guard capabilities.supports(.threadSubscriptions) else {
+            restorePreviousContextChoice(for: choiceModelName)
+            throw CodexAppServerClientError.unsupportedCapability("context changes in an existing chat")
+        }
+        var params: [String: Any] = [
+            "threadId": runtimeID,
+            "cwd": cwd,
+            "approvalPolicy": accessMode.approvalPolicyValue,
+            "sandbox": accessMode.sandboxValue,
+            "excludeTurns": true,
+        ]
+        if let model { params["model"] = model }
+        if let providerID { params["modelProvider"] = providerID }
+        if let serviceTier { params["serviceTier"] = serviceTier }
+        if let contextWindow {
+            params["config"] = ["model_context_window": contextWindow]
+        }
+        let previousSignature = appliedContextByRuntimeID[runtimeID]
+        var didUnsubscribe = false
+        do {
+            _ = try await client.request(
+                method: "thread/unsubscribe",
+                params: ["threadId": runtimeID],
+                requiring: .threadSubscriptions
+            )
+            didUnsubscribe = true
+            appliedContextByRuntimeID.removeValue(forKey: runtimeID)
+            let response = try await client.request(method: "thread/resume", params: params)
+            if let thread = response["thread"] as? [String: Any] {
+                historyModeByThreadID[uiThreadID] = thread.string("historyMode")
+            }
+            if selectedThreadID == uiThreadID { appServer0153.selectRuntimeThread(runtimeID) }
+            appliedContextByRuntimeID[runtimeID] = signature
+            if let id = modelOption(for: choiceModelName)?.id {
+                pendingContextRollbackByModelID.removeValue(forKey: id)
+            }
+        } catch {
+            // Capability negotiation is optimistic until the first request. An
+            // older server may reject unsubscribe on this first resumed turn.
+            if canContinueWithoutRejoin, !didUnsubscribe,
+               !capabilities.supports(.threadSubscriptions) {
+                return
+            }
+            restorePreviousContextChoice(for: choiceModelName)
+            if didUnsubscribe {
+                var rollbackParams = params
+                if let previousSignature, let previous = Int(previousSignature) {
+                    rollbackParams["config"] = ["model_context_window": previous]
+                } else {
+                    rollbackParams.removeValue(forKey: "config")
+                }
+                if (try? await client.request(method: "thread/resume", params: rollbackParams)) != nil {
+                    appliedContextByRuntimeID[runtimeID] = previousSignature ?? "runtime-default"
+                }
+            }
+            throw error
         }
     }
 
@@ -5175,6 +5488,10 @@ final class DesktopCodexStore {
 
     func stopTurn() {
         guard let threadID = selectedThreadID else { return }
+        if let routingTask = autoRoutingTasks[threadID] {
+            routingTask.cancel()
+            return
+        }
         flushPendingTimelineDeltas()
         Task {
             do {
@@ -5638,6 +5955,23 @@ final class DesktopCodexStore {
             }
 
             let parsed = rows.compactMap(DesktopModelOption.parse)
+            let nativeLimits = await Task.detached(priority: .utility) {
+                DesktopExternalModelCatalog.nativeContextLimits()
+            }.value
+            let externalRecords = DesktopModelCatalogPreferences.shared.providers.flatMap(\.models)
+            var resolvedLimits: [String: DesktopContextWindowLimits] = [:]
+            for model in parsed {
+                if model.isExternal {
+                    resolvedLimits[model.id] = externalRecords.first(where: { $0.id == model.id })?.reliableContextLimits
+                } else {
+                    // Veo synthesizes Sol and Luna from Astra when the bundled
+                    // catalog has not listed them yet; mirror that same source.
+                    resolvedLimits[model.id] = nativeLimits[model.model]
+                        ?? nativeLimits[model.id]
+                        ?? (model.isGPT6Sol || model.isGPT6Luna ? nativeLimits["gpt-6-astra"] : nil)
+                }
+            }
+            contextLimitsByModelID = resolvedLimits
             models = parsed
             let visible = visibleModels
             guard let model = visible.first(where: { $0.id == selectedModelID })
@@ -6970,8 +7304,11 @@ final class DesktopCodexStore {
                 "sandbox": accessMode.sandboxValue,
                 "excludeTurns": true,
             ]
-            if let model = effectiveSelectedRoute?.model { params["model"] = model }
-            if let tier = effectiveSelectedRoute?.serviceTier { params["serviceTier"] = tier }
+            if let route = effectiveSelectedRoute {
+                params["model"] = route.model
+                if let providerID = route.modelProviderID { params["modelProvider"] = providerID }
+                if let tier = route.serviceTier { params["serviceTier"] = tier }
+            }
             if selectedModel?.supportsPersonality == true { params["personality"] = selectedPersonality }
             let response = try await client.request(
                 method: "thread/resume",
@@ -7060,9 +7397,11 @@ final class DesktopCodexStore {
         // Persisted queues must never inherit broader settings from whichever chat
         // happens to be selected when they dispatch. Legacy payloads fail safe.
         let deliveryAccessMode = payload.accessMode ?? .workspace
-        let deliveryModel = payload.model
-        let deliveryEffort = payload.reasoningEffort
-        let deliveryTier = payload.serviceTier
+        var deliveryModel = payload.model
+        var deliveryEffort = payload.reasoningEffort
+        var deliveryTier = payload.serviceTier
+        var deliveryContextWindow = payload.contextWindow
+        var deliveryProviderID: String?
         let ownsInFlightReservation: Bool
         if fromQueue, !inFlightAlreadyReserved {
             guard queuedDeliveryInFlightIDs.insert(payload.id).inserted else { return }
@@ -7120,6 +7459,108 @@ final class DesktopCodexStore {
                 )
             }
 
+            if payload.autoModelSelectionEnabled || autoModelChoices[uiThreadID] != nil {
+                if let lockedModel = autoModelChoices[uiThreadID] {
+                    // The catalog can change, but an existing thread must never reroute.
+                    deliveryModel = lockedModel
+                    deliveryEffort = autoModelEfforts[uiThreadID]
+                    deliveryTier = autoModelServiceTiers[uiThreadID]
+                    deliveryContextWindow = requestedContextWindow(for: lockedModel, usesAuto: true)
+                } else if thread.runtimeThreadID != nil {
+                    // Existing sessions retain their runtime route. Auto is first-turn only.
+                    deliveryModel = nil
+                    deliveryEffort = nil
+                    deliveryTier = nil
+                } else {
+                    let eligibleModels = visibleModels.filter { model in
+                        (model.retirementAt.map { $0 > Date() } ?? true)
+                            && (payload.attachments.allSatisfy { $0.kind != .image && $0.kind != .localImage } || model.supportsImageInput)
+                    }
+                    let candidates = DesktopAutoRoutingCandidate.make(
+                        models: eligibleModels,
+                        allowsFastMode: payload.autoSpeedPolicy == .allow,
+                        allowsUltraReasoning: payload.autoRouterAllowsUltraReasoning
+                    )
+                    let task = Task { [utilityInference] in
+                        switch payload.autoRouterMode {
+                        case .jev:
+                            return try await DesktopJevRouter.route(
+                                text: payload.text,
+                                candidates: candidates
+                            )
+                        case .utility:
+                            guard let utilityModel = resolvedUtilityModel else {
+                                return DesktopAutoRouterSelection(
+                                    route: try DesktopAutoRoutingCandidate.fallback(in: candidates),
+                                    usedFallback: true,
+                                    issue: "The Utility model is unavailable. Choose another in Settings."
+                                )
+                            }
+                            return try await DesktopUtilityModelRouter.route(
+                                text: payload.text,
+                                candidates: candidates,
+                                utilityModel: utilityModel,
+                                inference: utilityInference,
+                                cwd: thread.cwd
+                            )
+                        }
+                    }
+                    autoRoutingTasks[uiThreadID] = task
+                    defer { autoRoutingTasks.removeValue(forKey: uiThreadID) }
+                    let selection = try await task.value
+                    var routed = selection.route
+                    guard !task.isCancelled else { throw CancellationError() }
+                    try Task.checkCancellation()
+                    if !visibleModels.contains(where: { $0.id == routed.model.id }) {
+                        let currentCandidates = DesktopAutoRoutingCandidate.make(
+                            models: visibleModels,
+                            allowsFastMode: payload.autoSpeedPolicy == .allow,
+                            allowsUltraReasoning: payload.autoRouterAllowsUltraReasoning
+                        )
+                        routed = try DesktopAutoRoutingCandidate.fallback(in: currentCandidates)
+                    }
+                    deliveryModel = routed.model.model
+                    deliveryEffort = routed.effort
+                    deliveryTier = routed.serviceTier
+                    // Auto routing never inherits the model's manually saved choice.
+                    deliveryContextWindow = requestedContextWindow(for: deliveryModel, usesAuto: true)
+                    if selection.usedFallback {
+                        autoModelRoutingIssues[uiThreadID] = selection.issue
+                    } else {
+                        autoModelRoutingIssues.removeValue(forKey: uiThreadID)
+                    }
+                    defaults.set(autoModelRoutingIssues, forKey: "VeoDesktop.autoModelRoutingIssues")
+                    autoModelChoices[uiThreadID] = routed.model.model
+                    autoModelEfforts[uiThreadID] = routed.effort
+                    autoModelSpeedPolicies[uiThreadID] = payload.autoSpeedPolicy.rawValue
+                    if let tier = routed.serviceTier {
+                        autoModelServiceTiers[uiThreadID] = tier
+                    } else {
+                        autoModelServiceTiers.removeValue(forKey: uiThreadID)
+                    }
+                    defaults.set(autoModelChoices, forKey: "VeoDesktop.autoModelChoices")
+                    defaults.set(autoModelEfforts, forKey: "VeoDesktop.autoModelEfforts")
+                    defaults.set(autoModelServiceTiers, forKey: "VeoDesktop.autoModelServiceTiers")
+                    defaults.set(autoModelSpeedPolicies, forKey: "VeoDesktop.autoModelSpeedPolicies")
+                }
+            }
+
+            // Older persisted payloads predate this snapshot; use the model's
+            // suggested window rather than a preference edited after enqueueing.
+            if deliveryContextWindow == nil {
+                deliveryContextWindow = requestedContextWindow(for: deliveryModel, usesAuto: true)
+            }
+
+            let contextModelName = deliveryModel
+            if let variant = modelVariantRequest(for: deliveryTier) {
+                deliveryModel = variant.model
+                deliveryProviderID = variant.providerID
+                deliveryTier = nil
+            }
+            if deliveryProviderID == nil {
+                deliveryProviderID = modelProviderID(for: deliveryModel)
+            }
+
             let runtimeID: String
             if let existingRuntimeID = thread.runtimeThreadID {
                 runtimeID = existingRuntimeID
@@ -7137,20 +7578,30 @@ final class DesktopCodexStore {
                 ]
                 if capabilities.supports(.historyRevert) { startParams["historyMode"] = "paginated" }
                 if let deliveryModel { startParams["model"] = deliveryModel }
-                if let deliveryProvider = modelProviderID(for: deliveryModel) {
-                    startParams["modelProvider"] = deliveryProvider
+                if let deliveryProviderID {
+                    startParams["modelProvider"] = deliveryProviderID
                 }
                 if let deliveryTier { startParams["serviceTier"] = deliveryTier }
+                if let deliveryContextWindow {
+                    startParams["config"] = ["model_context_window": deliveryContextWindow]
+                }
                 if selectedModel?.supportsPersonality == true { startParams["personality"] = selectedPersonality }
-                let response = try await client.request(
-                    method: "thread/start",
-                    params: startParams
-                )
+                let response: [String: Any]
+                do {
+                    response = try await client.request(method: "thread/start", params: startParams)
+                } catch {
+                    restorePreviousContextChoice(for: contextModelName)
+                    throw error
+                }
                 guard let started = response["thread"] as? [String: Any],
                       let createdRuntimeID = started.string("id") else {
                     throw CodexAppServerClientError.malformedResponse("thread/start")
                 }
                 runtimeID = createdRuntimeID
+                appliedContextByRuntimeID[runtimeID] = contextSignature(deliveryContextWindow)
+                if let id = modelOption(for: contextModelName)?.id {
+                    pendingContextRollbackByModelID.removeValue(forKey: id)
+                }
                 historyModeByThreadID[uiThreadID] = started.string("historyMode")
                 if selectedThreadID == uiThreadID { appServer0153.selectRuntimeThread(runtimeID) }
                 appServer0153.markDynamicToolsEnabled(uiThreadID: uiThreadID)
@@ -7158,6 +7609,20 @@ final class DesktopCodexStore {
                 thread.codexThreadId = runtimeID
                 replaceThread(thread)
                 rebuildCodexMappings()
+            }
+
+            if thread.runtimeThreadID != nil {
+                try await ensureContextConfigured(
+                    runtimeID: runtimeID,
+                    uiThreadID: uiThreadID,
+                    model: deliveryModel,
+                    choiceModelName: contextModelName,
+                    providerID: deliveryProviderID,
+                    serviceTier: deliveryTier,
+                    contextWindow: deliveryContextWindow,
+                    cwd: thread.cwd,
+                    accessMode: deliveryAccessMode
+                )
             }
 
             let targetWorkspacePath = try workspacePath(for: uiThreadID)
@@ -7194,8 +7659,8 @@ final class DesktopCodexStore {
                 "sandboxPolicy": deliveryAccessMode.sandboxPolicy(workspacePath: targetWorkspacePath),
             ]
             if let deliveryModel { turnParams["model"] = deliveryModel }
-            if let deliveryProvider = modelProviderID(for: deliveryModel) {
-                turnParams["modelProvider"] = deliveryProvider
+            if let deliveryProviderID {
+                turnParams["modelProvider"] = deliveryProviderID
             }
             if let deliveryEffort { turnParams["effort"] = deliveryEffort }
             if let deliveryTier { turnParams["serviceTier"] = deliveryTier }
@@ -7203,8 +7668,8 @@ final class DesktopCodexStore {
                 model: deliveryModel,
                 reasoningEffort: deliveryEffort,
                 interactionMode: payload.interactionMode,
-                routingMode: payload.routingMode,
-                autoRoutePlan: payload.autoRoutePlan
+                routingMode: autoModelChoices[uiThreadID] != nil ? .direct : payload.routingMode,
+                autoRoutePlan: autoModelChoices[uiThreadID] != nil ? nil : payload.autoRoutePlan
             ) {
                 turnParams["collaborationMode"] = collaborationMode
             }
@@ -7224,7 +7689,7 @@ final class DesktopCodexStore {
                 method: "turn/start",
                 params: turnParams
             )
-            if payload.routingMode == .auto {
+            if payload.routingMode.isFamilyAuto, autoModelChoices[uiThreadID] == nil {
                 markAutoTurnStarted(threadID: uiThreadID)
             }
             let startedTurnID = (response["turn"] as? [String: Any])?.string("id")
@@ -7558,6 +8023,17 @@ final class DesktopCodexStore {
             || appServer0153.serverQueueID(clientID: payload.id, uiThreadID: threadID) != nil {
             guard let runtimeID = runtimeThreadID(forUIThreadID: threadID) else { return }
             do {
+                // A server queued submission has no context field. Move it back
+                // to the durable local path when its snapshot needs a rejoin.
+                if let requested = payload.contextWindow,
+                   appliedContextByRuntimeID[runtimeID] != contextSignature(requested) {
+                    try await appServer0153.deleteServerQueue(
+                        clientID: payload.id, runtimeThreadID: runtimeID, uiThreadID: threadID
+                    )
+                    serverQueueManagedClientIDs.remove(payload.id)
+                    await send(payload, to: threadID, fromQueue: true, queuedUnder: threadID)
+                    return
+                }
                 try await appServer0153.startServerQueue(
                     clientID: payload.id, runtimeThreadID: runtimeID, uiThreadID: threadID
                 )
@@ -7758,7 +8234,7 @@ final class DesktopCodexStore {
     }
 
     private func applyActiveThreadSettings(threadID: String) async {
-        guard selectedThreadID == threadID else { return }
+        guard selectedThreadID == threadID, !autoModelSelectionEnabled, !hasLockedAutoModel else { return }
         guard capabilities.supports(.collaborationModes) else { return }
         guard let runtimeID = runtimeThreadID(forUIThreadID: threadID) else { return }
         let route = effectiveSelectedRoute
@@ -7767,7 +8243,7 @@ final class DesktopCodexStore {
             "serviceTier": route?.serviceTier ?? NSNull(),
         ]
         if let model = route?.model { params["model"] = model }
-        if let provider = modelProviderID(for: route?.model) { params["modelProvider"] = provider }
+        if let provider = route?.modelProviderID { params["modelProvider"] = provider }
         if let effort = route?.effort { params["effort"] = effort }
         if let collaborationMode = collaborationModePayload() {
             params["collaborationMode"] = collaborationMode
@@ -7790,6 +8266,7 @@ final class DesktopCodexStore {
                     return try await self.resolveActiveTurnID(threadID: threadID)
                 },
                 model: selectedRoute?.model,
+                modelProvider: selectedRoute?.modelProviderID,
                 effort: selectedRoute?.effort,
                 serviceTier: selectedRoute?.serviceTier,
                 supported: capabilities.supports(.liveTurnSettings)
@@ -7828,7 +8305,7 @@ final class DesktopCodexStore {
         guard let model else { return nil }
 
         let developerInstructions: Any
-        if routingMode == .auto, let autoRoutePlan {
+        if routingMode.isFamilyAuto, let autoRoutePlan {
             developerInstructions = DesktopAutoOrchestrationPolicy.instructions(
                 plan: autoRoutePlan,
                 interactionMode: interactionMode
@@ -7842,7 +8319,7 @@ final class DesktopCodexStore {
             "model": model,
             "developer_instructions": developerInstructions,
         ]
-        let effort = routingMode == .auto
+        let effort = routingMode.isFamilyAuto
             ? reasoningEffort
             : (interactionMode == .plan ? planModeReasoningEffort : reasoningEffort)
         if let effort {
@@ -7869,12 +8346,23 @@ final class DesktopCodexStore {
         let model: String
         let effort: String?
         let serviceTier: String?
+        let modelProviderID: String?
         let autoRoutePlan: DesktopAutoRoutePlan?
     }
 
     private var effectiveSelectedRoute: EffectiveSelectedRoute? {
-        if routingMode == .auto, let plan = resolvedAutoRoutePlan {
-            return EffectiveSelectedRoute(
+        if let threadID = selectedThreadID, let model = autoModelChoices[threadID] {
+            return resolvedRoute(
+                model: model,
+                effort: autoModelEfforts[threadID],
+                serviceTier: autoModelServiceTiers[threadID],
+                autoRoutePlan: nil
+            )
+        }
+        if autoModelSelectionEnabled { return nil }
+
+        if routingMode.isFamilyAuto, let plan = resolvedAutoRoutePlan {
+            return resolvedRoute(
                 model: plan.parent.model,
                 effort: plan.parent.effort,
                 serviceTier: nil,
@@ -7882,7 +8370,7 @@ final class DesktopCodexStore {
             )
         }
         guard let model = selectedModel?.model else { return nil }
-        return EffectiveSelectedRoute(
+        return resolvedRoute(
             model: model,
             effort: selectedReasoningEffort,
             serviceTier: selectedServiceTier,

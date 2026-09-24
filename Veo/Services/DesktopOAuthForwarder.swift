@@ -186,14 +186,14 @@ final class DesktopOAuthForwarder: @unchecked Sendable {
                 )
                 var request = URLRequest(url: url, timeoutInterval: 300)
                 request.httpMethod = method
-                let outbound = body.isEmpty
-                    ? body
+                let sanitized = body.isEmpty
+                    ? DesktopExternalSanitizedRequest(body: body, restore: .none)
                     : DesktopExternalRequestAdapter.sanitize(
                         body: body,
                         path: path,
                         providerID: route.providerID
                     )
-                request.httpBody = outbound.isEmpty ? nil : outbound
+                request.httpBody = sanitized.body.isEmpty ? nil : sanitized.body
                 for (name, value) in headers {
                     if ["host", "authorization", "content-length", "connection"].contains(name) { continue }
                     request.setValue(value, forHTTPHeaderField: name)
@@ -202,7 +202,7 @@ final class DesktopOAuthForwarder: @unchecked Sendable {
                 for (name, value) in DesktopProviderOAuth.extraAPIHeaders(for: route.preset) {
                     request.setValue(value, forHTTPHeaderField: name)
                 }
-                let delegate = StreamDelegate(connection: connection)
+                let delegate = StreamDelegate(connection: connection, restore: sanitized.restore)
                 let session = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
                 let task = session.dataTask(with: request)
                 delegate.session = session
@@ -227,9 +227,15 @@ private final class StreamDelegate: NSObject, URLSessionDataDelegate {
     let connection: NWConnection
     var session: URLSession?
     private var sentHeaders = false
+    private let restore: DesktopExternalToolRestore
+    private let restorer: DesktopExternalSSERestorer
+    private var eventStream = false
+    private var jsonBuffer = Data()
 
-    init(connection: NWConnection) {
+    init(connection: NWConnection, restore: DesktopExternalToolRestore) {
         self.connection = connection
+        self.restore = restore
+        self.restorer = DesktopExternalSSERestorer(restore: restore)
     }
 
     func urlSession(
@@ -238,9 +244,12 @@ private final class StreamDelegate: NSObject, URLSessionDataDelegate {
         didReceive response: URLResponse,
         completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
     ) {
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 200
+        let http = response as? HTTPURLResponse
+        let status = http?.statusCode ?? 200
+        let contentType = http?.value(forHTTPHeaderField: "Content-Type") ?? ""
+        eventStream = contentType.contains("text/event-stream")
         var header = "HTTP/1.1 \(status) OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n"
-        if let contentType = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Type") {
+        if !contentType.isEmpty {
             header += "Content-Type: \(contentType)\r\n"
         }
         header += "\r\n"
@@ -250,11 +259,15 @@ private final class StreamDelegate: NSObject, URLSessionDataDelegate {
     }
 
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
-        let header = String(format: "%x\r\n", data.count)
-        var payload = Data(header.utf8)
-        payload.append(data)
-        payload.append(Data("\r\n".utf8))
-        connection.send(content: payload, completion: .contentProcessed { _ in })
+        if eventStream {
+            sendChunk(restorer.append(data))
+            return
+        }
+        if restore.needsResponseRewrite {
+            jsonBuffer.append(data)
+            return
+        }
+        sendChunk(data)
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
@@ -268,9 +281,23 @@ private final class StreamDelegate: NSObject, URLSessionDataDelegate {
             })
             return
         }
+        if eventStream {
+            sendChunk(restorer.flush())
+        } else if restore.needsResponseRewrite {
+            sendChunk(DesktopExternalResponseAdapter.restoreJSON(jsonBuffer, restore: restore))
+        }
         connection.send(content: Data("0\r\n\r\n".utf8), completion: .contentProcessed { [weak self] _ in
             self?.connection.cancel()
             self?.session?.finishTasksAndInvalidate()
         })
+    }
+
+    private func sendChunk(_ data: Data) {
+        guard !data.isEmpty else { return }
+        let header = String(format: "%x\r\n", data.count)
+        var payload = Data(header.utf8)
+        payload.append(data)
+        payload.append(Data("\r\n".utf8))
+        connection.send(content: payload, completion: .contentProcessed { _ in })
     }
 }

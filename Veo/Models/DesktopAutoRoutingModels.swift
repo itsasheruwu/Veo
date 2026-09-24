@@ -1,5 +1,5 @@
 // FILE: DesktopAutoRoutingModels.swift
-// Purpose: Defines Veo's virtual GPT-5.6 Auto route and its frozen per-turn contract.
+// Purpose: Defines Veo's virtual GPT-family Auto routes and their frozen per-turn contracts.
 // Layer: Desktop app model
 
 import Foundation
@@ -7,6 +7,31 @@ import Foundation
 enum DesktopModelRoutingMode: String, Codable, Hashable {
     case direct
     case auto
+    case autoGPT6
+
+    var autoFamily: DesktopAutoRouteFamily? {
+        switch self {
+        case .direct: return nil
+        case .auto: return .gpt56
+        case .autoGPT6: return .gpt6
+        }
+    }
+
+    var isFamilyAuto: Bool { autoFamily != nil }
+}
+
+enum DesktopAutoRouteFamily: Hashable {
+    case gpt56
+    case gpt6
+
+    var title: String { self == .gpt56 ? "5.6 Auto" : "6 Auto" }
+    var productName: String { self == .gpt56 ? "GPT-5.6" : "GPT-6" }
+    var parentVariant: String { self == .gpt56 ? "sol" : "astra" }
+    var escalationVariant: String { self == .gpt56 ? "terra" : "sol" }
+
+    func contains(_ model: DesktopModelOption) -> Bool {
+        self == .gpt56 ? model.isGPT56Family : model.isGPT6Family
+    }
 }
 
 struct DesktopAutoRouteLane: Codable, Hashable {
@@ -30,39 +55,60 @@ struct DesktopAutoRoutePlan: Codable, Hashable {
     let availability: Availability
     let warnings: [String]
 
+    var family: DesktopAutoRouteFamily {
+        parent.model.localizedCaseInsensitiveContains("gpt-6") ? .gpt6 : .gpt56
+    }
+
+    var title: String { family.title }
+
     var usesMultiAgent: Bool { availability != .singleSol }
     var isDegraded: Bool { availability != .full }
 
     var clientIDPrefix: String {
+        let familyPrefix = family == .gpt56 ? "veo-auto-" : "veo-auto-gpt6-"
         switch availability {
-        case .full: return "veo-auto-full-"
-        case .modelFallback: return "veo-auto-model-fallback-"
-        case .singleSol: return "veo-auto-single-sol-"
+        case .full: return "\(familyPrefix)full-"
+        case .modelFallback: return "\(familyPrefix)model-fallback-"
+        case .singleSol: return "\(familyPrefix)single-sol-"
         }
     }
 
     var laneSummary: String {
+        let parentName = Self.shortName(parent.displayName)
+        let workerName = Self.shortName(routineWorker.displayName)
+        let escalationName = Self.shortName(escalationWorker.displayName)
+        let reviewerName = Self.shortName(reviewer.displayName)
         switch availability {
         case .full:
-            return "Sol / High leads · Luna / Max implements · Terra / High escalates · Sol / High reviews"
+            return "\(parentName) / \(parent.effort.capitalized) leads · \(workerName) / \(routineWorker.effort.capitalized) implements · \(escalationName) / \(escalationWorker.effort.capitalized) escalates · \(reviewerName) / \(reviewer.effort.capitalized) reviews"
         case .modelFallback:
-            return "Sol / High leads with explicit Sol fallback lanes"
+            return "\(parentName) / \(parent.effort.capitalized) leads with explicit \(parentName) fallback lanes"
         case .singleSol:
-            return "Sol / High works and verifies alone"
+            return "\(parentName) / \(parent.effort.capitalized) works and verifies alone"
         }
+    }
+
+    private static func shortName(_ value: String) -> String {
+        for name in ["Astra", "Luna", "Terra", "Sol"] where value.localizedCaseInsensitiveContains(name) {
+            return name
+        }
+        return value
     }
 
     static func resolve(
         models: [DesktopModelOption],
-        experimentalFeatures: [DesktopExperimentalFeature]
+        experimentalFeatures: [DesktopExperimentalFeature],
+        family: DesktopAutoRouteFamily = .gpt56
     ) throws -> DesktopAutoRoutePlan {
+        let familyModels = models.filter(family.contains)
         func variant(_ name: String) -> DesktopModelOption? {
             let needle = name.lowercased()
-            return models.first { option in
+            return familyModels.first { option in
                 [option.id, option.model, option.displayName]
                     .map { $0.lowercased() }
                     .contains { value in
-                        value == needle || value.hasSuffix("-\(needle)") || value.contains("5.6 \(needle)")
+                        value == needle || value.hasSuffix("-\(needle)")
+                            || value.contains("5.6 \(needle)") || value.contains("6 \(needle)")
                     }
             }
         }
@@ -79,8 +125,9 @@ struct DesktopAutoRoutePlan: Codable, Hashable {
             )
         }
 
-        guard let solModel = variant("sol"), let sol = lane(solModel, effort: "high") else {
-            throw DesktopAutoRouteError.missingSolHigh
+        guard let parentModel = variant(family.parentVariant),
+              let parent = lane(parentModel, effort: "high") else {
+            throw family == .gpt56 ? DesktopAutoRouteError.missingSolHigh : DesktopAutoRouteError.missingAstraHigh
         }
 
         let multiAgentEnabled = experimentalFeatures.contains {
@@ -88,30 +135,33 @@ struct DesktopAutoRoutePlan: Codable, Hashable {
         }
         guard multiAgentEnabled else {
             return DesktopAutoRoutePlan(
-                parent: sol,
-                routineWorker: sol,
-                escalationWorker: sol,
-                reviewer: sol,
+                parent: parent,
+                routineWorker: parent,
+                escalationWorker: parent,
+                reviewer: parent,
                 availability: .singleSol,
-                warnings: ["Native multi-agent support is unavailable. Sol will work and verify alone; independent review is unavailable."]
+                warnings: ["Native multi-agent support is unavailable. \(parent.displayName) will work and verify alone; independent review is unavailable."]
             )
         }
 
         var warnings: [String] = []
         let luna = variant("luna").flatMap { lane($0, effort: "max") }
-        let terra = variant("terra").flatMap { lane($0, effort: "high") }
+        let escalationVariant = family.escalationVariant
+        let escalationModel = variant(escalationVariant)
+        let escalationLane = escalationModel.flatMap { lane($0, effort: "high") }
         if luna == nil {
-            warnings.append("Luna / Max is unavailable. A fresh Sol / High worker will handle routine implementation.")
+            warnings.append("Luna / Max is unavailable. A fresh \(parent.displayName) / High worker will handle routine implementation.")
         }
-        if terra == nil {
-            warnings.append("Terra / High is unavailable. A fresh Sol / High worker will handle escalation.")
+        if escalationLane == nil {
+            let escalationName = family == .gpt56 ? "Terra" : "Sol"
+            warnings.append("\(escalationName) / High is unavailable. A fresh \(parent.displayName) / High worker will handle escalation.")
         }
 
         return DesktopAutoRoutePlan(
-            parent: sol,
-            routineWorker: luna ?? sol,
-            escalationWorker: terra ?? sol,
-            reviewer: sol,
+            parent: parent,
+            routineWorker: luna ?? parent,
+            escalationWorker: escalationLane ?? parent,
+            reviewer: parent,
             availability: warnings.isEmpty ? .full : .modelFallback,
             warnings: warnings
         )
@@ -120,11 +170,14 @@ struct DesktopAutoRoutePlan: Codable, Hashable {
 
 enum DesktopAutoRouteError: LocalizedError {
     case missingSolHigh
+    case missingAstraHigh
 
     var errorDescription: String? {
         switch self {
         case .missingSolHigh:
-            return "GPT-5.6 Auto requires GPT-5.6 Sol with High reasoning. Refresh the model catalog or choose Luna, Terra, or Sol directly."
+            return "5.6 Auto requires 5.6 Sol with High reasoning. Refresh the model catalog or choose Luna, Terra, or Sol directly."
+        case .missingAstraHigh:
+            return "6 Auto requires GPT-6 Astra with High reasoning. Refresh the model catalog or choose Astra, Sol, or Luna directly."
         }
     }
 }
@@ -140,7 +193,7 @@ enum DesktopAutoOrchestrationPolicy {
 
         if interactionMode == .plan {
             return """
-            You are the GPT-5.6 Auto parent running as \(plan.parent.model) with \(plan.parent.effort) reasoning.
+            You are the \(plan.family.productName) Auto parent running as \(plan.parent.model) with \(plan.parent.effort) reasoning.
             This is Plan mode. Investigate as needed and produce a plan only. Do not edit files, delegate implementation, spawn a reviewer, or claim that implementation or independent review occurred.
             \(fallbackNotice)
             """
@@ -152,14 +205,14 @@ enum DesktopAutoOrchestrationPolicy {
 
         if !plan.usesMultiAgent {
             return """
-            You are the GPT-5.6 Auto parent running as \(plan.parent.model) with \(plan.parent.effort) reasoning.
+            You are the \(plan.family.productName) Auto parent running as \(plan.parent.model) with \(plan.parent.effort) reasoning.
             Answer-only, explanation, and advisory requests stay with you. For requested code changes, inspect, implement, and rerun relevant checks yourself while preserving the user's permissions and existing dirty work.
-            Native multi-agent support is unavailable, so do not attempt delegation and do not claim an independent review. State briefly in the final response that Sol completed and verified the work alone and independent review was unavailable.\(debugInstructions)
+            Native multi-agent support is unavailable, so do not attempt delegation and do not claim an independent review. State briefly in the final response that \(plan.parent.displayName) completed and verified the work alone and independent review was unavailable.\(debugInstructions)
             """
         }
 
         return """
-        You are the GPT-5.6 Auto parent running as \(plan.parent.model) with \(plan.parent.effort) reasoning. Veo owns this route; do not modify global Codex configuration or install agents, skills, or plugins.
+        You are the \(plan.family.productName) Auto parent running as \(plan.parent.model) with \(plan.parent.effort) reasoning. Veo owns this route; do not modify global Codex configuration or install agents, skills, or plugins.
 
         Answer-only, explanation, and advisory requests stay with you. For a requested code-changing Agentic or Debug task, you own intent, architecture, decomposition, permissions, and final verification. Delegate routine implementation to a fresh worker using model \(plan.routineWorker.model) at \(plan.routineWorker.effort) effort. Use a fresh escalation worker using model \(plan.escalationWorker.model) at \(plan.escalationWorker.effort) effort when complexity, risk, ambiguity, or a failed routine attempt justifies escalation.
 
@@ -194,6 +247,7 @@ struct DesktopAutoWorkflowState: Equatable {
     }
 
     let stageTitle: String
+    let modelTitle: String
     let steps: [Step]
     let warnings: [String]
     let verdict: String?
@@ -214,11 +268,14 @@ struct DesktopAutoWorkflowState: Equatable {
         guard isAutoSelected || latestAutoIndex != nil else { return nil }
         let isHistorical = latestAutoIndex != latestUserIndex
         if isHistorical, !isAutoSelected { return nil }
+        let modelTitle = selectedPlan?.title
+            ?? (latestAutoIndex.flatMap { timeline[$0].clientID?.contains("gpt6") == true } == true ? "6 Auto" : "5.6 Auto")
 
         guard let autoIndex = latestAutoIndex, !isHistorical else {
             let warnings = selectedPlan?.warnings ?? []
             return DesktopAutoWorkflowState(
                 stageTitle: selectedPlan == nil ? "Route unavailable" : "Ready",
+                modelTitle: modelTitle,
                 steps: setupSteps(plan: selectedPlan),
                 warnings: warnings,
                 verdict: nil,
@@ -240,10 +297,23 @@ struct DesktopAutoWorkflowState: Equatable {
         func containsVariant(_ invocation: DesktopCollaborationInvocation, _ name: String) -> Bool {
             invocation.model?.localizedCaseInsensitiveContains(name) == true
         }
+        func matchesLane(_ invocation: DesktopCollaborationInvocation, _ lane: DesktopAutoRouteLane?) -> Bool {
+            guard let model = invocation.model?.lowercased(), let lane else { return false }
+            return [lane.model, lane.displayName, lane.modelID].contains { candidate in
+                let normalized = candidate.lowercased()
+                return !normalized.isEmpty && (model.contains(normalized) || normalized.contains(model))
+            }
+        }
         func isReview(_ invocation: DesktopCollaborationInvocation) -> Bool {
-            guard containsVariant(invocation, "sol") else { return false }
-            return invocation.prompt?.localizedCaseInsensitiveContains("review") == true
-                || invocation.prompt?.localizedCaseInsensitiveContains("VERDICT:") == true
+            guard let prompt = invocation.prompt,
+                  prompt.localizedCaseInsensitiveContains("VERDICT:") else { return false }
+            let opening = prompt.split(whereSeparator: \.isNewline)
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .first { !$0.isEmpty } ?? ""
+            // Worker briefs can mention the later review and its verdict contract.
+            // Only a review assignment at the start of this invocation marks a reviewer.
+            let reviewAssignment = #"^(?:you are (?:an? |the )?(?:fresh |independent |code )*reviewer\b|(?:your role is|role\s*[:—–-])\s*(?:an? |the )?(?:fresh |independent |code )*reviewer\b|(?:objective|task)\s*[:—–-]\s*(?:independently\s+)?review\b|(?:independently\s+)?review\b)"#
+            return opening.range(of: reviewAssignment, options: [.regularExpression, .caseInsensitive]) != nil
         }
         func active(_ invocation: DesktopCollaborationInvocation) -> Bool {
             invocation.agentStates.values.contains(where: \.isActive)
@@ -254,9 +324,14 @@ struct DesktopAutoWorkflowState: Equatable {
         }
 
         let implementation = invocations.last { _, invocation in
-            containsVariant(invocation, "luna") || (containsVariant(invocation, "sol") && !isReview(invocation))
+            !isReview(invocation)
+                && (matchesLane(invocation, selectedPlan?.routineWorker)
+                    || (selectedPlan?.family == .gpt56 && containsVariant(invocation, "sol")))
         }
-        let escalation = invocations.last { _, invocation in containsVariant(invocation, "terra") }
+        let escalation = invocations.last { _, invocation in
+            matchesLane(invocation, selectedPlan?.escalationWorker) && !isReview(invocation)
+                || (selectedPlan == nil && containsVariant(invocation, "terra") && !isReview(invocation))
+        }
         let review = invocations.last { _, invocation in isReview(invocation) }
         let implementationActivity = subAgentActivities.last { _, activity in !activity.isReview }
         let reviewActivity = subAgentActivities.last { _, activity in activity.isReview }
@@ -314,21 +389,25 @@ struct DesktopAutoWorkflowState: Equatable {
             reviewStatus = .pending
         }
 
+        let parentName = selectedPlan.map { shortName($0.parent.displayName) } ?? "Model"
+        let routineName = selectedPlan.map { shortName($0.routineWorker.displayName) } ?? "Worker"
+        let escalationName = selectedPlan.map { shortName($0.escalationWorker.displayName) } ?? "Worker"
+        let reviewName = selectedPlan.map { shortName($0.reviewer.displayName) } ?? parentName
         let stageTitle: String
         if let invocation = review?.1, active(invocation) {
-            stageTitle = "Sol reviewing"
+            stageTitle = "\(reviewName) reviewing"
         } else if reviewActivity != nil && isTurnRunning {
             stageTitle = "Review agent working"
         } else if let invocation = escalation?.1, active(invocation) {
-            stageTitle = "Terra escalating"
+            stageTitle = "\(escalationName) escalating"
         } else if let invocation = implementation?.1, active(invocation) {
-            stageTitle = containsVariant(invocation, "luna") ? "Luna implementing" : "Sol fallback working"
+            stageTitle = "\(routineName) implementing"
         } else if implementationActivity != nil && isTurnRunning && !verificationEvidence {
             stageTitle = "Implementation agent working"
         } else if verificationEvidence && isTurnRunning {
-            stageTitle = "Sol verifying"
+            stageTitle = "\(parentName) verifying"
         } else if isTurnRunning {
-            stageTitle = invocations.isEmpty ? "Sol working" : "Back with Sol"
+            stageTitle = invocations.isEmpty ? "\(parentName) working" : "Back with \(parentName)"
         } else if let verdict {
             stageTitle = "Review: \(verdict)"
         } else {
@@ -339,7 +418,7 @@ struct DesktopAutoWorkflowState: Equatable {
             Step(
                 id: "architect",
                 title: "Architect",
-                detail: "Sol / High parent",
+                detail: "\(parentName) / \(selectedPlan?.parent.effort.capitalized ?? "High") parent",
                 status: architectureComplete ? .complete : (isTurnRunning ? .active : .complete),
                 receiverThreadIDs: []
             ),
@@ -359,7 +438,7 @@ struct DesktopAutoWorkflowState: Equatable {
                 title: "Verification",
                 detail: observedVerificationEvidence
                     ? "Parent checks observed"
-                    : (reportedVerificationEvidence ? "Parent verification reported" : "Back with Sol"),
+                    : (reportedVerificationEvidence ? "Parent verification reported" : "Back with \(parentName)"),
                 status: verificationStatus,
                 receiverThreadIDs: []
             ),
@@ -378,7 +457,7 @@ struct DesktopAutoWorkflowState: Equatable {
             steps[1] = Step(
                 id: "implementation",
                 title: "Implementation",
-                detail: "Sol / High parent only",
+                detail: "\(parentName) / \(selectedPlan?.parent.effort.capitalized ?? "High") parent only",
                 status: isTurnRunning ? .active : .complete,
                 receiverThreadIDs: []
             )
@@ -386,6 +465,7 @@ struct DesktopAutoWorkflowState: Equatable {
 
         return DesktopAutoWorkflowState(
             stageTitle: stageTitle,
+            modelTitle: modelTitle,
             steps: steps,
             warnings: routeWarnings,
             verdict: verdict,
@@ -395,11 +475,12 @@ struct DesktopAutoWorkflowState: Equatable {
 
     private static func setupSteps(plan: DesktopAutoRoutePlan?) -> [Step] {
         guard let plan else { return [] }
+        let parentName = shortName(plan.parent.displayName)
         return [
-            Step(id: "architect", title: "Architect", detail: "Sol / High parent", status: .pending, receiverThreadIDs: []),
+            Step(id: "architect", title: "Architect", detail: "\(parentName) / \(plan.parent.effort.capitalized) parent", status: .pending, receiverThreadIDs: []),
             Step(id: "implementation", title: "Implementation", detail: "\(shortName(plan.routineWorker.displayName)) / \(plan.routineWorker.effort.capitalized)", status: plan.usesMultiAgent ? .pending : .unavailable, receiverThreadIDs: []),
-            Step(id: "verification", title: "Verification", detail: "Sol / High parent", status: .pending, receiverThreadIDs: []),
-            Step(id: "review", title: "Review", detail: "Sol / High fresh reviewer", status: plan.usesMultiAgent ? .pending : .unavailable, receiverThreadIDs: []),
+            Step(id: "verification", title: "Verification", detail: "\(parentName) / \(plan.parent.effort.capitalized) parent", status: .pending, receiverThreadIDs: []),
+            Step(id: "review", title: "Review", detail: "\(shortName(plan.reviewer.displayName)) / \(plan.reviewer.effort.capitalized) fresh reviewer", status: plan.usesMultiAgent ? .pending : .unavailable, receiverThreadIDs: []),
         ]
     }
 
@@ -433,7 +514,7 @@ struct DesktopAutoWorkflowState: Equatable {
     }
 
     private static func shortName(_ value: String) -> String {
-        for name in ["Luna", "Terra", "Sol"] where value.localizedCaseInsensitiveContains(name) {
+        for name in ["Astra", "Luna", "Terra", "Sol"] where value.localizedCaseInsensitiveContains(name) {
             return name
         }
         return value
@@ -441,11 +522,13 @@ struct DesktopAutoWorkflowState: Equatable {
 
     private static func warnings(forClientID clientID: String?, selectedPlan: DesktopAutoRoutePlan?) -> [String] {
         if clientID?.contains("single-sol") == true {
-            return ["Multi-agent support was unavailable. Sol worked alone; independent review was unavailable."]
+            let parent = selectedPlan.map { shortName($0.parent.displayName) } ?? "The lead model"
+            return ["Multi-agent support was unavailable. \(parent) worked alone; independent review was unavailable."]
         }
         if clientID?.contains("model-fallback") == true {
             if let warnings = selectedPlan?.warnings, !warnings.isEmpty { return warnings }
-            return ["This turn used an explicit Sol fallback because a requested worker model was unavailable."]
+            let parent = selectedPlan.map { shortName($0.parent.displayName) } ?? "The lead model"
+            return ["This turn used an explicit \(parent) fallback because a requested worker model was unavailable."]
         }
         return []
     }

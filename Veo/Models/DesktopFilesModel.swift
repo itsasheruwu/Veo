@@ -54,6 +54,8 @@ final class DesktopFilesModel: ObservableObject {
     }
     @Published private(set) var saveState: DesktopFileSaveState = .preview
     @Published private(set) var message: String?
+    @Published private(set) var isLoadingTree = false
+    @Published private(set) var isLoadingDocument = false
 
     private let service = DesktopWorkspaceFileService()
     private var autosaveTask: Task<Void, Never>?
@@ -95,6 +97,8 @@ final class DesktopFilesModel: ObservableObject {
         documentLoadToken = UUID()
         documentLoadTask?.cancel()
         documentLoadTask = nil
+        isLoadingTree = false
+        isLoadingDocument = false
         workspaceURL = url
         rootEntries = []
         childrenByPath = [:]
@@ -116,6 +120,7 @@ final class DesktopFilesModel: ObservableObject {
         let token = UUID()
         treeLoadToken = token
         guard let workspaceURL else {
+            isLoadingTree = false
             rootEntries = []
             childrenByPath = [:]
             visibleRows = []
@@ -126,7 +131,11 @@ final class DesktopFilesModel: ObservableObject {
         }
         let expandedPaths = expandedPaths
         let service = self.service
+        isLoadingTree = true
         treeLoadTask = Task { [weak self, service] in
+            defer {
+                if let self, self.treeLoadToken == token { self.isLoadingTree = false }
+            }
             do {
                 let snapshot = try await service.loadTree(
                     in: workspaceURL,
@@ -210,6 +219,7 @@ final class DesktopFilesModel: ObservableObject {
         documentLoadToken = UUID()
         documentLoadTask?.cancel()
         documentLoadTask = nil
+        isLoadingDocument = false
         selectedEntry = entry
         replaceDocument(nil)
         saveState = .preview
@@ -222,7 +232,11 @@ final class DesktopFilesModel: ObservableObject {
         let token = UUID()
         documentLoadToken = token
         let service = self.service
+        isLoadingDocument = true
         documentLoadTask = Task { [weak self, service] in
+            defer {
+                if let self, self.documentLoadToken == token { self.isLoadingDocument = false }
+            }
             do {
                 let loaded = try await service.readText(entry, workspaceURL: workspaceURL)
                 guard !Task.isCancelled,

@@ -2,6 +2,7 @@
 // Purpose: Presents repository changes, rich diffs, Git actions, and inline Codex review controls.
 // Layer: Desktop app view
 
+import AppKit
 import SwiftUI
 
 struct DesktopReviewPanelView: View {
@@ -23,6 +24,7 @@ struct DesktopReviewPanelView: View {
     @State private var showsPullRequests = false
     @State private var showsCheckpoints = false
     @State private var discardPrompt: DiscardPrompt?
+    @State private var showsCompactDiff = false
 
     private var layout: DesktopReviewLayout {
         get { DesktopReviewLayout(rawValue: layoutRaw) ?? .unified }
@@ -40,14 +42,33 @@ struct DesktopReviewPanelView: View {
             Divider()
 
             if let repository = store.gitRepository {
-                if layout == .split {
-                    ViewThatFits(in: .horizontal) {
-                        reviewWorkspace(repository, effectiveLayout: .split)
-                            .frame(minWidth: 680)
-                        reviewWorkspace(repository, effectiveLayout: .unified)
+                GeometryReader { geometry in
+                    if geometry.size.width < 620 {
+                        if showsCompactDiff, selectedDiffID != nil {
+                            VStack(spacing: 0) {
+                                HStack {
+                                    Button {
+                                        showsCompactDiff = false
+                                    } label: {
+                                        Label("Back to Changes", systemImage: "chevron.left")
+                                    }
+                                    .buttonStyle(.borderless)
+                                    Spacer()
+                                }
+                                .padding(.horizontal, 10)
+                                .frame(height: 34)
+                                Divider()
+                                diffPane(selectedDiff, effectiveLayout: .unified)
+                            }
+                        } else {
+                            changedFiles(repository)
+                        }
+                    } else {
+                        reviewWorkspace(
+                            repository,
+                            effectiveLayout: layout == .split && geometry.size.width >= 880 ? .split : .unified
+                        )
                     }
-                } else {
-                    reviewWorkspace(repository, effectiveLayout: .unified)
                 }
             } else if store.isRefreshingGit {
                 ProgressView("Reading repository…")
@@ -60,6 +81,22 @@ struct DesktopReviewPanelView: View {
                     systemImage: "point.3.connected.trianglepath.dotted",
                     description: Text(store.gitMessage ?? "Open a project inside a Git repository.")
                 )
+            }
+
+            if let message = store.gitMessage, !message.isEmpty, store.gitRepository != nil {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "info.circle").foregroundStyle(.secondary)
+                    Text(message)
+                        .font(.system(size: 11.5))
+                        .textSelection(.enabled)
+                    Spacer(minLength: 4)
+                    Button("Refresh") { store.refreshGitRepository() }
+                        .buttonStyle(.borderless)
+                        .controlSize(.small)
+                        .disabled(store.isRefreshingGit || store.isMutatingGit)
+                }
+                .padding(10)
+                .background(Color.primary.opacity(0.04))
             }
 
             if presentsAIReview {
@@ -139,6 +176,7 @@ struct DesktopReviewPanelView: View {
             }
             .menuStyle(.borderlessButton)
             .frame(width: 28)
+            .accessibilityLabel("Diff options")
 
             Button {
                 presentsAIReview.toggle()
@@ -182,7 +220,10 @@ struct DesktopReviewPanelView: View {
     }
 
     private func changedFiles(_ repository: DesktopGitRepositorySnapshot) -> some View {
-        List(selection: $selectedDiffID) {
+        List(selection: Binding(
+            get: { selectedDiffID },
+            set: { selectedDiffID = $0; showsCompactDiff = $0 != nil }
+        )) {
             if !repository.conflictedFiles.isEmpty {
                 fileSection("Conflicts", repository.conflictedFiles, preferredSide: .unstaged)
             }
@@ -201,6 +242,12 @@ struct DesktopReviewPanelView: View {
             }
         }
         .listStyle(.sidebar)
+        .accessibilityLabel("Changed files")
+        .onKeyPress(.return) {
+            guard selectedDiffID != nil else { return .ignored }
+            showsCompactDiff = true
+            return .handled
+        }
     }
 
     @ViewBuilder
@@ -230,7 +277,13 @@ struct DesktopReviewPanelView: View {
                         .font(.system(size: 9, weight: .bold, design: .monospaced))
                         .foregroundStyle(statusColor(file))
                 }
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    selectedDiffID = id
+                    showsCompactDiff = true
+                }
                 .tag(id)
+                .help(file.path)
                 .contextMenu { fileContextMenu(file, side: preferredSide) }
             }
         }
@@ -292,13 +345,23 @@ struct DesktopReviewPanelView: View {
                         systemImage: file.isBinary ? "doc.badge.gearshape" : "exclamationmark.triangle",
                         description: Text(reason)
                     )
+                } else if visibleHunks(file).isEmpty {
+                    ContentUnavailableView(
+                        "No visible changes",
+                        systemImage: "line.3.horizontal.decrease.circle",
+                        description: Text(hidesWhitespace
+                            ? "Whitespace-only changes are hidden. Show them from Diff options."
+                            : "There are no text changes to display for this file.")
+                    )
                 } else {
                     ScrollView(.vertical) {
                         LazyVStack(spacing: 0) {
+                            let splitWidth = effectiveLayout == .split ? splitColumnWidth(for: file) : 320
                             ForEach(visibleHunks(file)) { hunk in
                                 DesktopDiffHunkView(
                                     hunk: hunk,
                                     layout: effectiveLayout,
+                                    splitColumnWidth: splitWidth,
                                     actionTitle: file.side == .staged ? "Unstage Hunk" : "Stage Hunk"
                                 ) {
                                     store.applyGitHunk(.init(fileDiffID: file.id, hunkID: hunk.id))
@@ -313,6 +376,17 @@ struct DesktopReviewPanelView: View {
                     }
                 }
             }
+        } else if store.isRefreshingGitReview || store.isRefreshingGit {
+            ProgressView("Reading changes…")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if let repository = store.gitRepository, repository.files.isEmpty {
+            ContentUnavailableView("Working tree clean", systemImage: "checkmark.circle")
+        } else if store.gitReviewSnapshot == nil, let message = store.gitMessage {
+            ContentUnavailableView(
+                "Changes could not be loaded",
+                systemImage: "exclamationmark.triangle",
+                description: Text(message)
+            )
         } else {
             ContentUnavailableView(
                 "No change selected",
@@ -320,6 +394,14 @@ struct DesktopReviewPanelView: View {
                 description: Text("Select a changed file to review its diff.")
             )
         }
+    }
+
+    private func splitColumnWidth(for file: DesktopGitFileDiff) -> CGFloat {
+        let font = NSFont.monospacedSystemFont(ofSize: 10.5, weight: .regular)
+        let longest = file.hunks.flatMap(\.lines).reduce(CGFloat.zero) { width, line in
+            max(width, (line.text as NSString).size(withAttributes: [.font: font]).width)
+        }
+        return max(320, ceil(longest) + 58)
     }
 
     private func visibleHunks(_ file: DesktopGitFileDiff) -> [DesktopGitDiffHunk] {
@@ -350,9 +432,6 @@ struct DesktopReviewPanelView: View {
                     .textFieldStyle(.roundedBorder)
                 Button("Create Branch") { store.createGitBranch(named: branchName) }
                     .disabled(branchName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-            if let message = store.gitMessage, !message.isEmpty {
-                Text(message).font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .padding(10)
@@ -461,6 +540,7 @@ private struct DesktopLiveTurnDiffView: View {
 private struct DesktopDiffHunkView: View {
     let hunk: DesktopGitDiffHunk
     let layout: DesktopReviewLayout
+    let splitColumnWidth: CGFloat
     let actionTitle: String
     let action: () -> Void
     @State private var isExpanded = true
@@ -472,6 +552,7 @@ private struct DesktopDiffHunkView: View {
                     Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                 }
                 .buttonStyle(.borderless)
+                .accessibilityLabel(isExpanded ? "Collapse diff hunk" : "Expand diff hunk")
                 Text(hunk.header)
                     .font(.system(size: 10.5, weight: .medium, design: .monospaced))
                     .foregroundStyle(.secondary)
@@ -488,7 +569,7 @@ private struct DesktopDiffHunkView: View {
                 ScrollView(.horizontal) {
                     VStack(alignment: .leading, spacing: 0) {
                         if layout == .split {
-                            DesktopSplitDiffLines(lines: hunk.lines)
+                            DesktopSplitDiffLines(lines: hunk.lines, columnWidth: splitColumnWidth)
                                 .frame(minWidth: 640, alignment: .leading)
                         } else {
                             ForEach(Array(hunk.lines.indices), id: \.self) { index in
@@ -567,6 +648,7 @@ private struct DesktopUnifiedDiffLine: View {
 
 private struct DesktopSplitDiffLines: View {
     let lines: [DesktopGitDiffLine]
+    let columnWidth: CGFloat
 
     private var rows: [(DesktopGitDiffLine?, DesktopGitDiffLine?)] {
         var output: [(DesktopGitDiffLine?, DesktopGitDiffLine?)] = []
@@ -598,10 +680,24 @@ private struct DesktopSplitDiffLines: View {
         ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
             HStack(spacing: 0) {
                 splitLine(row.0, counterpart: row.1?.text, isOld: true)
-                Divider()
+                    .frame(width: columnWidth, alignment: .leading)
+                    .background(lineBackground(row.0))
+                Rectangle().fill(Color.primary.opacity(0.10))
+                    .frame(width: 1)
+                    .allowsHitTesting(false)
                 splitLine(row.1, counterpart: row.0?.text, isOld: false)
+                    .frame(width: columnWidth, alignment: .leading)
+                    .background(lineBackground(row.1))
             }
             .frame(minHeight: 20)
+        }
+    }
+
+    private func lineBackground(_ line: DesktopGitDiffLine?) -> Color {
+        switch line?.kind {
+        case .addition: return .green.opacity(0.12)
+        case .deletion: return .red.opacity(0.12)
+        default: return .clear
         }
     }
 
@@ -624,7 +720,6 @@ private struct DesktopSplitDiffLines: View {
                 .fixedSize(horizontal: true, vertical: false)
                 .padding(.horizontal, 5)
         }
-        .background(isOld ? Color.red.opacity(line == nil ? 0 : 0.12) : Color.green.opacity(line == nil ? 0 : 0.12))
     }
 }
 
@@ -676,7 +771,9 @@ private struct DesktopInlineReviewCard: View {
             HStack {
                 Label("AI Review", systemImage: "sparkles").font(.system(size: 12, weight: .semibold))
                 Spacer()
-                Button(action: close) { Image(systemName: "xmark") }.buttonStyle(.borderless)
+                Button(action: close) { Image(systemName: "xmark") }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("Close AI review")
             }
             HStack(spacing: 8) {
                 Picker("Target", selection: $request.target) {

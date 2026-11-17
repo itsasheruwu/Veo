@@ -40,6 +40,11 @@ struct MarkdownMessageView: View {
     }
 
     var body: some View {
+        let renderedSource = self.renderedSource
+        let animatesTextStream = isStreaming
+            && streamingMode != .none
+            && !reduceMotion
+            && !renderedSource.isEmpty
         let blocks = DesktopMarkdownRenderCache.blocks(for: renderedSource)
         VStack(alignment: .leading, spacing: 10) {
             if isStreaming, blocks.isEmpty {
@@ -53,7 +58,7 @@ struct MarkdownMessageView: View {
                 switch block.kind {
                 case .prose:
                     let attributed = Self.inlineAttributed(block.text)
-                    if shouldAnimateTextStream, index == blocks.count - 1 {
+                    if animatesTextStream, index == blocks.count - 1 {
                         TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: false)) { context in
                             proseText(
                                 attributed,
@@ -73,7 +78,7 @@ struct MarkdownMessageView: View {
                 }
             }
 
-            if shouldAnimateTextStream, blocks.last?.kind == .code {
+            if animatesTextStream, blocks.last?.kind == .code {
                 DesktopStreamingTextCursor()
             }
 
@@ -128,10 +133,6 @@ struct MarkdownMessageView: View {
 
     private var usesTokenReveal: Bool {
         isStreaming && streamingMode == .token && !reduceMotion
-    }
-
-    private var shouldAnimateTextStream: Bool {
-        isStreaming && streamingMode != .none && !reduceMotion && !renderedSource.isEmpty
     }
 
     private var renderedSource: String {

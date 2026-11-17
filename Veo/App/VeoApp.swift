@@ -13,6 +13,7 @@ struct VeoApp: App {
     @StateObject private var navigation = DesktopNavigationState()
     @StateObject private var updateService = DesktopUpdateService()
     @StateObject private var notifications = DesktopNotificationService()
+    @StateObject private var permissionsPanel = DesktopPermissionsPanel()
     @StateObject private var menuBarController = DesktopMenuBarController()
     @AppStorage(DesktopAppearancePreferences.appearanceModeKey) private var appearanceModeRaw =
         DesktopAppearanceMode.dark.rawValue
@@ -32,6 +33,7 @@ struct VeoApp: App {
             DesktopWorkspaceView(store: store, navigation: navigation)
                 .environmentObject(updateService)
                 .environmentObject(notifications)
+                .environmentObject(permissionsPanel)
                 .environmentObject(menuBarController)
                 .preferredColorScheme(preferredColorScheme)
         }
@@ -89,6 +91,12 @@ struct VeoApp: App {
                     NSApp.activate(ignoringOtherApps: true)
                 }
                 .keyboardShortcut(keybindings.shortcut(for: "settings"))
+
+                Button("Manage Permissions…") {
+                    permissionsPanel.show(
+                        notifications: notifications, audio: store.realtimeAudio, colorScheme: preferredColorScheme
+                    )
+                }
             }
 
             CommandGroup(after: .appInfo) {

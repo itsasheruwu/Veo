@@ -6,6 +6,7 @@ struct DesktopPromptLibraryView: View {
     let back: () -> Void
     @State private var library = DesktopPromptLibrary.shared
     @State private var error: String?
+    @State private var promptToDelete: DesktopSavedPrompt?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -60,7 +61,7 @@ struct DesktopPromptLibraryView: View {
                                 .help("Add to draft")
                                 .accessibilityLabel("Add to draft: " + prompt.title)
                                 Button(role: .destructive) {
-                                    do { try library.remove(prompt) } catch { self.error = error.localizedDescription }
+                                    promptToDelete = prompt
                                 } label: {
                                     Image(systemName: "trash").font(.system(size: 11))
                                         .foregroundStyle(.secondary).padding(4).contentShape(Rectangle())
@@ -79,6 +80,19 @@ struct DesktopPromptLibraryView: View {
             }
             if store.isRestoringPrompt { ProgressView().controlSize(.small) }
             if let error { Text(error).foregroundStyle(.red).font(.system(size: 10.5)).textSelection(.enabled) }
+        }
+        .alert("Delete saved prompt?", isPresented: Binding(
+            get: { promptToDelete != nil },
+            set: { if !$0 { promptToDelete = nil } }
+        ), presenting: promptToDelete) { prompt in
+            Button("Delete", role: .destructive) {
+                do { try library.remove(prompt) }
+                catch { self.error = error.localizedDescription }
+                promptToDelete = nil
+            }
+            Button("Cancel", role: .cancel) { promptToDelete = nil }
+        } message: { prompt in
+            Text("“\(prompt.title)” and its saved attachments will be deleted. Copies already added to a draft are kept.")
         }
     }
 }

@@ -6,6 +6,17 @@
 import AppKit
 import SwiftUI
 
+private struct DesktopConversationInputVisibleKey: EnvironmentKey {
+    static let defaultValue = true
+}
+
+private extension EnvironmentValues {
+    var desktopConversationInputVisible: Bool {
+        get { self[DesktopConversationInputVisibleKey.self] }
+        set { self[DesktopConversationInputVisibleKey.self] = newValue }
+    }
+}
+
 enum DesktopTheme {
     /// Default accent used when no custom color is stored.
     static let accent = Color(red: 0.18, green: 0.55, blue: 0.98)
@@ -433,6 +444,11 @@ struct DesktopWorkspaceView: View {
             menuBarController.setVisible(showsMenuBarIcon)
             store.startIfNeeded()
         }
+        .onChange(of: navigation.page) { _, page in
+            if page == .settings {
+                NSApp.keyWindow?.makeFirstResponder(nil)
+            }
+        }
         .onChange(of: showsMenuBarIcon) { _, visible in
             menuBarController.setVisible(visible)
         }
@@ -693,7 +709,11 @@ struct DesktopWorkspaceView: View {
     private var workspaceDetail: some View {
         GeometryReader { geometry in
             let panelIsVisible = inspectorVisible || utilityPanelExpanded
-            let panelWidth = utilityPanelExpanded
+            // Keep both panes useful. On compact windows the utility surface
+            // takes the detail area instead of squeezing the composer away.
+            let panelFillsDetail = utilityPanelExpanded
+                || (panelIsVisible && geometry.size.width < DesktopTheme.conversationMinWidth + 420)
+            let panelWidth = panelFillsDetail
                 ? geometry.size.width
                 : resolvedUtilityPanelWidth(availableWidth: geometry.size.width)
 
@@ -712,6 +732,8 @@ struct DesktopWorkspaceView: View {
                             terminalHub: terminalHub,
                             showsInteractiveTerminal: $showsInteractiveTerminal,
                             isTerminalWorkspace: $isTerminalWorkspace,
+                            availableHeight: geometry.size.height,
+                            isInputVisible: navigation.page == .workspace && (!panelIsVisible || !panelFillsDetail),
                             onOpenSubagent: { id in
                                 utilityPanel.showSubagent(id)
                                 if utilityPanelExpanded {
@@ -729,25 +751,57 @@ struct DesktopWorkspaceView: View {
                         )
                     }
                 }
-                .padding(.trailing, panelIsVisible && !utilityPanelExpanded ? panelWidth : 0)
-                .opacity(utilityPanelExpanded ? 0 : 1)
-                .allowsHitTesting(!utilityPanelExpanded)
-                .accessibilityHidden(utilityPanelExpanded)
+                .padding(.trailing, panelIsVisible && !panelFillsDetail ? panelWidth : 0)
+                .opacity(panelIsVisible && panelFillsDetail ? 0 : 1)
+                .allowsHitTesting(!panelIsVisible || !panelFillsDetail)
+                .accessibilityHidden(panelIsVisible && panelFillsDetail)
 
                 if panelIsVisible {
                     HStack(spacing: 0) {
                         DesktopUtilityPanelResizeHandle(
+                            width: panelWidth,
                             onChanged: resizeUtilityPanel,
-                            onEnded: finishUtilityPanelResize
+                            onEnded: finishUtilityPanelResize,
+                            adjustWidth: { delta in
+                                utilityPanelWidth = min(max(Double(panelWidth + delta), 420), 900)
+                            }
                         )
-                        .frame(width: utilityPanelExpanded ? 0 : 7)
-                        .opacity(utilityPanelExpanded ? 0 : 1)
-                        .allowsHitTesting(!utilityPanelExpanded)
+                        .frame(width: panelFillsDetail ? 0 : 7)
+                        .opacity(panelFillsDetail ? 0 : 1)
+                        .allowsHitTesting(!panelFillsDetail)
+                        .accessibilityHidden(panelFillsDetail)
 
-                        DesktopUtilityPanelView(store: store, model: utilityPanel)
+                        VStack(spacing: 0) {
+                            if panelFillsDetail && !utilityPanelExpanded {
+                                HStack {
+                                    Button {
+                                        inspectorVisible = false
+                                    } label: {
+                                        Label("Back to chat", systemImage: "chevron.left")
+                                    }
+                                    .buttonStyle(.borderless)
+                                    .accessibilityLabel("Close utility panel and return to chat")
+                                    Spacer()
+                                    Text("Utility panel")
+                                        .foregroundStyle(.secondary)
+                                }
+                                .font(.system(size: 11.5, weight: .medium))
+                                .padding(.horizontal, 12)
+                                .frame(height: 34)
+                                Divider()
+                            }
+                            DesktopUtilityPanelView(store: store, model: utilityPanel)
+                        }
                     }
                     .frame(width: panelWidth)
                     .frame(maxHeight: .infinity)
+                }
+            }
+            .onChange(of: panelIsVisible && panelFillsDetail) { _, fillsDetail in
+                if fillsDetail {
+                    // Opacity/hit-testing do not resign an AppKit text view.
+                    // A hidden composer must not keep receiving Return or text.
+                    NSApp.keyWindow?.makeFirstResponder(nil)
                 }
             }
             .transaction { transaction in
@@ -779,16 +833,21 @@ struct DesktopWorkspaceView: View {
 }
 
 private struct DesktopUtilityPanelResizeHandle: View {
+    let width: CGFloat
     let onChanged: (CGFloat) -> Void
     let onEnded: () -> Void
+    let adjustWidth: (CGFloat) -> Void
     @State private var isHovered = false
 
     var body: some View {
         ZStack {
+            Rectangle().fill(DesktopTheme.canvas)
             Rectangle().fill(DesktopTheme.hairline)
                 .frame(width: 1)
-            Rectangle().fill(Color.primary.opacity(isHovered ? 0.08 : 0.001))
-                .frame(width: 7)
+            if isHovered {
+                Rectangle().fill(Color.primary.opacity(0.08))
+                    .allowsHitTesting(false)
+            }
         }
         .frame(width: 7)
         .contentShape(Rectangle())
@@ -802,7 +861,20 @@ private struct DesktopUtilityPanelResizeHandle: View {
                 .onChanged { value in onChanged(value.translation.width) }
                 .onEnded { _ in onEnded() }
         )
-        .accessibilityHidden(true)
+        .focusable()
+        .focusEffectDisabled()
+        .onKeyPress(.leftArrow) { adjustWidth(24); return .handled }
+        .onKeyPress(.rightArrow) { adjustWidth(-24); return .handled }
+        .accessibilityElement()
+        .accessibilityLabel("Utility panel width")
+        .accessibilityValue("\(Int(width)) points")
+        .accessibilityAdjustableAction { direction in
+            switch direction {
+            case .increment: adjustWidth(24)
+            case .decrement: adjustWidth(-24)
+            @unknown default: break
+            }
+        }
     }
 }
 
@@ -1270,17 +1342,17 @@ private struct DesktopSidebarView: View {
     }
 
     private var projectDisplayNames: [String: String] {
-        guard let data = projectDisplayNamesJSON.data(using: .utf8),
-              let names = try? JSONDecoder().decode([String: String].self, from: data) else {
-            return [:]
-        }
-        return names
+        DesktopSidebarPreferenceCache.shared.projectDisplayNames(rawJSON: projectDisplayNamesJSON)
     }
 
     private func projectGroups(
         for candidates: [DesktopThread]
     ) -> [(path: String, name: String, threads: [DesktopThread])] {
-        let byID = Dictionary(uniqueKeysWithValues: candidates.map { ($0.id, $0) })
+        var byID: [String: DesktopThread] = [:]
+        byID.reserveCapacity(candidates.count)
+        for candidate in candidates where byID[candidate.id] == nil {
+            byID[candidate.id] = candidate
+        }
         func root(for thread: DesktopThread) -> DesktopThread {
             var current = thread
             var visited = Set([thread.id])
@@ -1292,18 +1364,21 @@ private struct DesktopSidebarView: View {
             return current
         }
         let grouped = Dictionary(grouping: candidates) { root(for: $0).cwd }
+        let displayNames = projectDisplayNames
         return grouped
             .map { path, threads in
-                (
+                let sorted = sortedThreads(threads)
+                return (
                     path: path,
-                    name: projectDisplayNames[path] ?? URL(fileURLWithPath: path).lastPathComponent,
-                    threads: sortedThreads(threads)
+                    name: displayNames[path] ?? URL(fileURLWithPath: path).lastPathComponent,
+                    threads: sorted,
+                    latestUpdatedAt: threads.lazy.map(\.updatedAt).max() ?? .distantPast
                 )
             }
             .sorted { lhs, rhs in
-                (lhs.threads.map(\.updatedAt).max() ?? .distantPast)
-                    > (rhs.threads.map(\.updatedAt).max() ?? .distantPast)
+                lhs.latestUpdatedAt > rhs.latestUpdatedAt
             }
+            .map { (path: $0.path, name: $0.name, threads: $0.threads) }
     }
 
     private func flattenedEntries(for candidates: [DesktopThread]) -> [DesktopThreadTreeEntry] {
@@ -1744,7 +1819,7 @@ private struct DesktopSidebarView: View {
             }
 
             Button {
-                withAnimation(.easeOut(duration: 0.16)) { showsSearch.toggle() }
+                withAnimation(reduceMotion ? nil : .easeOut(duration: 0.16)) { showsSearch.toggle() }
                 if showsSearch { searchFocused = true }
             } label: {
                 Label("Search", systemImage: "magnifyingglass")
@@ -2153,11 +2228,7 @@ private struct DesktopSidebarView: View {
     }
 
     private var collapsedProjectPaths: Set<String> {
-        guard let data = collapsedProjectPathsJSON.data(using: .utf8),
-              let paths = try? JSONDecoder().decode([String].self, from: data) else {
-            return []
-        }
-        return Set(paths)
+        DesktopSidebarPreferenceCache.shared.collapsedProjectPaths(rawJSON: collapsedProjectPathsJSON)
     }
 
     private var sidebarOrganization: DesktopSidebarOrganization {
@@ -2169,11 +2240,7 @@ private struct DesktopSidebarView: View {
     }
 
     private var manualThreadOrder: [String] {
-        guard let data = manualThreadOrderJSON.data(using: .utf8),
-              let ids = try? JSONDecoder().decode([String].self, from: data) else {
-            return []
-        }
-        return ids
+        DesktopSidebarPreferenceCache.shared.manualThreadOrder(rawJSON: manualThreadOrderJSON).ids
     }
 
     private var canManuallyReorder: Bool {
@@ -2312,7 +2379,9 @@ private struct DesktopSidebarView: View {
         case .lastUpdated:
             return threads.sorted { $0.updatedAt > $1.updatedAt }
         case .manual:
-            let ranks = Dictionary(uniqueKeysWithValues: manualThreadOrder.enumerated().map { ($1, $0) })
+            let ranks = DesktopSidebarPreferenceCache.shared
+                .manualThreadOrder(rawJSON: manualThreadOrderJSON)
+                .ranks
             return threads.sorted { lhs, rhs in
                 let lhsRank = ranks[lhs.id]
                 let rhsRank = ranks[rhs.id]
@@ -2807,6 +2876,8 @@ private struct DesktopConversationView: View {
     @ObservedObject var terminalHub: DesktopLocalTerminalHub
     @Binding var showsInteractiveTerminal: Bool
     @Binding var isTerminalWorkspace: Bool
+    let availableHeight: CGFloat
+    let isInputVisible: Bool
     let onOpenSubagent: (String) -> Void
     let onOpenPlan: (DesktopPlanReference) -> Void
     @AppStorage(DesktopAppearancePreferences.composerMaterialKey) private var composerMaterialRaw =
@@ -2827,6 +2898,7 @@ private struct DesktopConversationView: View {
     @State private var minimapSnapshotThreadID: String?
     @State private var minimapSnapshotRevision = -1
     @State private var minimapTurns: [DesktopThreadMinimapTurn] = []
+    @State private var minimapTurnIDByItemID: [String: String] = [:]
     @State private var minimapAnalysisRequest: DesktopThreadMinimapAnalysisRequest?
     @Namespace private var composerTransitionNamespace
     @State private var messageSendTransition = DesktopMessageSendTransition()
@@ -2896,19 +2968,21 @@ private struct DesktopConversationView: View {
                     store: store,
                     hub: terminalHub,
                     isPresented: $showsInteractiveTerminal,
-                    isWorkspace: $isTerminalWorkspace
+                    isWorkspace: $isTerminalWorkspace,
+                    availableHeight: availableHeight
                 )
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
         .environment(messageSendTransition)
+        .environment(\.desktopConversationInputVisible, isInputVisible)
         .onChange(of: store.selectedThreadID) { _, _ in messageSendTransition.cancel() }
         .onChange(of: reduceMotion) { _, enabled in
             if enabled { messageSendTransition.cancel() }
         }
         .onDisappear { messageSendTransition.cancel() }
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.16), value: showsInteractiveTerminal)
-        .animation(.easeInOut(duration: 0.16), value: isTerminalWorkspace)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.16), value: isTerminalWorkspace)
         .onChange(of: showsInteractiveTerminal) { _, shown in
             if !shown {
                 isTerminalWorkspace = false
@@ -3241,7 +3315,7 @@ private struct DesktopConversationView: View {
                         .transition(.opacity.combined(with: .move(edge: .bottom)))
                     }
                 }
-                .animation(.easeOut(duration: 0.16), value: isPinnedToBottom)
+                .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: isPinnedToBottom)
                 .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: showsThreadMinimap)
                 .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: minimapHover?.turn.id)
             }
@@ -3278,7 +3352,7 @@ private struct DesktopConversationView: View {
         let analysisRequest = snapshot.makeAnalysisRequest()
         minimapSnapshotThreadID = nil
         minimapSnapshot = snapshot
-        minimapTurns = snapshot.topicTurns(modelTopicStartIDs: store.threadMinimapTopicStartIDs)
+        replaceMinimapTurns(snapshot.topicTurns(modelTopicStartIDs: store.threadMinimapTopicStartIDs))
         minimapAnalysisRequest = analysisRequest
         minimapSnapshotRevision = revision
         minimapSnapshotThreadID = threadID
@@ -3288,15 +3362,27 @@ private struct DesktopConversationView: View {
         guard showsThreadMinimap,
               minimapSnapshotThreadID == store.selectedThreadID,
               minimapSnapshotRevision == store.timelineRevision else { return }
-        minimapTurns = minimapSnapshot.topicTurns(modelTopicStartIDs: store.threadMinimapTopicStartIDs)
+        replaceMinimapTurns(minimapSnapshot.topicTurns(modelTopicStartIDs: store.threadMinimapTopicStartIDs))
     }
 
     private func clearMinimapPresentation() {
         minimapSnapshotThreadID = nil
         minimapSnapshotRevision = -1
         minimapSnapshot = .empty
-        minimapTurns = []
+        replaceMinimapTurns([])
         minimapAnalysisRequest = nil
+    }
+
+    private func replaceMinimapTurns(_ turns: [DesktopThreadMinimapTurn]) {
+        var turnIDByItemID: [String: String] = [:]
+        turnIDByItemID.reserveCapacity(turns.reduce(into: 0) { $0 += $1.itemIDs.count })
+        for turn in turns {
+            for itemID in turn.itemIDs where turnIDByItemID[itemID] == nil {
+                turnIDByItemID[itemID] = turn.id
+            }
+        }
+        minimapTurns = turns
+        minimapTurnIDByItemID = turnIDByItemID
     }
 
     private static let scrollSpace = "veo.timeline.scroll"
@@ -3307,7 +3393,7 @@ private struct DesktopConversationView: View {
             let frame = row.frame(in: .named(Self.scrollSpace))
             Color.clear.preference(
                 key: TimelineItemBoundsKey.self,
-                value: Dictionary(uniqueKeysWithValues: itemIDs.map { ($0, frame) })
+                value: Dictionary(itemIDs.map { ($0, frame) }, uniquingKeysWith: { first, _ in first })
             )
         }
     }
@@ -3352,7 +3438,7 @@ private struct DesktopConversationView: View {
 
     private func scrollToEnd(_ proxy: ScrollViewProxy, animated: Bool) {
         let scroll = { proxy.scrollTo(Self.bottomAnchor, anchor: .bottom) }
-        if animated {
+        if animated && !reduceMotion {
             withAnimation(.easeOut(duration: 0.2), scroll)
         } else {
             scroll()
@@ -3377,9 +3463,7 @@ private struct DesktopConversationView: View {
             activeMinimapTurnID = nil
             return
         }
-        let turnByItemID = Dictionary(
-            uniqueKeysWithValues: turns.flatMap { turn in turn.itemIDs.map { ($0, turn.id) } }
-        )
+        let turnByItemID = minimapTurnIDByItemID
         let focusY = min(max(viewportHeight * 0.28, 80), 190)
         var bestByTurn: [String: CGFloat] = [:]
 
@@ -3735,7 +3819,7 @@ private struct DesktopTimelineRow: View {
                 .lineLimit(item.kind == .command && !showsFullCommandOutput ? 12 : nil)
                 .textSelection(.enabled)
 
-            if item.kind == .command, item.body.split(whereSeparator: \Character.isNewline).count > 12 {
+            if item.kind == .command, !item.body.isEmpty {
                 Button(showsFullCommandOutput ? "Show less" : "Show all output") {
                     showsFullCommandOutput.toggle()
                 }
@@ -3926,6 +4010,7 @@ private struct DesktopTimelineSkeleton: View {
 }
 
 private struct DesktopComposerView: View {
+    @Environment(\.desktopConversationInputVisible) private var isInputVisible
     @Environment(DesktopMessageSendTransition.self) private var messageSendTransition: DesktopMessageSendTransition?
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.veoAccent) private var veoAccent
@@ -3960,6 +4045,9 @@ private struct DesktopComposerView: View {
             }
         }
         .onAppear { requestFocus() }
+        .onChange(of: isInputVisible) { _, visible in
+            if visible { requestFocus() }
+        }
         .onChange(of: store.selectedThreadID) { _, _ in requestFocus() }
         .onChange(of: store.hasExplicitWorkspace) { _, _ in requestFocus() }
         .onChange(of: store.selectedUserInputRequest?.id) { previousID, requestID in
@@ -4035,7 +4123,7 @@ private struct DesktopComposerView: View {
     }
 
     private func requestFocus() {
-        guard store.hasExplicitWorkspace, store.selectedUserInputRequest == nil else { return }
+        guard isInputVisible, store.hasExplicitWorkspace, store.selectedUserInputRequest == nil else { return }
         focusToken += 1
     }
 
@@ -4113,9 +4201,10 @@ private struct DesktopComposerView: View {
                 fontSize: isWelcome ? 15 : 14,
                 minHeight: isWelcome ? 70 : 34,
                 maxHeight: isWelcome ? 130 : 110,
-                isEditable: store.hasExplicitWorkspace && store.visionFallbackStatus == nil,
+                isEditable: isInputVisible && store.hasExplicitWorkspace && store.visionFallbackStatus == nil,
                 focusToken: focusToken,
                 onSubmit: {
+                    guard isInputVisible else { return true }
                     if store.executeComposerCommandIfPresent() { return true }
                     guard store.canSend else { return false }
                     submitDraft()
@@ -4129,194 +4218,201 @@ private struct DesktopComposerView: View {
             .accessibilityLabel("Message Codex")
             .modifier(DesktopSendGeometry(part: .text, role: .composer))
 
-            HStack(spacing: 8) {
-                Button {
-                    isOptionsPresented.toggle()
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 12, weight: .semibold))
-                        .frame(width: 27, height: 27)
-                        .background(DesktopTheme.raised, in: Circle())
-                }
-                .buttonStyle(.plain)
-                .help("Composer options")
-                .accessibilityLabel("Composer options")
-                .popover(isPresented: $isOptionsPresented, arrowEdge: .bottom) {
-                    DesktopComposerOptionsView(store: store) {
-                        isOptionsPresented = false
-                        DispatchQueue.main.async {
-                            store.chooseWorkspace()
-                        }
-                    }
-                }
-                .disabled(store.visionFallbackStatus != nil)
-                .layoutPriority(1)
-
-                DesktopModelMenu(store: store)
-                    .layoutPriority(1)
-
-                accessModeMenu
-                    .layoutPriority(1)
-
-                if store.isBusyTurn {
-                    followUpMenu
-                        .layoutPriority(1)
-                }
-
-                Spacer(minLength: 0)
-
-                if let plan = reviewPlan {
+            VStack(alignment: .leading, spacing: 9) {
+                HStack(spacing: 8) {
                     Button {
-                        store.navigateToPlan(plan.reference)
+                        isOptionsPresented.toggle()
                     } label: {
-                        Image(systemName: "list.bullet.clipboard")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(veoAccent)
-                            .frame(width: 28, height: 28)
-                            .background(
-                                Color.primary.opacity(0.05),
-                                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            )
-                            .overlay {
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .stroke(veoAccent.opacity(0.18), lineWidth: 1)
-                                    .allowsHitTesting(false)
+                        Image(systemName: "plus")
+                            .font(.system(size: 12, weight: .semibold))
+                            .frame(width: 27, height: 27)
+                            .background(DesktopTheme.raised, in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Composer options")
+                    .accessibilityLabel("Composer options")
+                    .popover(isPresented: $isOptionsPresented, arrowEdge: .bottom) {
+                        DesktopComposerOptionsView(store: store) {
+                            isOptionsPresented = false
+                            DispatchQueue.main.async {
+                                store.chooseWorkspace()
                             }
-                            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    }
-                    .buttonStyle(.plain)
-                    .help("Plan ready — scroll to plan")
-                    .accessibilityLabel("Plan ready. Scroll to plan")
-                    .layoutPriority(1)
-                }
-
-                sendNewlineHint
-
-                DesktopComposerModePills(store: store)
-
-                if store.realtimeVoiceEnabled,
-                   store.capabilities.supports(.realtimeVoice),
-                   store.selectedThreadID != nil {
-                    Button {
-                        if store.isRealtimeVoiceActive {
-                            store.stopRealtimeVoice()
-                        } else {
-                            store.startRealtimeVoice()
                         }
-                    } label: {
-                        Image(systemName: store.isRealtimeVoiceActive ? "waveform.circle.fill" : "mic.circle")
-                            .font(.system(size: 18, weight: .semibold))
-                            .foregroundStyle(store.isRealtimeVoiceActive ? .red : .secondary)
                     }
-                    .buttonStyle(.plain)
-                    .disabled(store.selectedThread?.canAcceptDirectInput == false)
-                    .help(store.isRealtimeVoiceActive ? "Stop realtime voice" : "Start realtime voice")
-                    .accessibilityLabel(store.isRealtimeVoiceActive ? "Stop realtime voice" : "Start realtime voice")
+                    .disabled(store.visionFallbackStatus != nil)
                     .layoutPriority(1)
 
-                    if !store.realtimeVoices.isEmpty, !store.isRealtimeVoiceActive {
-                        Menu {
-                            ForEach(store.realtimeVoices) { voice in
-                                Button {
-                                    store.selectRealtimeVoice(voice.id)
-                                } label: {
-                                    HStack {
-                                        Text(voice.displayName)
-                                        if store.selectedRealtimeVoiceID == voice.id {
-                                            Image(systemName: "checkmark")
+                    DesktopModelMenu(store: store)
+                        .layoutPriority(1)
+
+                    accessModeMenu
+                        .fixedSize(horizontal: true, vertical: false)
+                        .layoutPriority(1)
+
+                    Spacer(minLength: 4)
+                    sendNewlineHint
+                    Button {
+                        submitDraft()
+                    } label: {
+                        Image(systemName: "arrow.up")
+                            .font(.system(size: 12, weight: .bold))
+                            .frame(width: 28, height: 28)
+                            .background(.white, in: Circle())
+                            .foregroundStyle(.black)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!store.canSend)
+                    .opacity(store.canSend ? 1 : 0.42)
+                    .help(sendButtonHelp)
+                    .accessibilityLabel(sendButtonHelp)
+                    .layoutPriority(1)
+
+                    if store.isRunningTurn || store.isRoutingSelectedModel {
+                        Button {
+                            store.stopTurn()
+                        } label: {
+                            Image(systemName: "stop.fill")
+                                .font(.system(size: 10, weight: .bold))
+                                .frame(width: 28, height: 28)
+                                .background(.red, in: Circle())
+                                .foregroundStyle(.white)
+                        }
+                        .buttonStyle(.plain)
+                        .keyboardShortcut(".", modifiers: .command)
+                        .help("Stop")
+                        .accessibilityLabel("Stop turn")
+                        .layoutPriority(1)
+                    }
+                }
+                if hasSecondaryComposerControls {
+                    DesktopWrappingControlsLayout(spacing: 8) {
+                        if store.isBusyTurn {
+                            followUpMenu
+                                .layoutPriority(1)
+                        }
+                        if let plan = reviewPlan {
+                            Button {
+                                store.navigateToPlan(plan.reference)
+                            } label: {
+                                Image(systemName: "list.bullet.clipboard")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(veoAccent)
+                                    .frame(width: 28, height: 28)
+                                    .background(
+                                        Color.primary.opacity(0.05),
+                                        in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    )
+                                    .overlay {
+                                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                            .stroke(veoAccent.opacity(0.18), lineWidth: 1)
+                                            .allowsHitTesting(false)
+                                    }
+                                    .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            }
+                            .buttonStyle(.plain)
+                            .help("Plan ready — scroll to plan")
+                            .accessibilityLabel("Plan ready. Scroll to plan")
+                            .layoutPriority(1)
+                        }
+
+                        DesktopComposerModePills(store: store)
+
+                        if store.realtimeVoiceEnabled,
+                           store.capabilities.supports(.realtimeVoice),
+                           store.selectedThreadID != nil {
+                            Button {
+                                if store.isRealtimeVoiceActive {
+                                    store.stopRealtimeVoice()
+                                } else {
+                                    store.startRealtimeVoice()
+                                }
+                            } label: {
+                                Image(systemName: store.isRealtimeVoiceActive ? "waveform.circle.fill" : "mic.circle")
+                                    .font(.system(size: 18, weight: .semibold))
+                                    .foregroundStyle(store.isRealtimeVoiceActive ? .red : .secondary)
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(store.selectedThread?.canAcceptDirectInput == false)
+                            .help(store.isRealtimeVoiceActive ? "Stop realtime voice" : "Start realtime voice")
+                            .accessibilityLabel(store.isRealtimeVoiceActive ? "Stop realtime voice" : "Start realtime voice")
+                            .layoutPriority(1)
+
+                            if !store.realtimeVoices.isEmpty, !store.isRealtimeVoiceActive {
+                                Menu {
+                                    ForEach(store.realtimeVoices) { voice in
+                                        Button {
+                                            store.selectRealtimeVoice(voice.id)
+                                        } label: {
+                                            HStack {
+                                                Text(voice.displayName)
+                                                if store.selectedRealtimeVoiceID == voice.id {
+                                                    Image(systemName: "checkmark")
+                                                }
+                                            }
                                         }
                                     }
+                                } label: {
+                                    Text(store.realtimeVoices.first(where: { $0.id == store.selectedRealtimeVoiceID })?.displayName ?? "Voice")
+                                        .font(.system(size: 10.5, weight: .medium))
+                                        .lineLimit(1)
                                 }
+                                .menuStyle(.borderlessButton)
+                                .help("Realtime voice")
                             }
-                        } label: {
-                            Text(store.realtimeVoices.first(where: { $0.id == store.selectedRealtimeVoiceID })?.displayName ?? "Voice")
-                                .font(.system(size: 10.5, weight: .medium))
-                                .lineLimit(1)
                         }
-                        .menuStyle(.borderlessButton)
-                        .help("Realtime voice")
+
+                        if !store.selectedQueuedDrafts.isEmpty {
+                            Button {
+                                isQueuePresented.toggle()
+                            } label: {
+                                Label("Queued \(store.selectedQueuedDrafts.count)", systemImage: "text.line.last.and.arrowtriangle.forward")
+                                    .font(.system(size: 10.5, weight: .semibold))
+                                    .lineLimit(1)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(.orange.opacity(0.14), in: Capsule())
+                                    .overlay(Capsule().stroke(.orange.opacity(0.28), lineWidth: 1))
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(.orange)
+                            .popover(isPresented: $isQueuePresented, arrowEdge: .bottom) {
+                                DesktopQueuedDraftsPopover(store: store)
+                            }
+                            .help("Review queued follow-ups")
+                            .layoutPriority(1)
+                        }
+
+                        if showsContextWindowUsage,
+                           store.selectedThreadID != nil,
+                           let usage = store.selectedTokenUsage,
+                           usage.fractionUsed != nil {
+                            DesktopContextWindowUsageView(
+                                usage: usage,
+                                style: DesktopContextWindowUsageStyle(rawValue: contextWindowUsageStyleRaw) ?? .percent,
+                                modelName: store.modelDisplayName,
+                                isCompacting: store.isSelectedThreadCompacting
+                            )
+                            .layoutPriority(1)
+                        }
+
+                        if let plan = reviewPlan {
+                            DesktopPlanImplementControl(
+                                isImplementing: plan.lifecycle == .implementing,
+                                isEnabled: store.canImplementSelectedPlan,
+                                help: store.canImplementSelectedPlan
+                                    ? "Implement the approved plan"
+                                    : "Send or clear feedback and attachments first",
+                                usesCommandReturn: true,
+                                implement: { store.implementPlan(plan.reference) },
+                                implementInNewTask: { store.implementPlan(plan.reference, inNewTask: true) }
+                            )
+                            .layoutPriority(1)
+                        }
+
                     }
-                }
-
-                if !store.selectedQueuedDrafts.isEmpty {
-                    Button {
-                        isQueuePresented.toggle()
-                    } label: {
-                        Label("Queued \(store.selectedQueuedDrafts.count)", systemImage: "text.line.last.and.arrowtriangle.forward")
-                            .font(.system(size: 10.5, weight: .semibold))
-                            .lineLimit(1)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(.orange.opacity(0.14), in: Capsule())
-                            .overlay(Capsule().stroke(.orange.opacity(0.28), lineWidth: 1))
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.orange)
-                    .popover(isPresented: $isQueuePresented, arrowEdge: .bottom) {
-                        DesktopQueuedDraftsPopover(store: store)
-                    }
-                    .help("Review queued follow-ups")
-                    .layoutPriority(1)
-                }
-
-                if showsContextWindowUsage,
-                   store.selectedThreadID != nil,
-                   let usage = store.selectedTokenUsage,
-                   usage.fractionUsed != nil {
-                    DesktopContextWindowUsageView(
-                        usage: usage,
-                        style: DesktopContextWindowUsageStyle(rawValue: contextWindowUsageStyleRaw) ?? .percent,
-                        modelName: store.modelDisplayName,
-                        isCompacting: store.isSelectedThreadCompacting
-                    )
-                    .layoutPriority(1)
-                }
-
-                if let plan = reviewPlan {
-                    DesktopPlanImplementControl(
-                        isImplementing: plan.lifecycle == .implementing,
-                        isEnabled: store.canImplementSelectedPlan,
-                        help: store.canImplementSelectedPlan
-                            ? "Implement the approved plan"
-                            : "Send or clear feedback and attachments first",
-                        usesCommandReturn: true,
-                        implement: { store.implementPlan(plan.reference) },
-                        implementInNewTask: { store.implementPlan(plan.reference, inNewTask: true) }
-                    )
-                    .layoutPriority(1)
-                }
-
-                Button {
-                    submitDraft()
-                } label: {
-                    Image(systemName: "arrow.up")
-                        .font(.system(size: 12, weight: .bold))
-                        .frame(width: 28, height: 28)
-                        .background(.white, in: Circle())
-                        .foregroundStyle(.black)
-                }
-                .buttonStyle(.plain)
-                .disabled(!store.canSend)
-                .opacity(store.canSend ? 1 : 0.42)
-                .help(sendButtonHelp)
-                .accessibilityLabel(sendButtonHelp)
-                .layoutPriority(1)
-
-                if store.isRunningTurn || store.isRoutingSelectedModel {
-                    Button {
-                        store.stopTurn()
-                    } label: {
-                        Image(systemName: "stop.fill")
-                            .font(.system(size: 10, weight: .bold))
-                            .frame(width: 28, height: 28)
-                            .background(.red, in: Circle())
-                            .foregroundStyle(.white)
-                    }
-                    .buttonStyle(.plain)
-                    .keyboardShortcut(".", modifiers: .command)
-                    .help("Stop")
-                    .accessibilityLabel("Stop turn")
-                    .layoutPriority(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityElement(children: .contain)
+                    .accessibilityLabel("Additional chat controls")
                 }
             }
             .font(.system(size: 11.5, weight: .medium))
@@ -4388,6 +4484,14 @@ private struct DesktopComposerView: View {
             get: { askQuestionDraftsByRequestID[requestID] ?? DesktopAskQuestionsComposerDraft() },
             set: { askQuestionDraftsByRequestID[requestID] = $0 }
         )
+    }
+
+    private var hasSecondaryComposerControls: Bool {
+        store.isBusyTurn || reviewPlan != nil
+            || store.isPlanModeEnabled || store.isDebugModeEnabled || store.isGoalModeEnabled
+            || (store.realtimeVoiceEnabled && store.capabilities.supports(.realtimeVoice) && store.selectedThreadID != nil)
+            || !store.selectedQueuedDrafts.isEmpty
+            || (showsContextWindowUsage && store.selectedThreadID != nil && store.selectedTokenUsage?.fractionUsed != nil)
     }
 
     private var composerPlaceholderColor: NSColor {
@@ -4496,6 +4600,45 @@ private struct DesktopComposerView: View {
         }
         if store.isSubmittingTurn { return "Queue next message" }
         return "Send (Return)"
+    }
+}
+
+/// A compact secondary control row that wraps instead of shrinking labels or
+/// moving the model picker and Send button out of reach.
+private struct DesktopWrappingControlsLayout: Layout {
+    var spacing: CGFloat = 8
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        arrange(subviews, width: proposal.width ?? .greatestFiniteMagnitude).size
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let layout = arrange(subviews, width: bounds.width)
+        for (index, point) in layout.origins.enumerated() {
+            subviews[index].place(at: CGPoint(x: bounds.minX + point.x, y: bounds.minY + point.y),
+                                  anchor: .topLeading, proposal: .unspecified)
+        }
+    }
+
+    private func arrange(_ subviews: Subviews, width: CGFloat) -> (size: CGSize, origins: [CGPoint]) {
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        var usedWidth: CGFloat = 0
+        var origins: [CGPoint] = []
+        for view in subviews {
+            let size = view.sizeThatFits(.unspecified)
+            if x > 0 && x + size.width > width {
+                y += rowHeight + spacing
+                x = 0
+                rowHeight = 0
+            }
+            origins.append(CGPoint(x: x, y: y))
+            usedWidth = max(usedWidth, x + size.width)
+            rowHeight = max(rowHeight, size.height)
+            x += size.width + spacing
+        }
+        return (CGSize(width: min(width, usedWidth), height: y + rowHeight), origins)
     }
 }
 

@@ -3,6 +3,7 @@
 // Layer: Desktop app service
 // Depends on: Foundation, the locally installed Codex CLI
 
+import Darwin
 @preconcurrency import Foundation
 
 enum CodexAppServerClientError: LocalizedError {
@@ -34,6 +35,11 @@ enum CodexAppServerClientError: LocalizedError {
     }
 }
 
+private enum ParsedCodexStdoutEvent: @unchecked Sendable {
+    case objects([[String: Any]])
+    case terminated(status: Int32, processIdentity: ObjectIdentifier)
+}
+
 @MainActor
 final class CodexAppServerClient {
     typealias JSONObject = [String: Any]
@@ -50,6 +56,7 @@ final class CodexAppServerClient {
     }
 
     private static let maximumStderrDiagnosticBytes = 64 * 1_024
+    private static let maximumStdoutEventsPerActorSlice = 32
 
     private var process: Process?
     private var standardInput: FileHandle?
@@ -61,8 +68,10 @@ final class CodexAppServerClient {
     private var inboundServerRoutes: [DesktopRPCRequestID: CodexAppServerRoute] = [:]
     private var stoppedIntentionally = false
     private var generation = UUID()
-    private let stdoutSplitter = NDJSONStreamSplitter()
-    private let stdoutQueue = DispatchQueue(label: "com.ash.veo.codex-stdout", qos: .userInitiated)
+    private var stdoutReader: CodexStdoutReader?
+    private var stdoutChannel: CodexStdoutChannel?
+    private var stdoutDrainGeneration: UUID?
+    private var stdoutDrainTask: Task<Void, Never>?
 
     private(set) var capabilities = CodexAppServerCapabilities.unavailable
 
@@ -75,11 +84,24 @@ final class CodexAppServerClient {
             throw CodexAppServerClientError.executableMissing
         }
 
+        if process != nil || !pendingRequests.isEmpty {
+            stop()
+        }
         stoppedIntentionally = false
         let generation = UUID()
         self.generation = generation
+        cancelAndClearStdoutDrain()
         stderrTail.removeAll(keepingCapacity: false)
-        stdoutSplitter.reset()
+
+        let stdoutChannel = AsyncStream.makeStream(of: ParsedCodexStdoutEvent.self)
+        let stdoutStream = stdoutChannel.stream
+        let channel = CodexStdoutChannel(continuation: stdoutChannel.continuation)
+        self.stdoutChannel = channel
+        stdoutDrainGeneration = generation
+        stdoutDrainTask = Task { @MainActor [weak self, stdoutStream] in
+            guard let self else { return }
+            await self.drainParsedStdout(stdoutStream, channel: channel, generation: generation)
+        }
 
         let process = Process()
         let inputPipe = Pipe()
@@ -102,20 +124,13 @@ final class CodexAppServerClient {
         process.standardOutput = outputPipe
         process.standardError = errorPipe
 
-        let splitter = stdoutSplitter
-        let queue = stdoutQueue
-        outputPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
-            let data = handle.availableData
-            guard !data.isEmpty else { return }
-            // Split + JSON-parse off the main actor. Flooding Task { @MainActor }
-            // with every pipe chunk was beachballing the UI under chatty traffic.
-            queue.async {
-                let objects = splitter.append(data)
-                guard !objects.isEmpty else { return }
-                Task { @MainActor [weak self] in
-                    self?.routeParsedStdout(objects, generation: generation)
-                }
-            }
+        let stdoutReader = CodexStdoutReader(
+            handle: outputPipe.fileHandleForReading,
+            channel: channel
+        )
+        self.stdoutReader = stdoutReader
+        outputPipe.fileHandleForReading.readabilityHandler = { _ in
+            stdoutReader.readAvailableData()
         }
 
         errorPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
@@ -127,22 +142,19 @@ final class CodexAppServerClient {
             }
         }
 
-        process.terminationHandler = { [weak self] process in
-            let client = self
-            let status = process.terminationStatus
-            let processIdentity = ObjectIdentifier(process)
-            Task { @MainActor [client, status, processIdentity, generation] in
-                client?.processDidTerminate(
-                    status: status,
-                    processIdentity: processIdentity,
-                    generation: generation
-                )
-            }
+        process.terminationHandler = { process in
+            stdoutReader.finish(
+                status: process.terminationStatus,
+                processIdentity: ObjectIdentifier(process)
+            )
         }
 
         do {
             try process.run()
         } catch {
+            stdoutReader.cancel()
+            self.generation = UUID()
+            cancelAndClearStdoutDrain()
             throw CodexAppServerClientError.processUnavailable("Codex could not start: \(error.localizedDescription)")
         }
 
@@ -166,6 +178,9 @@ final class CodexAppServerClient {
                     ],
                 ]
             )
+            guard self.generation == generation, isRunning else {
+                throw CodexAppServerClientError.processUnavailable("The local Codex runtime stopped during initialization.")
+            }
             capabilities = .negotiated(
                 initializeResponse: initializeResponse,
                 experimentalAPIEnabled: true,
@@ -173,7 +188,9 @@ final class CodexAppServerClient {
             )
             try sendNotification(method: "initialized")
         } catch {
-            stop()
+            if self.generation == generation {
+                stop()
+            }
             throw error
         }
     }
@@ -183,11 +200,11 @@ final class CodexAppServerClient {
         let input = standardInput
         let process = process
         generation = UUID()
+        cancelAndClearStdoutDrain()
         standardInput = nil
         self.process = nil
         capabilities = .unavailable
         inboundServerRoutes.removeAll()
-        stdoutSplitter.reset()
         stderrTail.removeAll(keepingCapacity: false)
 
         let error = CodexAppServerClientError.processUnavailable("The local Codex runtime restarted.")
@@ -304,25 +321,58 @@ final class CodexAppServerClient {
         try standardInput.write(contentsOf: data)
     }
 
-    private func routeParsedStdout(_ objects: [JSONObject], generation: UUID) {
-        guard self.generation == generation else { return }
-        if objects.count <= 64 {
-            for object in objects {
-                route(object)
+    private func drainParsedStdout(
+        _ stream: AsyncStream<ParsedCodexStdoutEvent>,
+        channel: CodexStdoutChannel,
+        generation: UUID
+    ) async {
+        var eventsInActorSlice = 0
+        for await event in stream {
+            defer { channel.didConsumeEvent() }
+            guard !Task.isCancelled,
+                  self.generation == generation,
+                  stdoutDrainGeneration == generation else { return }
+
+            let objects: [JSONObject]
+            switch event {
+            case .objects(let batch):
+                objects = batch
+            case .terminated(let status, let processIdentity):
+                processDidTerminate(
+                    status: status,
+                    processIdentity: processIdentity,
+                    generation: generation
+                )
+                return
             }
-            return
-        }
-        // Large bursts (thread lists, tool streams) should not monopolize the UI turn.
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            for (index, object) in objects.enumerated() {
-                guard self.generation == generation else { return }
-                self.route(object)
-                if index % 32 == 31 {
+
+            for object in objects {
+                if eventsInActorSlice == Self.maximumStdoutEventsPerActorSlice {
+                    eventsInActorSlice = 0
                     await Task.yield()
                 }
+                // Routing callbacks can synchronously stop or replace the process.
+                guard !Task.isCancelled,
+                      self.generation == generation,
+                      stdoutDrainGeneration == generation else { return }
+                route(object)
+                eventsInActorSlice += 1
             }
+            // Release each parsed batch before waiting for more stdout. Natural
+            // termination shares this FIFO so final responses reach their callers.
         }
+    }
+
+    private func cancelAndClearStdoutDrain() {
+        // Wake blocked producers before retiring their reader. No protocol data is
+        // dropped during normal operation; cancellation deliberately retires it.
+        stdoutChannel?.finish()
+        stdoutChannel = nil
+        stdoutReader?.cancel()
+        stdoutReader = nil
+        stdoutDrainTask?.cancel()
+        stdoutDrainTask = nil
+        stdoutDrainGeneration = nil
     }
 
     private func appendStderr(_ data: Data, generation: UUID) {
@@ -425,6 +475,8 @@ final class CodexAppServerClient {
     ) {
         guard self.generation == generation else { return }
         guard let activeProcess = process, ObjectIdentifier(activeProcess) == processIdentity else { return }
+        self.generation = UUID()
+        cancelAndClearStdoutDrain()
         self.process = nil
         standardInput = nil
         capabilities = .unavailable
@@ -495,84 +547,211 @@ final class CodexAppServerClient {
     }
 }
 
+/// A bounded, lossless bridge from the parser queue to the main actor. Blocking is
+/// limited to background producers, which lets the OS pipe apply backpressure.
+private final class CodexStdoutChannel: @unchecked Sendable {
+    private let continuation: AsyncStream<ParsedCodexStdoutEvent>.Continuation
+    private let condition = NSCondition()
+    private let maximumPendingEvents = 8
+    private var pendingEvents = 0
+    private var finished = false
+
+    init(continuation: AsyncStream<ParsedCodexStdoutEvent>.Continuation) {
+        self.continuation = continuation
+    }
+
+    @discardableResult
+    func send(_ event: ParsedCodexStdoutEvent) -> Bool {
+        condition.lock()
+        while !finished && pendingEvents >= maximumPendingEvents {
+            condition.wait()
+        }
+        guard !finished else {
+            condition.unlock()
+            return false
+        }
+        pendingEvents += 1
+        continuation.yield(event)
+        condition.unlock()
+        return true
+    }
+
+    func didConsumeEvent() {
+        condition.lock()
+        pendingEvents = max(0, pendingEvents - 1)
+        condition.signal()
+        condition.unlock()
+    }
+
+    func finish() {
+        condition.lock()
+        finished = true
+        condition.broadcast()
+        continuation.finish()
+        condition.unlock()
+    }
+}
+
+/// Serializes bounded pipe reads with the final buffered read, keeping process
+/// termination behind every response without scheduling one actor task per chunk.
+private final class CodexStdoutReader: @unchecked Sendable {
+    // Darwin FIONREAD is _IOR('f', 127, int); Swift cannot import that C macro.
+    private static let bytesAvailableRequest = UInt(IOC_OUT)
+        | (UInt(MemoryLayout<CInt>.size) << 16)
+        | (UInt(UInt8(ascii: "f")) << 8)
+        | 127
+    private static let maximumReadBytes = 64 * 1_024
+    private static let maximumObjectsPerBatch = 128
+
+    private let handle: FileHandle
+    private let splitter = NDJSONStreamSplitter()
+    // A replacement runtime never waits behind an old generation's parser work.
+    private let queue = DispatchQueue(label: "com.ash.veo.codex-stdout", qos: .userInitiated)
+    private let channel: CodexStdoutChannel
+    private let pendingReads = DispatchSemaphore(value: 4)
+    private let lock = NSLock()
+    private var finished = false
+
+    init(handle: FileHandle, channel: CodexStdoutChannel) {
+        self.handle = handle
+        self.channel = channel
+        let descriptor = handle.fileDescriptor
+        let flags = fcntl(descriptor, F_GETFL)
+        if flags >= 0 { _ = fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) }
+    }
+
+    func readAvailableData() {
+        // Bound raw queued bytes as well as parsed actor events. Never wait while
+        // holding the reader lock: Stop must be able to cancel a saturated stream.
+        pendingReads.wait()
+        lock.lock()
+        guard !finished else {
+            lock.unlock()
+            pendingReads.signal()
+            return
+        }
+        let data = readBufferedData(maximumBytes: Self.maximumReadBytes)
+        guard !data.isEmpty else {
+            lock.unlock()
+            pendingReads.signal()
+            return
+        }
+        queue.async { [self, data] in
+            defer { pendingReads.signal() }
+            publish(data)
+        }
+        lock.unlock()
+    }
+
+    func finish(status: Int32, processIdentity: ObjectIdentifier) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !finished else { return }
+        finished = true
+        handle.readabilityHandler = nil
+        // Fence every already queued read before the final parser work. Descendants
+        // may retain stdout, so drain the current byte count instead of waiting for EOF.
+        queue.async { [self] in
+            drainBufferedTail()
+            channel.send(.terminated(status: status, processIdentity: processIdentity))
+            channel.finish()
+            try? handle.close()
+        }
+    }
+
+    private func publish(_ data: Data) {
+        let objects = splitter.append(data)
+        for start in stride(from: 0, to: objects.count, by: Self.maximumObjectsPerBatch) {
+            let end = min(start + Self.maximumObjectsPerBatch, objects.count)
+            guard channel.send(.objects(Array(objects[start..<end]))) else { return }
+        }
+    }
+
+    private func readBufferedData(maximumBytes: Int) -> Data {
+        let descriptor = handle.fileDescriptor
+        var available: Int32 = 0
+        guard ioctl(descriptor, Self.bytesAvailableRequest, &available) == 0, available > 0 else { return Data() }
+        var bytes = [UInt8](repeating: 0, count: min(maximumBytes, Int(available)))
+        var count: Int
+        repeat {
+            count = bytes.withUnsafeMutableBytes { buffer in
+                Darwin.read(descriptor, buffer.baseAddress!, buffer.count)
+            }
+        } while count < 0 && errno == EINTR
+        guard count > 0 else { return Data() }
+        return bytes.withUnsafeBytes { Data(bytes: $0.baseAddress!, count: count) }
+    }
+
+    private func drainBufferedTail() {
+        let descriptor = handle.fileDescriptor
+        var remaining: Int32 = 0
+        guard ioctl(descriptor, Self.bytesAvailableRequest, &remaining) == 0, remaining > 0 else { return }
+        // A snapshot prevents a surviving descendant from extending the final drain.
+        while remaining > 0 {
+            let data = readBufferedData(maximumBytes: min(Self.maximumReadBytes, Int(remaining)))
+            guard !data.isEmpty else { return }
+            remaining -= Int32(data.count)
+            publish(data)
+        }
+    }
+
+    func cancel() {
+        // This releases a parser blocked on backpressure, including reads waiting
+        // on its semaphore, before acquiring the short-lived pipe-read lock.
+        channel.finish()
+        lock.lock()
+        defer { lock.unlock() }
+        guard !finished else { return }
+        finished = true
+        handle.readabilityHandler = nil
+        queue.async { [handle] in try? handle.close() }
+    }
+}
+
 /// Thread-safe newline splitter + JSON parser for app-server stdout.
-/// Keeps heavy scanning off the main actor.
+/// Keeps framing and JSON decoding off the main actor.
 private final class NDJSONStreamSplitter: @unchecked Sendable {
     private let lock = NSLock()
     private var buffer = Data()
-    /// Large enough for chatty `thread/list` pages (~1–2 MiB each). The no-newline
-    /// fast path below avoids CPU spin while an incomplete line is buffered.
-    private let maxBufferBytes = 32 * 1024 * 1024
+    private var discardingOversizedLine = false
+    private let maximumLineBytes: Int
 
-    func reset() {
-        lock.lock()
-        buffer.removeAll(keepingCapacity: false)
-        lock.unlock()
+    init(maximumLineBytes: Int = 32 * 1_024 * 1_024) {
+        self.maximumLineBytes = maximumLineBytes
     }
 
     func append(_ data: Data) -> [[String: Any]] {
         guard !data.isEmpty else { return [] }
-
         lock.lock()
-        // Incomplete JSON can arrive in large chunks. If this chunk has no newline,
-        // no line can complete — just buffer and skip a full rescan.
-        // `memchr` keeps this to one libc scan. The byte-at-a-time Swift loop this
-        // replaced was unspecialized in debug builds and pegged a core for the whole
-        // length of a streaming turn, which starved the UI.
-        let chunkHasNewline = data.withUnsafeBytes { raw -> Bool in
-            guard let base = raw.baseAddress, raw.count > 0 else { return false }
-            return memchr(base, 0x0A, raw.count) != nil
-        }
-
-        buffer.append(data)
-        if buffer.count > maxBufferBytes {
-            // Drop only truly runaway unterminated payloads (not valid large RPC lines).
-            buffer.removeAll(keepingCapacity: false)
-            lock.unlock()
-            return []
-        }
-
-        guard chunkHasNewline else {
-            lock.unlock()
-            return []
-        }
-
-        let snapshot = buffer
-        var lines: [Data] = []
-        var remainderStart = 0
-
-        snapshot.withUnsafeBytes { raw in
-            guard let base = raw.baseAddress, raw.count > 0 else { return }
-            let count = raw.count
-            var lineStart = 0
-            while lineStart < count {
-                guard let hit = memchr(base + lineStart, 0x0A, count - lineStart) else { break }
-                let newlineIndex = UnsafeRawPointer(hit) - base
-                if newlineIndex > lineStart {
-                    lines.append(Data(bytes: base + lineStart, count: newlineIndex - lineStart))
-                }
-                lineStart = newlineIndex + 1
-            }
-            remainderStart = lineStart
-        }
-
-        if remainderStart >= snapshot.count {
-            buffer.removeAll(keepingCapacity: true)
-        } else if remainderStart > 0 {
-            buffer = Data(snapshot.suffix(from: remainderStart))
-        }
-        lock.unlock()
-
+        defer { lock.unlock() }
         var objects: [[String: Any]] = []
-        objects.reserveCapacity(lines.count)
-        for line in lines {
-            guard
-                let raw = try? JSONSerialization.jsonObject(with: line),
-                let object = raw as? [String: Any]
-            else {
-                continue
+        data.withUnsafeBytes { raw in
+            guard let base = raw.baseAddress else { return }
+            var offset = 0
+            while offset < raw.count {
+                let newline = memchr(base + offset, 0x0A, raw.count - offset)
+                let segmentEnd = newline.map { UnsafeRawPointer($0) - base } ?? raw.count
+                let segmentCount = segmentEnd - offset
+                if !discardingOversizedLine {
+                    if segmentCount <= maximumLineBytes - buffer.count {
+                        buffer.append(base.advanced(by: offset).assumingMemoryBound(to: UInt8.self), count: segmentCount)
+                    } else {
+                        // Discard through this line's delimiter, not the next frame.
+                        // Otherwise an oversized payload can corrupt a later response.
+                        buffer.removeAll(keepingCapacity: false)
+                        discardingOversizedLine = true
+                    }
+                }
+                guard newline != nil else { break }
+                if !discardingOversizedLine, !buffer.isEmpty,
+                   let rawObject = try? JSONSerialization.jsonObject(with: buffer),
+                   let object = rawObject as? [String: Any] {
+                    objects.append(object)
+                }
+                buffer.removeAll(keepingCapacity: true)
+                discardingOversizedLine = false
+                offset = segmentEnd + 1
             }
-            objects.append(object)
         }
         return objects
     }

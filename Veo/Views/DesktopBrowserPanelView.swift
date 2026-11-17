@@ -10,6 +10,30 @@ struct DesktopBrowserPanelView: View {
     @ObservedObject var model: DesktopBrowserModel
     var accountLoginSession: DesktopAccountLoginSession?
     var onCancelAccountLogin: () -> Void = {}
+
+    var body: some View {
+        Group {
+            if let tab = model.selectedTab {
+                DesktopBrowserActiveTabPanel(
+                    model: model,
+                    tab: tab,
+                    accountLoginSession: accountLoginSession,
+                    onCancelAccountLogin: onCancelAccountLogin
+                )
+                .id(tab.id)
+            } else {
+                ContentUnavailableView("No browser tab", systemImage: "globe")
+            }
+        }
+    }
+}
+
+// Observe the tab itself: its navigation and console state do not belong to the parent model.
+private struct DesktopBrowserActiveTabPanel: View {
+    @ObservedObject var model: DesktopBrowserModel
+    @ObservedObject var tab: DesktopBrowserTab
+    var accountLoginSession: DesktopAccountLoginSession?
+    var onCancelAccountLogin: () -> Void = {}
     @State private var addressDraft = ""
     @State private var javascriptDraft = ""
     @AppStorage(DesktopBrowserPreferences.searchEngineKey) private var searchEngineRaw =
@@ -21,13 +45,19 @@ struct DesktopBrowserPanelView: View {
             if let prompt = accountLoginPrompt {
                 accountLoginBanner(prompt)
             }
-            if let tab = model.selectedTab {
-                DesktopBrowserSelectedContent(model: model, tab: tab)
-                    .id(tab.id)
-            } else {
-                Divider()
-                ContentUnavailableView("No browser tab", systemImage: "globe")
+            if let message = model.message, !message.isEmpty {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "info.circle").foregroundStyle(.secondary)
+                    Text(message).font(.system(size: 11.5)).textSelection(.enabled)
+                    Spacer(minLength: 4)
+                    Button { model.message = nil } label: { Image(systemName: "xmark") }
+                        .buttonStyle(.borderless)
+                        .accessibilityLabel("Dismiss browser message")
+                }
+                .padding(10)
+                .background(Color.primary.opacity(0.04))
             }
+            DesktopBrowserSelectedContent(model: model, tab: tab)
 
             if model.showsDeveloperTools {
                 Divider()
@@ -40,10 +70,9 @@ struct DesktopBrowserPanelView: View {
                 downloadsBar
             }
         }
-        .onChange(of: model.selectedTabID) { _, _ in syncAddress(resetStartPage: true) }
-        .onChange(of: model.selectedTab?.address) { _, newAddress in
-            guard model.selectedTab?.isStartPage != true else { return }
-            addressDraft = newAddress ?? ""
+        .onChange(of: tab.address) { _, newAddress in
+            guard !tab.isStartPage else { return }
+            addressDraft = newAddress
         }
         .onAppear {
             syncAddress(resetStartPage: true)
@@ -52,19 +81,26 @@ struct DesktopBrowserPanelView: View {
 
     private var navigationBar: some View {
         HStack(spacing: 6) {
-            Button { model.selectedTab?.webView.goBack() } label: { Image(systemName: "chevron.left") }
-                .disabled(model.selectedTab?.canGoBack != true)
-            Button { model.selectedTab?.webView.goForward() } label: { Image(systemName: "chevron.right") }
-                .disabled(model.selectedTab?.canGoForward != true)
+            Button { tab.webView.goBack() } label: { Image(systemName: "chevron.left") }
+                .disabled(!tab.canGoBack)
+                .help("Back")
+                .accessibilityLabel("Back")
+            Button { tab.webView.goForward() } label: { Image(systemName: "chevron.right") }
+                .disabled(!tab.canGoForward)
+                .help("Forward")
+                .accessibilityLabel("Forward")
             Button {
-                if model.selectedTab?.isLoading == true {
-                    model.selectedTab?.webView.stopLoading()
+                if tab.isLoading {
+                    tab.webView.stopLoading()
                 } else {
-                    model.selectedTab?.webView.reload()
+                    tab.webView.reload()
                 }
             } label: {
-                Image(systemName: model.selectedTab?.isLoading == true ? "xmark" : "arrow.clockwise")
+                Image(systemName: tab.isLoading ? "xmark" : "arrow.clockwise")
             }
+            .disabled(tab.isStartPage)
+            .help(tab.isLoading ? "Stop loading" : "Reload page")
+            .accessibilityLabel(tab.isLoading ? "Stop loading" : "Reload page")
 
             DesktopBrowserAddressField(
                 text: $addressDraft,
@@ -87,7 +123,7 @@ struct DesktopBrowserPanelView: View {
             } label: {
                 Image(systemName: "key.fill")
             }
-            .disabled(model.selectedTab?.isStartPage != false)
+            .disabled(tab.isStartPage)
             .help("AutoFill from Keychain")
 
             Menu {
@@ -97,7 +133,7 @@ struct DesktopBrowserPanelView: View {
                 Divider()
                 Button("Open in Safari") { model.openSelectedInSafari() }
                 Button("AutoFill from Keychain") { model.autofillSelectedTab() }
-                    .disabled(model.selectedTab?.isStartPage != false)
+                    .disabled(tab.isStartPage)
                 Button(model.showsDeveloperTools ? "Hide Developer Tools" : "Show Developer Tools") {
                     model.showsDeveloperTools.toggle()
                 }
@@ -109,11 +145,11 @@ struct DesktopBrowserPanelView: View {
             }
             .menuStyle(.borderlessButton)
             .frame(width: 24)
+            .accessibilityLabel("Browser options")
         }
         .buttonStyle(.borderless)
         .padding(.horizontal, 8)
         .frame(height: 38)
-        .help(model.message ?? "Browser controls")
     }
 
     private var developerDrawer: some View {
@@ -121,7 +157,7 @@ struct DesktopBrowserPanelView: View {
             HStack {
                 Text("Console").font(.system(size: 11.5, weight: .semibold))
                 Spacer()
-                Button("Clear") { model.selectedTab?.consoleMessages = [] }
+                Button("Clear") { tab.consoleMessages = [] }
                     .buttonStyle(.borderless)
             }
             .padding(.horizontal, 8)
@@ -129,7 +165,7 @@ struct DesktopBrowserPanelView: View {
             Divider()
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 3) {
-                    ForEach(model.selectedTab?.consoleMessages ?? []) { entry in
+                    ForEach(tab.consoleMessages) { entry in
                         HStack(alignment: .top, spacing: 7) {
                             Text(entry.level.uppercased())
                                 .font(.system(size: 8.5, weight: .bold, design: .monospaced))
@@ -217,10 +253,10 @@ struct DesktopBrowserPanelView: View {
     }
 
     private func syncAddress(resetStartPage: Bool) {
-        if model.selectedTab?.isStartPage == true {
+        if tab.isStartPage {
             if resetStartPage { addressDraft = "" }
         } else {
-            addressDraft = model.selectedTab?.address ?? ""
+            addressDraft = tab.address
         }
     }
 
@@ -266,6 +302,22 @@ private struct DesktopBrowserSelectedContent: View {
                     confirm: tab.autofillFromKeychain,
                     dismiss: { tab.autofillAccount = nil }
                 )
+            }
+            if let error = tab.navigationError {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("Page could not be loaded", systemImage: "exclamationmark.triangle")
+                        .font(.system(size: 11.5, weight: .semibold))
+                    Text(error)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                    Button("Try Again") { tab.retryNavigation() }
+                        .controlSize(.small)
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.orange.opacity(0.08))
+                .accessibilityElement(children: .contain)
             }
             Divider()
             page
@@ -407,6 +459,7 @@ private struct DesktopBrowserAddressField: NSViewRepresentable {
     func makeNSView(context: Context) -> NSTextField {
         let field = AddressNSTextField(string: text)
         field.placeholderString = placeholder
+        field.setAccessibilityLabel("Address or search")
         field.delegate = context.coordinator
         field.isBordered = false
         field.isBezeled = false

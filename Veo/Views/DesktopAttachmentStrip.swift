@@ -25,6 +25,7 @@ struct DesktopAttachmentPreview: View {
     let attachment: DesktopComposerAttachment
     let onRemove: ((String) -> Void)?
     var cachedImage: NSImage? = nil
+    @State private var thumbnail: NSImage?
 
     var body: some View {
         HStack(spacing: 7) {
@@ -51,14 +52,32 @@ struct DesktopAttachmentPreview: View {
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                .allowsHitTesting(false)
         )
         .help(attachment.source)
+        .task(id: attachment.source) {
+            thumbnail = nil
+            guard attachment.kind == .localImage, cachedImage == nil else { return }
+            let data = await DesktopAttachmentThumbnailCache.shared.thumbnail(at: attachment.source)
+            guard !Task.isCancelled else { return }
+            thumbnail = data.flatMap(NSImage.init(data:))
+        }
+        .contextMenu {
+            if attachment.kind == .localImage || attachment.kind == .localAudio || attachment.kind == .fileMention {
+                Button("Open attachment") {
+                    NSWorkspace.shared.open(URL(fileURLWithPath: attachment.source))
+                }
+                Button("Reveal in Finder") {
+                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: attachment.source)])
+                }
+            }
+        }
     }
 
     @ViewBuilder
     private var preview: some View {
         if attachment.kind == .localImage,
-           let image = cachedImage ?? NSImage(contentsOfFile: attachment.source) {
+           let image = cachedImage ?? thumbnail {
             Image(nsImage: image)
                 .resizable()
                 .scaledToFill()

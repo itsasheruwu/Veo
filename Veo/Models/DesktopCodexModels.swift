@@ -618,6 +618,25 @@ struct DesktopModelOption: Identifiable, Hashable {
         [id, model, displayName].contains { Self.normalizedModelName($0).contains("gpt-6-astra") }
     }
 
+    /// Stays outside `isGPT6Family` so the row sits above 6 Auto, Astra, Sol, and Luna.
+    var isGPT61Sol: Bool {
+        [id, model, displayName].contains { name in
+            let normalized = Self.normalizedModelName(name)
+            return normalized.contains("gpt-6.1-sol") || normalized == "6.1-sol"
+        }
+    }
+
+    var isGPT61Terra: Bool {
+        [id, model, displayName].contains { name in
+            let normalized = Self.normalizedModelName(name)
+            return normalized.contains("gpt-6.1-terra") || normalized == "6.1-terra"
+        }
+    }
+
+    var isGPT61Family: Bool {
+        isGPT61Sol || isGPT61Terra
+    }
+
     var isGPT6Sol: Bool {
         [id, model, displayName].contains { Self.normalizedModelName($0).contains("gpt-6-sol") }
     }
@@ -715,6 +734,12 @@ struct DesktopModelOption: Identifiable, Hashable {
     static func displayNameForUser(id: String, model: String, fallback: String) -> String {
         let names = [id, model, fallback].map(Self.normalizedModelName)
 
+        if names.contains(where: { $0.contains("gpt-6.1-sol") || $0 == "6.1-sol" }) {
+            return "6.1 Sol"
+        }
+        if names.contains(where: { $0.contains("gpt-6.1-terra") || $0 == "6.1-terra" }) {
+            return "6.1 Terra"
+        }
         if names.contains(where: { $0.contains("gpt-6-astra") }) {
             return "6 Astra"
         }

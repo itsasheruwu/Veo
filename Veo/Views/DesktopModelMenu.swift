@@ -25,18 +25,24 @@ struct DesktopModelMenu: View {
 
     private var collapsedModelTitle: String {
         if store.autoModelSelectionEnabled || store.hasLockedAutoModel { return store.modelDisplayName }
+        if store.selectedModel?.isGPT61Sol == true { return "6.1 Sol" }
+        if store.selectedModel?.isGPT61Terra == true { return "6.1 Terra" }
         guard let variant = selectedVariant else { return store.modelDisplayName }
         return variant == .astra ? "6 Astra" : "5.6 \(variant.title)"
     }
 
     private var sliderModelTitle: String {
         if store.autoModelSelectionEnabled || store.hasLockedAutoModel { return store.modelDisplayName }
+        if store.selectedModel?.isGPT61Sol == true { return "6.1 Sol" }
+        if store.selectedModel?.isGPT61Terra == true { return "6.1 Terra" }
         guard let variant = selectedVariant else { return store.modelDisplayName }
         return variant == .astra ? "6 Astra" : "5.6 \(variant.title)"
     }
 
     private var selectedGPT6SystemImage: String? {
-        if store.selectedModel?.isGPT6Sol == true { return "sun.max.fill" }
+        if store.selectedModel?.isGPT61Sol == true || store.selectedModel?.isGPT6Sol == true {
+            return "sun.max.fill"
+        }
         if store.selectedModel?.isGPT6Luna == true { return "moon.fill" }
         return nil
     }
@@ -317,7 +323,7 @@ private enum SliderPickerPalette {
 }
 
 private extension DesktopModelOption {
-    var usesAstraBluePickerStyle: Bool { isGPT6Astra || isGPT6Sol }
+    var usesAstraBluePickerStyle: Bool { isGPT6Astra || isGPT6Sol || isGPT61Sol }
 }
 
 private struct DesktopModelSliderAdvancedPicker: View {
@@ -450,6 +456,20 @@ private struct DesktopModelSliderAdvancedPicker: View {
 
             reasoningControl
                 .padding(.horizontal, SliderPickerMetrics.contentInset)
+
+            if !isAutoRouteSelected, reasoningOptions.count > 1,
+               reasoningOptions.indices.contains(displayedReasoningIndex) {
+                HStack {
+                    Text("Reasoning")
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 8)
+                    Text(reasoningOptions[displayedReasoningIndex].title)
+                        .fontWeight(.medium)
+                }
+                .font(.system(size: 11))
+                .padding(.horizontal, SliderPickerMetrics.contentInset)
+                .accessibilityHidden(true)
+            }
         }
         .padding(.top, 7)
         .padding(.bottom, 13)
@@ -669,7 +689,18 @@ private struct DesktopModelSliderAdvancedPicker: View {
 
     private var modelMenuItems: [DesktopMenuItemSpec] {
         var items: [DesktopMenuItemSpec] = []
+        if !catalog.gpt61Models.isEmpty {
+            items.append(contentsOf: catalog.gpt61Models.map { model in
+                DesktopMenuItemSpec(
+                    title: model.userFacingDisplayName,
+                    systemImage: catalog.identitySystemImage(for: model) ?? "cube",
+                    isSelected: store.routingMode == .direct && store.selectedModelID == model.id,
+                    action: { store.selectModel(model.id) }
+                )
+            })
+        }
         if !catalog.gpt6Models.isEmpty {
+            if !items.isEmpty { items.append(.separator) }
             items.append(
                 DesktopMenuItemSpec(
                     title: "6 Auto",
@@ -1188,6 +1219,7 @@ private struct DesktopReasoningSlider: View {
                     Capsule()
                         .strokeBorder(Color.primary.opacity(0.32), lineWidth: 2)
                         .frame(height: SliderPickerMetrics.trackHeight + 5)
+                        .allowsHitTesting(false)
                 }
             }
             .contentShape(Rectangle())
@@ -1509,7 +1541,7 @@ private struct DesktopModelStudioPicker: View {
                 sectionTitle("Model")
                 Spacer()
 
-                if !catalog.gpt6Models.isEmpty || !catalog.otherModels.isEmpty {
+                if !catalog.gpt61Models.isEmpty || !catalog.gpt6Models.isEmpty || !catalog.otherModels.isEmpty {
                     pageButton(systemName: "arrow.right", label: "Show all models") {
                         withAnimation(.easeInOut(duration: 0.2)) {
                             page = .modelList
@@ -1618,7 +1650,14 @@ private struct DesktopModelStudioPicker: View {
 
             DesktopAutoModelRow(store: store)
             if !store.autoModelSelectionEnabled {
+                if !catalog.gpt61Models.isEmpty {
+                    ForEach(catalog.gpt61Models) { model in
+                        modelRow(model)
+                    }
+                }
+
                 if !catalog.gpt6Models.isEmpty {
+                    if !catalog.gpt61Models.isEmpty { sectionDivider }
                     autoRouteRow(family: .gpt6)
                     ForEach(catalog.gpt6Models) { model in
                         modelRow(model)
@@ -1626,7 +1665,7 @@ private struct DesktopModelStudioPicker: View {
                 }
 
                 if catalog.preferredGPT56Model != nil {
-                    if !catalog.gpt6Models.isEmpty { sectionDivider }
+                    if !catalog.gpt6Models.isEmpty || !catalog.gpt61Models.isEmpty { sectionDivider }
                     autoRouteRow(family: .gpt56)
                     ForEach(catalog.variantModels, id: \.variant) { option in
                         StudioSelectionRow(
@@ -1640,7 +1679,7 @@ private struct DesktopModelStudioPicker: View {
                     }
                 }
 
-                if (!catalog.gpt6Models.isEmpty || catalog.preferredGPT56Model != nil), !catalog.otherModels.isEmpty {
+                if (!catalog.gpt61Models.isEmpty || !catalog.gpt6Models.isEmpty || catalog.preferredGPT56Model != nil), !catalog.otherModels.isEmpty {
                     sectionDivider
                 }
 
@@ -2334,6 +2373,10 @@ private struct DesktopModelCatalogPresentation {
         models.filter(isGPT56)
     }
 
+    var gpt61Models: [DesktopModelOption] {
+        models.filter(\.isGPT61Family)
+    }
+
     var gpt6Models: [DesktopModelOption] {
         let order: (DesktopModelOption) -> Int = { model in
             if model.isGPT6Astra { return 0 }
@@ -2356,7 +2399,7 @@ private struct DesktopModelCatalogPresentation {
     }
 
     var otherModels: [DesktopModelOption] {
-        models.filter { !isGPT56($0) && !$0.isGPT6Family }
+        models.filter { !isGPT56($0) && !$0.isGPT6Family && !$0.isGPT61Family }
     }
 
     var variantModels: [VariantModel] {
@@ -2381,7 +2424,7 @@ private struct DesktopModelCatalogPresentation {
 
     func identitySystemImage(for model: DesktopModelOption) -> String? {
         if model.isGrok { return nil }
-        if model.isGPT6Sol { return "sun.max.fill" }
+        if model.isGPT61Sol || model.isGPT6Sol { return "sun.max.fill" }
         if model.isGPT6Luna { return "moon.fill" }
         return variant(for: model)?.systemImage
     }

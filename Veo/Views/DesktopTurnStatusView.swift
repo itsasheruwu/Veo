@@ -42,139 +42,148 @@ struct DesktopTurnStatusView: View {
 
     var body: some View {
         if showsTurnStatus, plan != nil || changes != nil || autoWorkflow != nil || !subagents.isEmpty {
-            HStack(spacing: 8) {
-                if store.isBusyTurn {
-                    ProgressView()
-                        .controlSize(.mini)
-                        .tint(veoAccent)
-                        .accessibilityLabel("Turn in progress")
-                }
-
-                if let autoWorkflow {
-                    Button {
-                        showsAutoWorkflow.toggle()
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "point.3.connected.trianglepath.dotted")
-                                .font(.system(size: 9.5, weight: .semibold))
-                            Text("Auto · \(autoWorkflow.stageTitle)")
-                        }
-                    }
-                    .buttonStyle(.plain)
-                    .popover(
-                        isPresented: $showsAutoWorkflow,
-                        attachmentAnchor: .point(.top),
-                        arrowEdge: .bottom
-                    ) {
-                        DesktopAutoWorkflowPopover(
-                            state: autoWorkflow,
-                            material: material,
-                            onOpenThread: store.selectRuntimeThread
-                        )
-                    }
-                    .help("Show \(autoWorkflow.modelTitle) workflow")
-                    .accessibilityLabel("\(autoWorkflow.modelTitle), \(autoWorkflow.stageTitle). Show workflow details")
-                }
-
-                if autoWorkflow != nil, (!subagents.isEmpty || plan != nil || changes != nil) {
-                    Text("·")
-                        .foregroundStyle(.tertiary)
-                        .accessibilityHidden(true)
-                }
-
-                if !subagents.isEmpty {
-                    Button {
-                        showsSubagents.toggle()
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "person.2.wave.2")
-                                .font(.system(size: 9.5, weight: .semibold))
-                            let activeCount = subagents.filter(\.isActive).count
-                            Text(activeCount > 0 ? "\(activeCount) working" : "\(subagents.count) agents")
-                                .contentTransition(.numericText())
-                        }
-                    }
-                    .buttonStyle(.plain)
-                    .popover(
-                        isPresented: $showsSubagents,
-                        attachmentAnchor: .point(.top),
-                        arrowEdge: .bottom
-                    ) {
-                        DesktopTurnSubagentsPopover(
-                            agents: subagents,
-                            material: material,
-                            onSelect: onOpenSubagent
-                        )
-                    }
-                    .help("Show subagents")
-                    .accessibilityLabel("\(subagents.count) subagents. Show details")
-                }
-
-                if !subagents.isEmpty, (plan != nil || changes != nil) {
-                    Text("·")
-                        .foregroundStyle(.tertiary)
-                        .accessibilityHidden(true)
-                }
-
-                if let plan {
-                    Button {
-                        showsPlan.toggle()
-                    } label: {
-                        Text("Step \(plan.currentStepNumber) / \(plan.steps.count)")
-                            .contentTransition(.numericText())
-                    }
-                    .buttonStyle(.plain)
-                    .popover(
-                        isPresented: $showsPlan,
-                        attachmentAnchor: .point(.top),
-                        arrowEdge: .bottom
-                    ) {
-                        DesktopTurnPlanPopover(plan: plan, material: material)
-                    }
-                    .help("Show to-dos")
-                    .accessibilityLabel("Step \(plan.currentStepNumber) of \(plan.steps.count). Show to-dos")
-                }
-
-                if plan != nil, changes != nil {
-                    Text("·")
-                        .foregroundStyle(.tertiary)
-                        .accessibilityHidden(true)
-                }
-
-                if let changes {
-                    Button {
-                        showsChanges.toggle()
-                    } label: {
-                        HStack(spacing: 4) {
-                            Text("\(changes.files.count) \(changes.files.count == 1 ? "file" : "files") changed")
-                            animatedCount(changes.additions, prefix: "+", color: .green)
-                            animatedCount(changes.deletions, prefix: "−", color: .red)
-                        }
-                    }
-                    .buttonStyle(.plain)
-                    .popover(
-                        isPresented: $showsChanges,
-                        attachmentAnchor: .point(.top),
-                        arrowEdge: .bottom
-                    ) {
-                        DesktopTurnChangesPopover(summary: changes, material: material)
-                    }
-                    .help("Show changed files and diffs")
-                    .accessibilityLabel("\(changes.files.count) files changed, \(changes.additions) additions, \(changes.deletions) deletions")
-                }
+            ViewThatFits(in: .horizontal) {
+                statusRow(isCompact: false)
+                statusRow(isCompact: true)
             }
             .font(.system(size: 12, weight: .medium))
             .foregroundStyle(.secondary)
             .lineLimit(1)
             .padding(.horizontal, 13)
             .padding(.vertical, 9)
-            .fixedSize(horizontal: true, vertical: false)
             .modifier(DesktopFloatingMaterialSurface(material: material))
             .animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: plan?.currentStepNumber)
             .transition(.opacity.combined(with: .move(edge: .bottom)))
             .frame(maxWidth: DesktopTheme.conversationWidth)
             .frame(maxWidth: .infinity)
         }
+    }
+
+    private func statusRow(isCompact: Bool) -> some View {
+        HStack(spacing: 8) {
+            if store.isBusyTurn {
+                ProgressView()
+                    .controlSize(.mini)
+                    .tint(veoAccent)
+                    .accessibilityLabel("Turn in progress")
+            }
+
+            if let autoWorkflow {
+                Button {
+                    showsAutoWorkflow.toggle()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "point.3.connected.trianglepath.dotted")
+                            .font(.system(size: 9.5, weight: .semibold))
+                        Text(isCompact ? "Auto" : "Auto · \(autoWorkflow.stageTitle)")
+                    }
+                }
+                .buttonStyle(.plain)
+                .popover(
+                    isPresented: $showsAutoWorkflow,
+                    attachmentAnchor: .point(.top),
+                    arrowEdge: .bottom
+                ) {
+                    DesktopAutoWorkflowPopover(
+                        state: autoWorkflow,
+                        material: material,
+                        onOpenThread: store.selectRuntimeThread
+                    )
+                }
+                .help("Show \(autoWorkflow.modelTitle) workflow")
+                .accessibilityLabel("\(autoWorkflow.modelTitle), \(autoWorkflow.stageTitle). Show workflow details")
+            }
+
+            if !isCompact, autoWorkflow != nil, (!subagents.isEmpty || plan != nil || changes != nil) {
+                Text("·")
+                    .foregroundStyle(.tertiary)
+                    .accessibilityHidden(true)
+            }
+
+            if !subagents.isEmpty {
+                Button {
+                    showsSubagents.toggle()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "person.2.wave.2")
+                            .font(.system(size: 9.5, weight: .semibold))
+                        let activeCount = subagents.filter(\.isActive).count
+                        Text(isCompact ? "\(subagents.count)" : (activeCount > 0 ? "\(activeCount) working" : "\(subagents.count) agents"))
+                            .contentTransition(.numericText())
+                    }
+                }
+                .buttonStyle(.plain)
+                .popover(
+                    isPresented: $showsSubagents,
+                    attachmentAnchor: .point(.top),
+                    arrowEdge: .bottom
+                ) {
+                    DesktopTurnSubagentsPopover(
+                        agents: subagents,
+                        material: material,
+                        onSelect: onOpenSubagent
+                    )
+                }
+                .help("Show subagents")
+                .accessibilityLabel("\(subagents.count) subagents. Show details")
+            }
+
+            if !isCompact, !subagents.isEmpty, (plan != nil || changes != nil) {
+                Text("·")
+                    .foregroundStyle(.tertiary)
+                    .accessibilityHidden(true)
+            }
+
+            if let plan {
+                Button {
+                    showsPlan.toggle()
+                } label: {
+                    Text(isCompact ? "\(plan.currentStepNumber)/\(plan.steps.count)" : "Step \(plan.currentStepNumber) / \(plan.steps.count)")
+                        .contentTransition(.numericText())
+                }
+                .buttonStyle(.plain)
+                .popover(
+                    isPresented: $showsPlan,
+                    attachmentAnchor: .point(.top),
+                    arrowEdge: .bottom
+                ) {
+                    DesktopTurnPlanPopover(plan: plan, material: material)
+                }
+                .help("Show to-dos")
+                .accessibilityLabel("Step \(plan.currentStepNumber) of \(plan.steps.count). Show to-dos")
+            }
+
+            if !isCompact, plan != nil, changes != nil {
+                Text("·")
+                    .foregroundStyle(.tertiary)
+                    .accessibilityHidden(true)
+            }
+
+            if let changes {
+                Button {
+                    showsChanges.toggle()
+                } label: {
+                    HStack(spacing: 4) {
+                        Text("\(changes.files.count) \(changes.files.count == 1 ? "file" : "files")" + (isCompact ? "" : " changed"))
+                        if !isCompact {
+                            animatedCount(changes.additions, prefix: "+", color: .green)
+                            animatedCount(changes.deletions, prefix: "−", color: .red)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .popover(
+                    isPresented: $showsChanges,
+                    attachmentAnchor: .point(.top),
+                    arrowEdge: .bottom
+                ) {
+                    DesktopTurnChangesPopover(summary: changes, material: material)
+                }
+                .help("Show changed files and diffs")
+                .accessibilityLabel("\(changes.files.count) files changed, \(changes.additions) additions, \(changes.deletions) deletions")
+            }
+        }
+        .fixedSize(horizontal: true, vertical: false)
     }
 
     private func animatedCount(_ value: Int, prefix: String, color: Color) -> some View {
@@ -311,6 +320,7 @@ private struct DesktopTurnPlanPopover: View {
 }
 
 private struct DesktopTurnChangesPopover: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let summary: DesktopTurnDiffSummary
     let material: DesktopComposerMaterial
     @State private var selectedPath: String?
@@ -325,7 +335,7 @@ private struct DesktopTurnChangesPopover: View {
                 LazyVStack(spacing: 0) {
                     ForEach(summary.files) { file in
                         Button {
-                            withAnimation(.easeOut(duration: 0.16)) {
+                            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.16)) {
                                 selectedPath = selectedPath == file.path ? nil : file.path
                             }
                         } label: {

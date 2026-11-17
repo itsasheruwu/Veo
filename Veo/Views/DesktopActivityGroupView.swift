@@ -139,11 +139,8 @@ struct DesktopActivityGroupView: View {
         return "\(group.items.count) steps"
     }
 
-    private var sites: [DesktopActivitySite] {
-        DesktopActivitySite.extract(from: group.items)
-    }
-
     var body: some View {
+        let sites = DesktopActivitySite.extract(from: group.items)
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 7) {
                 Button(action: toggleExpanded) {
@@ -321,6 +318,10 @@ struct DesktopActivityCompletionMark: View {
 }
 
 private struct DesktopActivitySite: Identifiable, Hashable {
+    @MainActor private static let linkDetector = try? NSDataDetector(
+        types: NSTextCheckingResult.CheckingType.link.rawValue
+    )
+
     let url: URL
     let host: String
 
@@ -342,8 +343,8 @@ private struct DesktopActivitySite: Identifiable, Hashable {
         return cleaned.isEmpty ? displayHost : cleaned.capitalized
     }
 
+    @MainActor
     static func extract(from items: [DesktopTimelineItem]) -> [DesktopActivitySite] {
-        let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
         var sites: [DesktopActivitySite] = []
         var seenHosts = Set<String>()
 
@@ -357,7 +358,7 @@ private struct DesktopActivitySite: Identifiable, Hashable {
 
             for candidate in candidates where !candidate.isEmpty {
                 let range = NSRange(candidate.startIndex..<candidate.endIndex, in: candidate)
-                detector?.enumerateMatches(in: candidate, options: [], range: range) { match, _, _ in
+                linkDetector?.enumerateMatches(in: candidate, options: [], range: range) { match, _, _ in
                     guard let candidateURL = match?.url,
                           let url = SafeExternalURLPolicy.validatedHTTPSURL(candidateURL),
                           let host = url.host?.lowercased(),
@@ -633,15 +634,12 @@ private struct DesktopActivityStepView: View {
     }
 
     private var renderedBody: AttributedString {
-        (try? AttributedString(
-            markdown: item.body,
-            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        )) ?? AttributedString(item.body)
+        DesktopMarkdownRenderCache.activityInlineAttributed(item.body)
     }
 
     private var shouldOfferFullOutput: Bool {
-        item.body.split(whereSeparator: \Character.isNewline).count > bodyLineLimit
-            || item.body.count > 500
+        // Wrapped paragraphs can exceed the display limit without source newlines.
+        !item.body.isEmpty
     }
 
     @ViewBuilder

@@ -205,11 +205,14 @@ private struct DesktopTerminalSessionRow: View {
                 }
                 .buttonStyle(.plain)
                 .help("Close session")
+                .accessibilityLabel("Close terminal \(session.tabTitle)")
             }
         }
         .padding(.vertical, DesktopTheme.spaceXS)
         .contentShape(Rectangle())
         .help(session.workingDirectoryPath)
+        .accessibilityElement(children: .contain)
+        .accessibilityValue(session.isRunning ? "Running" : "Stopped")
     }
 }
 

@@ -448,6 +448,9 @@ final class DesktopBrowserTab: NSObject, ObservableObject, Identifiable, WKNavig
     @Published var address = ""
     @Published var isLoading = false
     @Published var estimatedProgress = 0.0
+    @Published private(set) var navigationError: String?
+    private var failedNavigationURL: URL?
+    private var attemptedNavigationURL: URL?
     @Published var canGoBack = false
     @Published var canGoForward = false
     @Published var consoleMessages: [DesktopBrowserConsoleMessage] = []
@@ -526,7 +529,16 @@ final class DesktopBrowserTab: NSObject, ObservableObject, Identifiable, WKNavig
     }
 
     func load(_ url: URL) {
+        attemptedNavigationURL = url
+        navigationError = nil
+        failedNavigationURL = nil
         webView.load(URLRequest(url: url))
+    }
+
+    func retryNavigation() {
+        if let url = failedNavigationURL ?? attemptedNavigationURL ?? webView.url {
+            load(url)
+        }
     }
 
     func appendConsole(level: String, text: String) {
@@ -581,6 +593,8 @@ final class DesktopBrowserTab: NSObject, ObservableObject, Identifiable, WKNavig
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         isLoading = true
+        navigationError = nil
+        failedNavigationURL = nil
         autofillAccount = nil
         if let host = webView.url?.host?.lowercased(),
            host != passwordSaveOffer?.server {
@@ -598,7 +612,13 @@ final class DesktopBrowserTab: NSObject, ObservableObject, Identifiable, WKNavig
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         isLoading = false
-        appendConsole(level: "error", text: error.localizedDescription)
+        let failure = error as NSError
+        if failure.domain != NSURLErrorDomain || failure.code != NSURLErrorCancelled {
+            navigationError = error.localizedDescription
+            failedNavigationURL = failure.userInfo[NSURLErrorFailingURLErrorKey] as? URL
+                ?? attemptedNavigationURL ?? webView.url
+            appendConsole(level: "error", text: error.localizedDescription)
+        }
         refreshNavigationState()
     }
 

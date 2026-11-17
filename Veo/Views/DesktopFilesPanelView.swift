@@ -10,6 +10,12 @@ struct DesktopFilesPanelView: View {
     @ObservedObject var files: DesktopFilesModel
     let repository: DesktopGitRepositorySnapshot?
     let openInBrowser: (URL, URL) -> Void
+    @State private var showsCompactDetail = false
+    @State private var pendingConflictResolution: ConflictResolution?
+
+    private enum ConflictResolution: Equatable {
+        case reload, overwrite
+    }
 
     var body: some View {
         let gitBadges = DesktopFileGitBadgeIndex(repository: repository)
@@ -17,22 +23,91 @@ struct DesktopFilesPanelView: View {
             filesToolbar
             Divider()
 
-            HSplitView {
-                fileTree(gitBadges: gitBadges)
-                    .frame(minWidth: 170, idealWidth: 210, maxWidth: 280)
-                fileContent
-                    .frame(minWidth: 250, maxWidth: .infinity, maxHeight: .infinity)
+            GeometryReader { geometry in
+                if geometry.size.width < 620 {
+                    if showsCompactDetail, files.selectedEntry != nil {
+                        VStack(spacing: 0) {
+                            HStack {
+                                Button {
+                                    showsCompactDetail = false
+                                } label: {
+                                    Label("Back to Files", systemImage: "chevron.left")
+                                }
+                                .buttonStyle(.borderless)
+                                Spacer()
+                            }
+                            .padding(.horizontal, 10)
+                            .frame(height: 34)
+                            Divider()
+                            fileContent
+                        }
+                    } else {
+                        fileTree(gitBadges: gitBadges)
+                    }
+                } else {
+                    HSplitView {
+                        fileTree(gitBadges: gitBadges)
+                            .frame(minWidth: 170, idealWidth: 210, maxWidth: 280)
+                        fileContent
+                            .frame(minWidth: 300, maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
             }
 
-            if let message = files.message, !message.isEmpty {
+            if files.saveState == .conflict {
+                conflictNotice
+            } else if let message = files.message, !message.isEmpty {
                 Divider()
                 Label(message, systemImage: "info.circle")
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(files.saveState == .conflict ? .orange : .secondary)
-                    .padding(8)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .padding(10)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+        .onAppear { showsCompactDetail = files.selectedEntry != nil }
+        .onChange(of: files.workspaceURL) { _, _ in showsCompactDetail = false }
+        .alert(
+            pendingConflictResolution == .reload ? "Reload the disk version?" : "Overwrite the disk version?",
+            isPresented: Binding(
+                get: { pendingConflictResolution != nil },
+                set: { if !$0 { pendingConflictResolution = nil } }
+            )
+        ) {
+            Button(pendingConflictResolution == .reload ? "Reload" : "Overwrite", role: .destructive) {
+                if pendingConflictResolution == .reload {
+                    files.reloadFromDisk()
+                } else {
+                    _ = files.flushPendingSave(overwrite: true)
+                }
+                pendingConflictResolution = nil
+            }
+            Button("Cancel", role: .cancel) { pendingConflictResolution = nil }
+        } message: {
+            Text(pendingConflictResolution == .reload
+                ? "Your unsaved edits will be replaced with the current file on disk."
+                : "The current file on disk will be replaced with your edited version.")
+        }
+    }
+
+    private var conflictNotice: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Divider()
+            Label("This file changed on disk. Your edits are still here.", systemImage: "exclamationmark.triangle")
+                .font(.system(size: 11.5, weight: .medium))
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 12) {
+                Button("Reload Disk Version…") { pendingConflictResolution = .reload }
+                Button("Overwrite Disk Version…") { pendingConflictResolution = .overwrite }
+            }
+            .buttonStyle(.borderless)
+            .controlSize(.small)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.orange.opacity(0.08))
     }
 
     private var filesToolbar: some View {
@@ -40,36 +115,64 @@ struct DesktopFilesPanelView: View {
             Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
             TextField("Filter files", text: $files.searchText)
                 .textFieldStyle(.plain)
-            Spacer()
+            Spacer(minLength: 4)
+            if files.isLoadingTree { ProgressView().controlSize(.mini) }
             Button { files.refresh() } label: { Image(systemName: "arrow.clockwise") }
                 .help("Refresh Files")
+                .accessibilityLabel("Refresh Files")
+                .disabled(files.isLoadingTree)
             Button { files.revealSelected() } label: { Image(systemName: "finder") }
                 .help("Reveal in Finder")
+                .accessibilityLabel("Reveal in Finder")
+                .disabled(files.workspaceURL == nil)
         }
         .buttonStyle(.borderless)
         .padding(.horizontal, 9)
         .frame(height: 38)
     }
 
+    @ViewBuilder
     private func fileTree(gitBadges: DesktopFileGitBadgeIndex) -> some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
-                ForEach(files.visibleRows) { row in
-                    DesktopFileTreeRow(
-                        files: files,
-                        row: row,
-                        gitBadge: gitBadges.badge(for: row.entry)
-                    )
-                }
+        if files.visibleRows.isEmpty {
+            if files.isLoadingTree {
+                ProgressView("Reading files…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if !files.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                ContentUnavailableView.search(text: files.searchText)
+            } else {
+                ContentUnavailableView(
+                    files.workspaceURL == nil ? "Open a project" : "No files to show",
+                    systemImage: "folder",
+                    description: Text(files.workspaceURL == nil
+                        ? "Choose a project to browse its files."
+                        : "Files in this project will appear here.")
+                )
             }
-            .padding(.vertical, 4)
+        } else {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(files.visibleRows) { row in
+                        DesktopFileTreeRow(
+                            files: files,
+                            row: row,
+                            gitBadge: gitBadges.badge(for: row.entry),
+                            onSelect: { showsCompactDetail = true }
+                        )
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+            .background(Color.primary.opacity(0.02))
+            .accessibilityLabel("Project files")
         }
-        .background(Color.primary.opacity(0.02))
     }
 
     @ViewBuilder
     private var fileContent: some View {
-        if files.document != nil {
+        if files.isLoadingDocument {
+            ProgressView("Opening file…")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if files.document != nil {
             VStack(spacing: 0) {
                 editorHeader
                 Divider()
@@ -123,13 +226,9 @@ struct DesktopFilesPanelView: View {
             Text(files.saveState.title)
                 .font(.system(size: 9.5, weight: .medium))
                 .foregroundStyle(saveStateColor)
-            if files.saveState == .conflict {
-                Button("Reload") { files.reloadFromDisk() }
-                Button("Overwrite") { _ = files.flushPendingSave(overwrite: true) }
-            }
             Button("Save") { _ = files.flushPendingSave() }
                 .keyboardShortcut("s", modifiers: .command)
-                .disabled(files.saveState == .saved || files.saveState == .saving)
+                .disabled(files.saveState == .saved || files.saveState == .saving || files.saveState == .conflict)
         }
         .controlSize(.small)
         .padding(9)
@@ -147,12 +246,17 @@ struct DesktopFilesPanelView: View {
 }
 
 private struct DesktopFileTreeRow: View {
+    @Environment(\.veoAccent) private var veoAccent
     @ObservedObject var files: DesktopFilesModel
     let row: DesktopWorkspaceVisibleFileRow
     let gitBadge: String?
+    var onSelect: () -> Void = {}
 
     var body: some View {
-        Button { files.select(row.entry) } label: {
+        Button {
+            files.select(row.entry)
+            if !row.entry.isDirectory { onSelect() }
+        } label: {
             HStack(spacing: 6) {
                 if row.entry.isDirectory, !row.displaysRelativePath {
                     Image(systemName: files.expandedPaths.contains(row.entry.relativePath) ? "chevron.down" : "chevron.right")
@@ -182,11 +286,16 @@ private struct DesktopFileTreeRow: View {
             .frame(height: 27)
             .background(
                 RoundedRectangle(cornerRadius: 5)
-                    .fill(files.selectedEntry?.id == row.entry.id ? Color.accentColor.opacity(0.18) : .clear)
+                    .fill(files.selectedEntry?.id == row.entry.id ? veoAccent.opacity(0.18) : .clear)
                     .padding(.horizontal, 3)
             )
         }
         .buttonStyle(.plain)
+        .help(row.entry.relativePath)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(row.entry.relativePath)
+        .accessibilityValue(accessibilityStatus)
+        .accessibilityAddTraits(files.selectedEntry?.id == row.entry.id ? .isSelected : [])
         .draggable(row.entry.url) {
             Label(row.entry.name, systemImage: desktopFileIcon(row.entry))
                 .padding(.horizontal, 8)
@@ -194,6 +303,18 @@ private struct DesktopFileTreeRow: View {
                 .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
         }
     }
+
+    private var accessibilityStatus: String {
+        var values: [String] = []
+        if row.entry.isDirectory {
+            values.append(files.expandedPaths.contains(row.entry.relativePath) ? "Expanded folder" : "Collapsed folder")
+        }
+        if let gitBadge {
+            values.append(["!": "Merge conflict", "U": "Untracked", "A": "Added", "D": "Deleted", "M": "Modified", "•": "Contains changes"][gitBadge] ?? gitBadge)
+        }
+        return values.joined(separator: ", ")
+    }
+
 }
 
 private struct DesktopFileGitBadgeIndex {
@@ -315,7 +436,9 @@ private struct DesktopNativeTextEditor: NSViewRepresentable {
         textView.isIncrementalSearchingEnabled = true
         textView.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
         textView.textContainerInset = NSSize(width: 9, height: 9)
-        textView.autoresizingMask = [NSView.AutoresizingMask.width]
+        textView.isHorizontallyResizable = true
+        textView.isVerticallyResizable = true
+        textView.autoresizingMask = []
         textView.minSize = NSSize(width: 0, height: contentSize.height)
         textView.maxSize = NSSize(
             width: CGFloat.greatestFiniteMagnitude,

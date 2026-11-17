@@ -28,6 +28,13 @@ enum DesktopMarkdownRenderCache {
         return cache
     }()
 
+    private static let activityProseCache: NSCache<NSString, Prose> = {
+        let cache = NSCache<NSString, Prose>()
+        cache.countLimit = 256
+        cache.totalCostLimit = 4 * 1_024 * 1_024
+        return cache
+    }()
+
     static func blocks(for source: String) -> [MarkdownBlock] {
         let key = source as NSString
         if let cached = blockCache.object(forKey: key) { return cached.value }
@@ -48,6 +55,19 @@ enum DesktopMarkdownRenderCache {
         let value = (try? AttributedString(markdown: source, options: options))
             ?? AttributedString(source)
         proseCache.setObject(Prose(value), forKey: key, cost: source.utf8.count * 6)
+        return value
+    }
+
+    static func activityInlineAttributed(_ source: String) -> AttributedString {
+        let key = source as NSString
+        if let cached = activityProseCache.object(forKey: key) { return cached.value }
+        // Activity rows intentionally retain AttributedString's default extended-
+        // attribute and failure-policy behavior; assistant prose uses different options.
+        let value = (try? AttributedString(
+            markdown: source,
+            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        )) ?? AttributedString(source)
+        activityProseCache.setObject(Prose(value), forKey: key, cost: source.utf8.count * 6)
         return value
     }
 }

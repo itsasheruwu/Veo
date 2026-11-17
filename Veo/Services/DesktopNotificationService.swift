@@ -57,9 +57,14 @@ final class DesktopNotificationService: ObservableObject {
     }
 
     @Published private(set) var authorizationState: AuthorizationState = .unknown
+    @Published private(set) var hasLoadedAuthorizationStatus = false
+    @Published private(set) var isRequestingAuthorization = false
+    @Published private(set) var authorizationRequestFailed = false
     @Published private(set) var toast: Toast?
 
     private var hasRequestedAuthorization = false
+    private var authorizationStatusRefreshID = UUID()
+    private var alertsAwaitingAuthorization: [Alert] = []
     private var toastTask: Task<Void, Never>?
     private let centerDelegate = DesktopNotificationCenterDelegate()
 
@@ -76,10 +81,23 @@ final class DesktopNotificationService: ObservableObject {
         requestAuthorization(delivering: nil)
     }
 
+    /// The permissions panel can ask explicitly without changing Veo's alert preference.
+    func requestPermission() {
+        requestAuthorization(delivering: nil)
+    }
+
     func refreshAuthorizationStatus() {
+        guard !isRequestingAuthorization else { return }
+        let refreshID = UUID()
+        authorizationStatusRefreshID = refreshID
         UNUserNotificationCenter.current().getNotificationSettings { [weak self] settings in
             Task { @MainActor in
-                self?.authorizationState = Self.authorizationState(for: settings.authorizationStatus)
+                guard let self, !self.isRequestingAuthorization,
+                      self.authorizationStatusRefreshID == refreshID else { return }
+                self.hasLoadedAuthorizationStatus = true
+                let state = Self.authorizationState(for: settings.authorizationStatus)
+                if self.authorizationState != state { self.authorizationState = state }
+                if state == .allowed && self.authorizationRequestFailed { self.authorizationRequestFailed = false }
             }
         }
     }
@@ -149,12 +167,25 @@ final class DesktopNotificationService: ObservableObject {
     }
 
     private func requestAuthorization(delivering alert: Alert?) {
+        if let alert { alertsAwaitingAuthorization.append(alert) }
+        guard !isRequestingAuthorization else { return }
         hasRequestedAuthorization = true
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert]) { [weak self] granted, _ in
+        isRequestingAuthorization = true
+        authorizationStatusRefreshID = UUID()
+        authorizationRequestFailed = false
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert]) { [weak self] granted, error in
             Task { @MainActor in
                 guard let self else { return }
-                self.authorizationState = granted ? .allowed : .denied
-                if granted, let alert { self.deliver(alert) }
+                self.isRequestingAuthorization = false
+                self.authorizationRequestFailed = error != nil
+                if error == nil {
+                    self.hasLoadedAuthorizationStatus = true
+                    self.authorizationState = granted ? .allowed : .denied
+                }
+                let alerts = self.alertsAwaitingAuthorization
+                self.alertsAwaitingAuthorization.removeAll()
+                if granted { alerts.forEach { self.deliver($0) } }
+                self.refreshAuthorizationStatus()
             }
         }
     }

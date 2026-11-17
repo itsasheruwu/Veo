@@ -279,6 +279,7 @@ private struct DesktopPlanSecondaryActionStyle: ButtonStyle {
 }
 
 struct DesktopPlanImplementControl: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.veoAccent) private var veoAccent
 
     let isImplementing: Bool
@@ -329,7 +330,7 @@ struct DesktopPlanImplementControl: View {
         }
         .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.14)) {
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.14)) {
                 isHovered = hovering
             }
         }

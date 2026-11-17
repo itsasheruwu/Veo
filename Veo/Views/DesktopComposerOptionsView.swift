@@ -7,6 +7,7 @@ import SwiftUI
 struct DesktopComposerOptionsView: View {
     @Bindable var store: DesktopCodexStore
     let openProject: () -> Void
+    @Environment(\.veoAccent) private var veoAccent
     @State private var showsSavedPrompts = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -34,7 +35,7 @@ struct DesktopComposerOptionsView: View {
                         title: "Open Project…",
                         detail: "Choose a local folder for this chat.",
                         systemImage: "folder.badge.plus",
-                        color: .accentColor
+                        color: veoAccent
                     )
                 }
                 .buttonStyle(.plain)
@@ -201,7 +202,7 @@ struct DesktopComposerOptionsView: View {
 
     private func modeColor(_ mode: DesktopInteractionMode) -> Color {
         switch mode {
-        case .agentic: return .accentColor
+        case .agentic: return veoAccent
         case .plan: return .orange
         case .debug: return .purple
         }
@@ -272,6 +273,7 @@ struct DesktopComposerModePills: View {
 }
 
 private struct DesktopComposerModePill: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let title: String
     let systemImage: String
     let color: Color
@@ -296,13 +298,13 @@ private struct DesktopComposerModePill: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .background(color.opacity(isHovered ? 0.2 : 0.14), in: Capsule())
-            .overlay(Capsule().stroke(color.opacity(isHovered ? 0.42 : 0.28), lineWidth: 1))
+            .overlay(Capsule().stroke(color.opacity(isHovered ? 0.42 : 0.28), lineWidth: 1).allowsHitTesting(false))
             .fixedSize()
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.16)) {
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.16)) {
                 isHovered = hovering
             }
         }

@@ -27,6 +27,15 @@ struct DesktopTerminalWorkspaceView: View {
         .background(panelBackground)
         .clipped()
         .navigationTitle(store.hasExplicitWorkspace ? store.effectiveWorkspaceURL.lastPathComponent : "Terminal")
+        .sheet(isPresented: Binding(
+            get: { hub.isAgentCLIPermissionPromptPresented },
+            set: { if !$0, hub.isAgentCLIPermissionPromptPresented { hub.denyAgentCLIsFromPrompt() } }
+        )) {
+            if let prompt = hub.agentCLIPermissionPrompt {
+                DesktopAgentCLIPermissionSheet(prompt: prompt, hub: hub)
+                    .interactiveDismissDisabled()
+            }
+        }
         .onAppear {
             ensureSessions()
             hub.ensureWorkspaceLayout()
@@ -48,7 +57,7 @@ struct DesktopTerminalWorkspaceView: View {
     }
 
     private var panelBackground: Color {
-        Color(red: 0.09, green: 0.095, blue: 0.10)
+        DesktopTheme.canvas
     }
 
     private var chrome: some View {
@@ -90,6 +99,7 @@ struct DesktopTerminalWorkspaceView: View {
             }
             .buttonStyle(.plain)
             .help("Split right (⌘D)")
+            .accessibilityLabel("Split terminal right")
             .keyboardShortcut("d", modifiers: .command)
             .disabled(!store.hasExplicitWorkspace || !hub.canSplitFocusedPane)
 
@@ -104,6 +114,7 @@ struct DesktopTerminalWorkspaceView: View {
             }
             .buttonStyle(.plain)
             .help("Split down")
+            .accessibilityLabel("Split terminal down")
             .disabled(!store.hasExplicitWorkspace || !hub.canSplitFocusedPane)
 
             if hub.selectedSession?.isStarting == true {
@@ -139,10 +150,11 @@ struct DesktopTerminalWorkspaceView: View {
             }
             .buttonStyle(.plain)
             .help("Hide terminal panel")
+            .accessibilityLabel("Hide terminal panel")
             .padding(.trailing, 8)
         }
         .frame(height: 32)
-        .background(Color.black.opacity(0.18))
+        .background(DesktopTheme.raised)
     }
 
     @ViewBuilder
@@ -159,7 +171,7 @@ struct DesktopTerminalWorkspaceView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .clipped()
         } else {
-            Color.black.opacity(0.35)
+            DesktopTheme.canvas
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
@@ -218,7 +230,7 @@ private struct DesktopTerminalPaneTreeView: View {
                     onClose: { onClosePane(id) }
                 )
             } else {
-                Color(red: 0.09, green: 0.095, blue: 0.10)
+                DesktopTheme.canvas
             }
         case .split(let splitID, let axis, let ratio, let first, let second):
             DesktopTerminalSplitStack(
@@ -245,6 +257,8 @@ private struct DesktopTerminalSplitStack: View {
 
     @State private var dragStartRatio: CGFloat?
     @State private var liveRatio: CGFloat?
+    @FocusState private var dividerFocused: Bool
+    @Environment(\.veoAccent) private var veoAccent
 
     private let handleThickness: CGFloat = 7
     private let minPane: CGFloat = 90
@@ -253,7 +267,7 @@ private struct DesktopTerminalSplitStack: View {
         GeometryReader { geo in
             let isHorizontal = axis == .horizontal
             let span = isHorizontal ? geo.size.width : geo.size.height
-            let usable = max(span - handleThickness, minPane * 2)
+            let usable = max(0, span - handleThickness)
             let leading = clampedLeading(in: usable)
 
             if isHorizontal {
@@ -262,7 +276,7 @@ private struct DesktopTerminalSplitStack: View {
                         .frame(width: leading)
                     splitHandle(total: usable)
                     child(second)
-                        .frame(width: max(minPane, usable - leading))
+                        .frame(width: max(0, usable - leading))
                 }
                 .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
             } else {
@@ -271,7 +285,7 @@ private struct DesktopTerminalSplitStack: View {
                         .frame(height: leading)
                     splitHandle(total: usable)
                     child(second)
-                        .frame(height: max(minPane, usable - leading))
+                        .frame(height: max(0, usable - leading))
                 }
                 .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
             }
@@ -286,23 +300,25 @@ private struct DesktopTerminalSplitStack: View {
 
     private func clampedLeading(in usable: CGFloat) -> CGFloat {
         let displayed = liveRatio ?? ratio
-        return min(max(usable * displayed, minPane), usable - minPane)
+        let minimum = min(minPane, usable / 2)
+        return min(max(usable * displayed, minimum), usable - minimum)
     }
 
     private func splitHandle(total usable: CGFloat) -> some View {
         Rectangle()
-            .fill(Color.white.opacity(0.08))
+            .fill(Color.primary.opacity(dividerFocused ? 0.12 : 0.045))
             .frame(
                 width: axis == .horizontal ? handleThickness : nil,
                 height: axis == .vertical ? handleThickness : nil
             )
             .overlay {
                 Rectangle()
-                    .fill(Color.white.opacity(0.22))
+                    .fill(dividerFocused ? veoAccent : Color.primary.opacity(0.22))
                     .frame(
                         width: axis == .horizontal ? 1 : 28,
                         height: axis == .vertical ? 1 : 28
                     )
+                    .allowsHitTesting(false)
             }
             .contentShape(Rectangle())
             .gesture(
@@ -311,6 +327,7 @@ private struct DesktopTerminalSplitStack: View {
                         if dragStartRatio == nil {
                             dragStartRatio = liveRatio ?? ratio
                         }
+                        guard usable > 0 else { return }
                         let start = dragStartRatio ?? ratio
                         let delta = axis == .horizontal ? value.translation.width : value.translation.height
                         liveRatio = min(0.8, max(0.2, start + delta / usable))
@@ -334,7 +351,28 @@ private struct DesktopTerminalSplitStack: View {
                     NSCursor.arrow.set()
                 }
             }
-            .accessibilityLabel(axis == .horizontal ? "Resize columns" : "Resize rows")
+            .focusable()
+            .focused($dividerFocused)
+            .focusEffectDisabled()
+            .onKeyPress(.leftArrow) { adjustRatio(by: -0.05); return .handled }
+            .onKeyPress(.rightArrow) { adjustRatio(by: 0.05); return .handled }
+            .onKeyPress(.upArrow) { adjustRatio(by: -0.05); return .handled }
+            .onKeyPress(.downArrow) { adjustRatio(by: 0.05); return .handled }
+            .accessibilityElement()
+            .accessibilityLabel(axis == .horizontal ? "Terminal column split" : "Terminal row split")
+            .accessibilityValue("\(Int((liveRatio ?? ratio) * 100)) percent")
+            .accessibilityHint("Use the arrow keys to change the pane sizes")
+            .accessibilityAdjustableAction { direction in
+                switch direction {
+                case .increment: adjustRatio(by: 0.05)
+                case .decrement: adjustRatio(by: -0.05)
+                @unknown default: break
+                }
+            }
+    }
+
+    private func adjustRatio(by amount: CGFloat) {
+        hub.setSplitRatio(splitID, ratio: min(0.8, max(0.2, (liveRatio ?? ratio) + amount)))
     }
 }
 
@@ -361,7 +399,7 @@ private struct DesktopTerminalWorkspaceLeaf: View {
                 .stroke(
                     isFileDropTargeted || isDropTarget
                         ? veoAccent.opacity(0.85)
-                        : (isFocused ? veoAccent.opacity(0.55) : Color.white.opacity(0.06)),
+                        : (isFocused ? veoAccent.opacity(0.55) : Color.primary.opacity(0.06)),
                     lineWidth: isFileDropTargeted || isDropTarget ? 2 : 1
                 )
                 .allowsHitTesting(false)
@@ -451,7 +489,7 @@ private struct DesktopTerminalWorkspaceLeaf: View {
             .padding(.trailing, 4)
         }
         .frame(height: 28)
-        .background(Color.black.opacity(isFocused ? 0.28 : 0.18))
+        .background(Color.primary.opacity(isFocused ? 0.055 : 0.025))
         .dropDestination(for: String.self) { items, _ in
             guard let raw = items.first, let dragged = UUID(uuidString: raw) else { return false }
             hub.swapWorkspacePanes(dragged, session.id)
@@ -478,7 +516,7 @@ private struct DesktopTerminalWorkspaceLeaf: View {
                         .multilineTextAlignment(.center)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color.black.opacity(0.35))
+                .background(DesktopTheme.canvas)
             } else {
                 GeometryReader { geo in
                     DesktopTerminalView(
@@ -501,15 +539,11 @@ private struct DesktopTerminalWorkspaceLeaf: View {
                 isActive: isFileDropTargeted && hub.agentCLIPermissionPrompt?.sessionID != session.id
             )
 
-            if let prompt = hub.agentCLIPermissionPrompt, prompt.sessionID == session.id {
-                DesktopAgentCLIPermissionOverlay(prompt: prompt, hub: hub)
-                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
-            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .clipped()
         .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: isFileDropTargeted)
-        .animation(.easeOut(duration: 0.16), value: hub.isAgentCLIPermissionPromptPresented)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: hub.isAgentCLIPermissionPromptPresented)
         .onChange(of: session.id) { _, _ in
             isFileDropTargeted = false
         }

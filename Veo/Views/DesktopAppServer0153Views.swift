@@ -148,30 +148,43 @@ struct DesktopApprovalReviewPanel: View {
     var body: some View {
         if !store.selectedApprovalReviews.isEmpty {
             DisclosureGroup("Approval reviews (\(store.selectedApprovalReviews.count))") {
-                VStack(alignment: .leading, spacing: 9) {
-                    ForEach(store.selectedApprovalReviews) { review in
-                        HStack(alignment: .top, spacing: 10) {
-                            Image(systemName: review.phase == .reviewing ? "hourglass" : review.status.lowercased().contains("den") ? "hand.raised.fill" : "checkmark.shield")
-                                .foregroundStyle(review.canApproveDeniedAction ? .orange : .secondary)
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(review.status).font(.system(size: 11.5, weight: .semibold))
-                                Text(review.actionSummary).font(.system(size: 11, design: .monospaced)).lineLimit(3)
-                                if let risk = review.riskLevel { Text("Risk: \(risk)").font(.caption).foregroundStyle(.secondary) }
-                                if let rationale = review.rationale { Text(rationale).font(.system(size: 10.5)).foregroundStyle(.secondary) }
-                                if review.status.lowercased().contains("den"), !review.canApproveDeniedAction {
-                                    Text("This runtime does not provide a verified retry assessment. Retry through the original approval request.")
-                                        .font(.caption).foregroundStyle(.secondary)
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 12) {
+                        ForEach(store.selectedApprovalReviews) { review in
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack(alignment: .top, spacing: 10) {
+                                    Image(systemName: review.phase == .reviewing ? "hourglass" : review.status.lowercased().contains("den") ? "hand.raised.fill" : "checkmark.shield")
+                                        .foregroundStyle(review.canApproveDeniedAction ? .orange : .secondary)
+                                        .accessibilityHidden(true)
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(review.status).font(.system(size: 11.5, weight: .semibold))
+                                        Text(review.actionSummary)
+                                            .font(.system(size: 11, design: .monospaced))
+                                            .fixedSize(horizontal: false, vertical: true)
+                                            .textSelection(.enabled)
+                                        if let risk = review.riskLevel {
+                                            Text("Risk: \(risk)").font(.caption).foregroundStyle(.secondary)
+                                        }
+                                        if let rationale = review.rationale {
+                                            Text(rationale).font(.system(size: 10.5)).foregroundStyle(.secondary)
+                                        }
+                                        if review.status.lowercased().contains("den"), !review.canApproveDeniedAction {
+                                            Text("This runtime does not provide a verified retry assessment. Retry through the original approval request.")
+                                                .font(.caption).foregroundStyle(.secondary)
+                                        }
+                                    }
+                                }
+                                if review.canApproveDeniedAction {
+                                    Button("Review & retry…") { approvalTarget = review }
+                                        .buttonStyle(.bordered).controlSize(.small)
                                 }
                             }
-                            Spacer()
-                            if review.canApproveDeniedAction {
-                                Button("Review & retry…") { approvalTarget = review }
-                                    .buttonStyle(.bordered).controlSize(.small)
-                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
+                    .padding(.top, 8)
                 }
-                .padding(.top, 8)
+                .frame(maxHeight: 180)
             }
             .font(.system(size: 11.5, weight: .medium))
             .padding(10)

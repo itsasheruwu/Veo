@@ -59,6 +59,13 @@ enum DesktopExternalModelCatalog {
             providers: providers
         )
 
+        // Keep native discovery and capability updates owned by Codex unless
+        // external models actually require a Veo-managed catalog overlay.
+        guard !published.isEmpty else {
+            DesktopOAuthForwarder.shared.stop()
+            return nil
+        }
+
         var environment: [String: String] = [:]
         var arguments: [String] = []
         let publishedIDs = Set(published.map(\.id))
@@ -213,54 +220,11 @@ enum DesktopExternalModelCatalog {
         try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
         var root = try nativeCatalogRoot()
         var models = root["models"] as? [[String: Any]] ?? []
-        var existing = Set(models.compactMap { $0["slug"] as? String })
-        for index in models.indices {
-            let slug = (models[index]["slug"] as? String ?? "").lowercased()
-            if slug.contains("gpt-6-astra") {
-                models[index]["visibility"] = "list"
-            }
-        }
+        let existing = Set(models.compactMap { $0["slug"] as? String })
+        // Native rows are authoritative. Cloning another model or adding effort
+        // levels can advertise a model or capability this runtime cannot use.
         guard let template = models.first(where: { ($0["visibility"] as? String) == "list" }) ?? models.first else {
             throw DesktopExternalModelCatalogError.catalogWrite("The native Codex catalog has no models to clone.")
-        }
-        if let gpt6Template = models.first(where: { ($0["slug"] as? String) == "gpt-6-astra" }) {
-            for (slug, title) in [("gpt-6-sol", "Sol"), ("gpt-6-luna", "Luna")] where !existing.contains(slug) {
-                var entry = gpt6Template
-                entry["slug"] = slug
-                entry["display_name"] = "GPT-6-\(title)"
-                entry["description"] = "GPT-6 \(title), available with Standard and Fast processing."
-                entry["visibility"] = "list"
-                entry["supported_in_api"] = true
-                entry["default_reasoning_level"] = "medium"
-                entry["supported_reasoning_levels"] = gpt6ReasoningLevels
-                entry["additional_speed_tiers"] = ["fast"]
-                entry["service_tiers"] = [openAIFastServiceTier]
-                entry["model_messages"] = NSNull()
-                entry["availability_nux"] = NSNull()
-                entry["upgrade"] = NSNull()
-                models.append(entry)
-                existing.insert(slug)
-            }
-        }
-        if let solIndex = models.firstIndex(where: {
-            canonicalModelID($0["slug"] as? String ?? "") == "gpt-6-sol"
-        }) {
-            var reasoningLevels = models[solIndex]["supported_reasoning_levels"] as? [Any]
-                ?? gpt6ReasoningLevels.map { $0 as [String: Any] }
-            let alreadySupportsUltra = reasoningLevels.contains { level in
-                guard let level = level as? [String: Any],
-                      let effort = level["effort"] as? String else {
-                    return false
-                }
-                return effort.caseInsensitiveCompare("ultra") == .orderedSame
-            }
-            if !alreadySupportsUltra {
-                reasoningLevels.append([
-                    "effort": "ultra",
-                    "description": "Maximum reasoning with automatic task delegation.",
-                ])
-            }
-            models[solIndex]["supported_reasoning_levels"] = reasoningLevels
         }
         let providerByModelID = Dictionary(
             uniqueKeysWithValues: providers.flatMap { provider in
@@ -422,21 +386,6 @@ enum DesktopExternalModelCatalog {
         }
         return result
     }
-
-    private static let openAIFastServiceTier: [String: String] = [
-        "id": "priority",
-        "name": "Fast",
-        "description": "Fast processing; uses more of your limits.",
-    ]
-
-    private static let gpt6ReasoningLevels: [[String: String]] = [
-        ["effort": "none", "description": "No reasoning effort."],
-        ["effort": "low", "description": "Some reasoning, still fast."],
-        ["effort": "medium", "description": "More thinking for harder work."],
-        ["effort": "high", "description": "Deeper reasoning for complex problems."],
-        ["effort": "xhigh", "description": "Extra reasoning depth for complex problems."],
-        ["effort": "max", "description": "Maximum reasoning depth."],
-    ]
 
     private static func grok47FastTier(
         for record: DesktopExternalModelRecord,

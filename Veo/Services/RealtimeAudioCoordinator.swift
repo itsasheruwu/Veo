@@ -4,6 +4,7 @@
 // Depends on: AVFoundation, Combine, Foundation
 
 @preconcurrency import AVFoundation
+import AppKit
 import Combine
 import Foundation
 
@@ -139,7 +140,13 @@ final class RealtimeAudioCoordinator: ObservableObject {
 
     func refreshMicrophonePermission() {
         guard microphonePermission != .requesting else { return }
-        microphonePermission = Self.currentMicrophonePermission()
+        let permission = Self.currentMicrophonePermission()
+        if microphonePermission != permission { microphonePermission = permission }
+    }
+
+    func openMicrophoneSettings() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") else { return }
+        NSWorkspace.shared.open(url)
     }
 
     @discardableResult

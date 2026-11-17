@@ -58,7 +58,7 @@ struct DesktopSettingsSidebarView: View {
             .padding(.horizontal, 9)
             .padding(.vertical, 7)
             .onHover { hovering in
-                withAnimation(.easeOut(duration: 0.14)) {
+                withAnimation(reduceMotion ? nil : .easeOut(duration: 0.14)) {
                     isBackHovered = hovering
                 }
             }
@@ -93,20 +93,15 @@ struct DesktopSettingsSidebarView: View {
                     .foregroundStyle(isSelected ? veoAccent : .secondary)
                     .frame(width: 18)
 
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(category.title)
-                        .font(.system(size: 12.5, weight: .semibold))
-                        .foregroundStyle(.primary)
-                    Text(category.detail)
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
+                Text(category.title)
+                    .font(.system(size: 12.5, weight: isSelected ? .semibold : .medium))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
 
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 10)
-            .frame(height: 46)
+            .frame(height: 36)
             .contentShape(Rectangle())
             .background(
                 veoAccent.opacity(isSelected ? 0.14 : 0),
@@ -121,6 +116,8 @@ struct DesktopSettingsSidebarView: View {
         .accessibilityLabel(category.title)
         .accessibilityValue(isSelected ? "Selected" : "")
         .accessibilityHint(category.detail)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .help(category.detail)
     }
 }
 
@@ -130,6 +127,7 @@ struct DesktopSettingsPage: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @EnvironmentObject private var updateService: DesktopUpdateService
     @EnvironmentObject private var notifications: DesktopNotificationService
+    @EnvironmentObject private var permissionsPanel: DesktopPermissionsPanel
     @AppStorage(DesktopTerminalPreferences.agentCLIsEnabledKey) private var agentCLIsEnabled = false
     @AppStorage(DesktopTerminalPreferences.yoloModeKey) private var agentCLIsYoloMode = false
     @AppStorage(DesktopTerminalPreferences.yoloClaudeKey) private var agentCLIsYoloClaude = true
@@ -302,7 +300,7 @@ struct DesktopSettingsPage: View {
                     VStack(alignment: .leading, spacing: 30) {
                         VStack(alignment: .leading, spacing: 6) {
                             Text(navigation.settingsCategory.title)
-                                .font(.system(size: 27, weight: .semibold, design: .rounded))
+                                .font(.system(size: 25, weight: .semibold, design: .rounded))
                             Text(navigation.settingsCategory.detail)
                                 .font(.system(size: 13))
                                 .foregroundStyle(.secondary)
@@ -310,12 +308,15 @@ struct DesktopSettingsPage: View {
 
                         settingsContent
                     }
-                    .padding(.horizontal, 38)
-                    .padding(.top, 48)
+                    .padding(.horizontal, 32)
+                    .padding(.top, 32)
                     .padding(.bottom, 40)
-                    .frame(maxWidth: 700, alignment: .leading)
+                    .frame(maxWidth: 760, alignment: .leading)
                     .frame(maxWidth: .infinity)
                 }
+                // A different category is a new document, not a continuation
+                // of the previous page's scroll position.
+                .id(navigation.settingsCategory)
                 .onAppear {
                     if let anchor = navigation.settingsAnchor {
                         revealSettingsAnchor(anchor, with: proxy)
@@ -534,6 +535,24 @@ struct DesktopSettingsPage: View {
                         Button("Choose…") { store.chooseWorkspace() }
                             .buttonStyle(.bordered)
                             .controlSize(.small)
+                    }
+
+                    SettingsPanelDivider()
+
+                    SettingsRow(
+                        title: "macOS permissions",
+                        detail: "Manage notification and microphone access for Veo.",
+                        systemImage: "hand.raised"
+                    ) {
+                        Button("Manage Permissions…") {
+                            permissionsPanel.show(
+                                notifications: notifications,
+                                audio: store.realtimeAudio,
+                                colorScheme: appearanceModeBinding.wrappedValue.preferredColorScheme
+                            )
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
                     }
 
                     SettingsPanelDivider()
@@ -2167,7 +2186,7 @@ struct DesktopSettingsPage: View {
                             selection: windowMaterialBinding,
                             title: \.title
                         )
-                        .frame(maxWidth: 280)
+                        .frame(width: 280)
                     }
                 }
             }
@@ -2202,7 +2221,7 @@ struct DesktopSettingsPage: View {
                             selection: leftSidebarMaterialBinding,
                             title: \.title
                         )
-                        .frame(maxWidth: 280)
+                        .frame(width: 280)
                     }
 
                     SettingsPanelDivider()
@@ -2218,7 +2237,7 @@ struct DesktopSettingsPage: View {
                             selection: rightSidebarMaterialBinding,
                             title: \.title
                         )
-                        .frame(maxWidth: 280)
+                        .frame(width: 280)
                     }
                 }
 
@@ -2249,7 +2268,7 @@ struct DesktopSettingsPage: View {
                             selection: modelPickerAppearanceBinding,
                             title: \.title
                         )
-                        .frame(maxWidth: 280)
+                        .frame(width: 280)
                     }
 
                     SettingsPanelDivider()
@@ -2265,7 +2284,7 @@ struct DesktopSettingsPage: View {
                             selection: composerMaterialBinding,
                             title: \.title
                         )
-                        .frame(maxWidth: 280)
+                        .frame(width: 280)
                     }
 
                     SettingsPanelDivider()
@@ -2329,7 +2348,7 @@ struct DesktopSettingsPage: View {
                             selection: notificationMaterialBinding,
                             title: \.title
                         )
-                        .frame(maxWidth: 280)
+                        .frame(width: 280)
                     }
                 }
                 .id(DesktopSettingsAnchor.notificationMaterial)
@@ -2345,7 +2364,7 @@ struct DesktopSettingsPage: View {
                     color: accentColor.opacity(highlightedSettingsAnchor == .notificationMaterial ? 0.28 : 0),
                     radius: 14
                 )
-                .animation(.easeOut(duration: 0.22), value: highlightedSettingsAnchor)
+                .animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: highlightedSettingsAnchor)
             }
 
             VStack(alignment: .leading, spacing: 10) {
@@ -2379,7 +2398,7 @@ struct DesktopSettingsPage: View {
                                 selection: threadMinimapMaterialBinding,
                                 title: \.title
                             )
-                            .frame(maxWidth: 280)
+                            .frame(width: 280)
                         }
                     }
                 }
@@ -2400,7 +2419,7 @@ struct DesktopSettingsPage: View {
                             selection: textStreamingModeBinding,
                             title: \.title
                         )
-                        .frame(maxWidth: 280)
+                        .frame(width: 280)
                     }
 
                     SettingsPanelDivider()
@@ -2416,7 +2435,7 @@ struct DesktopSettingsPage: View {
                             selection: viewedImagesInitialExpansionBinding,
                             title: \.title
                         )
-                        .frame(maxWidth: 240)
+                        .frame(width: 240)
                     }
                 }
             }
@@ -2888,6 +2907,7 @@ private struct SettingsSegmentedControl<Option: Hashable>: View {
                     Text(title(option))
                         .font(.system(size: 11, weight: selection == option ? .semibold : .medium))
                         .foregroundStyle(selection == option ? Color.white : Color.primary)
+                        .padding(.horizontal, 8)
                         .frame(maxWidth: .infinity, minHeight: 20, maxHeight: 20)
                         .contentShape(Rectangle())
                         .background {
@@ -3009,8 +3029,8 @@ private struct NotificationMaterialPortalRow: View {
                     isHovered = hovering
                 }
             }
-            .animation(.easeOut(duration: 0.18), value: isHovered)
-            .animation(.easeInOut(duration: 0.28), value: isActivating)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: isHovered)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.28), value: isActivating)
             .help("Open Appearance → Notification material")
             .accessibilityLabel("Notification material")
             .accessibilityValue(material.title)
@@ -3138,21 +3158,47 @@ private struct SettingsRow<Trailing: View>: View {
     }
 
     var body: some View {
-        HStack(spacing: nestStyle.isNested ? 8 : 14) {
-            if nestStyle.isNested {
-                // The guide itself is drawn over the completed row below so its
-                // rail includes the row's vertical padding. This spacer reserves
-                // the same horizontal lane for the elbow.
-                Color.clear
-                    .frame(width: 14)
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 14) {
+                rowLabel.frame(minWidth: 170)
+                Spacer(minLength: 14)
+                trailing().fixedSize(horizontal: true, vertical: false)
             }
+            VStack(alignment: .leading, spacing: 10) {
+                rowLabel
+                HStack {
+                    Spacer(minLength: 0)
+                    trailing()
+                }
+            }
+        }
+        .padding(.leading, nestStyle.isNested ? nestIndent : 16)
+        .padding(.trailing, 16)
+        .padding(.vertical, 11)
+        .frame(minHeight: 62)
+        .contentShape(Rectangle())
+        .overlay(alignment: .leading) {
+            if nestStyle.isNested {
+                SettingsNestGuide(style: nestStyle)
+                    .padding(.leading, nestIndent)
+                    .padding(.vertical, -1)
+                    .allowsHitTesting(false)
+            }
+        }
+    }
 
-            settingsRowIcon
-                .frame(width: 22, height: 22)
-
+    private var rowLabel: some View {
+        HStack(alignment: .center, spacing: nestStyle.isNested ? 8 : 14) {
+            if nestStyle.isNested {
+                Color.clear.frame(width: 14)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+            settingsRowIcon.frame(width: 22, height: 22)
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
                     .font(.system(size: 13, weight: .semibold))
+                    .fixedSize(horizontal: false, vertical: true)
                 Text(detail)
                     .font(.system(size: 11.5, design: detailFontDesign))
                     .foregroundStyle(.secondary)
@@ -3161,24 +3207,7 @@ private struct SettingsRow<Trailing: View>: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .help(detail)
             }
-
-            Spacer(minLength: 18)
-            trailing()
-                .layoutPriority(1)
-        }
-        .padding(.leading, nestStyle.isNested ? nestIndent : 16)
-        .padding(.trailing, 16)
-        .padding(.vertical, 12)
-        .frame(minHeight: 68)
-        .contentShape(Rectangle())
-        .overlay(alignment: .leading) {
-            if nestStyle.isNested {
-                SettingsNestGuide(style: nestStyle)
-                    .padding(.leading, nestIndent)
-                    // Bridge the one-point divider between adjacent nested rows.
-                    .padding(.vertical, -1)
-                    .allowsHitTesting(false)
-            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 

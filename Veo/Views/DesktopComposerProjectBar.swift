@@ -19,17 +19,21 @@ struct DesktopComposerProjectBar: View {
             } label: {
                 HStack(spacing: 7) {
                     Image(systemName: "folder")
-                    Text("Choose project")
+                    Text(selectedProjectTitle)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                     Image(systemName: "chevron.down")
                         .font(.system(size: 8, weight: .semibold))
                         .foregroundStyle(.tertiary)
                 }
                 .font(.system(size: 11.5, weight: .semibold))
+                .frame(width: 220, height: 18)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("Choose the project for this chat")
+            .help(store.currentWorkspaceKind == .project ? store.effectiveWorkspaceURL.path : "Choose the project for this chat")
             .accessibilityLabel("Choose project")
+            .accessibilityValue(selectedProjectTitle)
             .popover(isPresented: $isChooserPresented, arrowEdge: .bottom) {
                 projectChooser
             }
@@ -44,6 +48,13 @@ struct DesktopComposerProjectBar: View {
                 .opacity(0.7)
                 .allowsHitTesting(false)
         }
+    }
+
+    private var selectedProjectTitle: String {
+        guard store.hasExplicitWorkspace else { return "Choose project" }
+        guard store.currentWorkspaceKind == .project else { return "Temporary workspace" }
+        let path = store.effectiveWorkspaceURL.path
+        return projectDisplayNames[path] ?? store.effectiveWorkspaceURL.lastPathComponent
     }
 
     private var projectChooser: some View {

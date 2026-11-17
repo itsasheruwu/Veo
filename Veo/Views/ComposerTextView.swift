@@ -77,6 +77,9 @@ struct ComposerTextView: NSViewRepresentable {
         }
         if textView.isEditable != isEditable {
             textView.isEditable = isEditable
+            if !isEditable, textView.window?.firstResponder === textView {
+                textView.window?.makeFirstResponder(nil)
+            }
             needsDisplay = true
         }
         if textView.isSelectable == false {
@@ -98,7 +101,8 @@ struct ComposerTextView: NSViewRepresentable {
         if context.coordinator.handledFocusToken != focusToken {
             context.coordinator.handledFocusToken = focusToken
             if isEditable {
-                DispatchQueue.main.async {
+                DispatchQueue.main.async { [weak textView] in
+                    guard let textView, textView.isEditable else { return }
                     textView.window?.makeFirstResponder(textView)
                 }
             }

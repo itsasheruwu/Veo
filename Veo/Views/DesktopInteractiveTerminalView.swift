@@ -10,15 +10,26 @@ struct DesktopInteractiveTerminalPanel: View {
     @ObservedObject var hub: DesktopLocalTerminalHub
     @Binding var isPresented: Bool
     @Binding var isWorkspace: Bool
+    /// Full conversation container height before the terminal is laid out.
+    var availableHeight: CGFloat = 640
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var panelHeight: CGFloat = 288
     @State private var dragStartHeight: CGFloat = 288
     @State private var isDraggingResize = false
     @State private var isFileDropTargeted = false
+    @FocusState private var resizeFocused: Bool
 
     private let minHeight: CGFloat = 140
     private let maxHeight: CGFloat = 520
+
+    private var maximumPanelHeight: CGFloat {
+        min(maxHeight, max(minHeight, availableHeight - 320))
+    }
+
+    private var displayedPanelHeight: CGFloat {
+        min(panelHeight, maximumPanelHeight)
+    }
 
     private var activeSession: DesktopLocalTerminalSession? {
         hub.selectedSession
@@ -31,11 +42,18 @@ struct DesktopInteractiveTerminalPanel: View {
             Divider().overlay(DesktopTheme.hairline)
             terminalBody
         }
-        .frame(height: panelHeight)
+        .frame(height: displayedPanelHeight)
         .frame(maxWidth: .infinity)
         .background(panelBackground)
         .overlay(alignment: .top) {
             DesktopTheme.hairline.frame(height: 1)
+                .allowsHitTesting(false)
+        }
+        .sheet(isPresented: agentCLIPermissionPresented) {
+            if let prompt = hub.agentCLIPermissionPrompt {
+                DesktopAgentCLIPermissionSheet(prompt: prompt, hub: hub)
+                    .interactiveDismissDisabled()
+            }
         }
         .onAppear {
             ensureSession()
@@ -55,7 +73,7 @@ struct DesktopInteractiveTerminalPanel: View {
     }
 
     private var panelBackground: Color {
-        Color(red: 0.09, green: 0.095, blue: 0.10)
+        DesktopTheme.canvas
     }
 
     /// Seed size for `openpty` before SwiftTerm lays out. Live size comes from the view.
@@ -64,17 +82,18 @@ struct DesktopInteractiveTerminalPanel: View {
     }
 
     private var bootstrapRows: Int {
-        hub.selectedSession?.ptyRows ?? max(8, Int((panelHeight - 40) / 16))
+        hub.selectedSession?.ptyRows ?? max(8, Int((displayedPanelHeight - 40) / 16))
     }
 
     private var resizeHandle: some View {
         Rectangle()
-            .fill(Color.clear)
-            .frame(height: 5)
+            .fill(DesktopTheme.raised)
+            .frame(height: 7)
             .overlay {
                 Capsule()
-                    .fill(Color.primary.opacity(0.18))
+                    .fill(Color.primary.opacity(resizeFocused ? 0.42 : 0.18))
                     .frame(width: 36, height: 3)
+                    .allowsHitTesting(false)
             }
             .contentShape(Rectangle())
             .gesture(
@@ -82,14 +101,14 @@ struct DesktopInteractiveTerminalPanel: View {
                     .onChanged { value in
                         if !isDraggingResize {
                             isDraggingResize = true
-                            dragStartHeight = panelHeight
+                            dragStartHeight = displayedPanelHeight
                         }
                         let next = dragStartHeight - value.translation.height
-                        panelHeight = min(maxHeight, max(minHeight, next))
+                        panelHeight = min(maximumPanelHeight, max(minHeight, next))
                     }
                     .onEnded { _ in
                         isDraggingResize = false
-                        dragStartHeight = panelHeight
+                        dragStartHeight = displayedPanelHeight
                     }
             )
             .onHover { hovering in
@@ -99,7 +118,22 @@ struct DesktopInteractiveTerminalPanel: View {
                     NSCursor.arrow.set()
                 }
             }
-            .accessibilityLabel("Resize terminal")
+            .focusable()
+            .focused($resizeFocused)
+            .focusEffectDisabled()
+            .onKeyPress(.upArrow) { adjustHeight(by: 24); return .handled }
+            .onKeyPress(.downArrow) { adjustHeight(by: -24); return .handled }
+            .accessibilityElement()
+            .accessibilityLabel("Terminal height")
+            .accessibilityValue("\(Int(displayedPanelHeight)) points")
+            .accessibilityHint("Use the up and down arrow keys to resize the terminal")
+            .accessibilityAdjustableAction { direction in
+                switch direction {
+                case .increment: adjustHeight(by: 24)
+                case .decrement: adjustHeight(by: -24)
+                @unknown default: break
+                }
+            }
     }
 
     private var tabBar: some View {
@@ -131,6 +165,7 @@ struct DesktopInteractiveTerminalPanel: View {
                     }
                     .buttonStyle(.plain)
                     .help("New terminal tab")
+                    .accessibilityLabel("New terminal tab")
                     .disabled(!store.hasExplicitWorkspace)
                 }
             }
@@ -169,10 +204,11 @@ struct DesktopInteractiveTerminalPanel: View {
             }
             .buttonStyle(.plain)
             .help("Hide terminal panel")
+            .accessibilityLabel("Hide terminal panel")
             .padding(.trailing, 8)
         }
         .frame(height: 32)
-        .background(Color.black.opacity(0.18))
+        .background(DesktopTheme.raised)
     }
 
     private func terminalTabChip(_ tab: DesktopLocalTerminalSession) -> some View {
@@ -202,16 +238,18 @@ struct DesktopInteractiveTerminalPanel: View {
             }
             .buttonStyle(.plain)
             .help("Close terminal tab")
+            .accessibilityLabel("Close terminal \(tab.tabTitle)")
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
         .background(
-            (isSelected ? Color.white.opacity(0.10) : Color.white.opacity(0.04)),
+            Color.primary.opacity(isSelected ? 0.085 : 0.035),
             in: RoundedRectangle(cornerRadius: 6, style: .continuous)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .stroke(isSelected ? DesktopTheme.hairline : Color.clear, lineWidth: 1)
+                .allowsHitTesting(false)
         )
     }
 
@@ -240,7 +278,7 @@ struct DesktopInteractiveTerminalPanel: View {
                 .buttonStyle(.borderedProminent)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color.black.opacity(0.35))
+            .background(DesktopTheme.canvas)
         } else if let session = activeSession {
             // Identity by tab so switching tabs remounts the correct PTY surface.
             // GeometryReader is required: SwiftUI does not reliably call setFrameSize,
@@ -261,13 +299,9 @@ struct DesktopInteractiveTerminalPanel: View {
 
                 DesktopTerminalDropOverlay(isActive: isFileDropTargeted && hub.agentCLIPermissionPrompt == nil)
 
-                if let prompt = hub.agentCLIPermissionPrompt {
-                    DesktopAgentCLIPermissionOverlay(prompt: prompt, hub: hub)
-                        .transition(.opacity.combined(with: .scale(scale: 0.98)))
-                }
             }
             .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: isFileDropTargeted)
-            .animation(.easeOut(duration: 0.16), value: hub.isAgentCLIPermissionPromptPresented)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: hub.isAgentCLIPermissionPromptPresented)
             .onChange(of: session.id) { _, _ in
                 isFileDropTargeted = false
             }
@@ -276,9 +310,20 @@ struct DesktopInteractiveTerminalPanel: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            Color.black.opacity(0.35)
+            DesktopTheme.canvas
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+    }
+
+    private var agentCLIPermissionPresented: Binding<Bool> {
+        Binding(
+            get: { hub.isAgentCLIPermissionPromptPresented },
+            set: { if !$0, hub.isAgentCLIPermissionPromptPresented { hub.denyAgentCLIsFromPrompt() } }
+        )
+    }
+
+    private func adjustHeight(by amount: CGFloat) {
+        panelHeight = min(maximumPanelHeight, max(minHeight, displayedPanelHeight + amount))
     }
 
     private var dropOrPermissionBlur: CGFloat {
@@ -300,61 +345,43 @@ struct DesktopInteractiveTerminalPanel: View {
     }
 }
 
-struct DesktopAgentCLIPermissionOverlay: View {
+struct DesktopAgentCLIPermissionSheet: View {
     let prompt: DesktopAgentCLIPermissionPrompt
     @ObservedObject var hub: DesktopLocalTerminalHub
     @Environment(\.veoAccent) private var veoAccent
 
     var body: some View {
-        ZStack {
-            Color.black.opacity(0.28)
-                .background(.ultraThinMaterial)
-
-            VStack(spacing: 14) {
-                Image(systemName: "hammer")
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundStyle(veoAccent)
-
-                Text("Allow agent CLIs in the Veo terminal?")
-                    .font(.system(size: 14, weight: .semibold))
-                    .multilineTextAlignment(.center)
-
-                Text("You typed \(prompt.commandName). Turn on Agent CLIs to run Claude, Codex, and similar tools here. You can change this later in Settings → Terminal.")
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 340)
-
-                HStack(spacing: 10) {
-                    Button("Not Now") {
-                        hub.denyAgentCLIsFromPrompt()
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.regular)
-                    .keyboardShortcut(.cancelAction)
-
-                    Button("Allow") {
-                        hub.allowAgentCLIsFromPrompt()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.regular)
-                    .keyboardShortcut(.defaultAction)
+        VStack(alignment: .leading, spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    Label("Allow agent CLIs?", systemImage: "terminal")
+                        .font(.system(size: 18, weight: .semibold))
+                        .accessibilityAddTraits(.isHeader)
+                    Text("You typed \(prompt.commandName).")
+                        .font(.system(size: 13, weight: .medium))
+                    Text("Allow Claude, Codex, and similar tools to run in the Veo terminal. This enables Agent CLIs for future terminal sessions too. You can change it in Settings → Terminal.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .padding(.top, 2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(22)
             }
-            .padding(.horizontal, 22)
-            .padding(.vertical, 20)
-            .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color(nsColor: .windowBackgroundColor).opacity(0.92))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(Color.primary.opacity(0.10), lineWidth: 1)
-            )
-            .shadow(color: .black.opacity(0.28), radius: 18, y: 8)
-            .padding(.horizontal, 24)
+            .frame(maxHeight: 260)
+
+            Divider()
+
+            HStack(spacing: 10) {
+                Spacer(minLength: 0)
+                Button("Not Now") { hub.denyAgentCLIsFromPrompt() }
+                    .keyboardShortcut(.cancelAction)
+                Button("Allow Agent CLIs") { hub.allowAgentCLIsFromPrompt() }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+            }
+            .padding(16)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(width: 430)
+        .tint(veoAccent)
     }
 }

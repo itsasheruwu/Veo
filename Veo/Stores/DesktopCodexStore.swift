@@ -59,7 +59,8 @@ final class DesktopCodexStore {
             timelineRevision &+= 1
             timelineIndexNeedsRebuild = true
             cachedTimelineEntries = nil
-            if let threadID = selectedThreadID {
+            if !isSuppressingDeltaFlushAsyncQuestionIngestion,
+               let threadID = selectedThreadID {
                 for item in timeline where !item.asyncQuestions.isEmpty {
                     asyncQuestions.ingest(threadID: threadID, itemID: item.id, questions: item.asyncQuestions)
                 }
@@ -308,7 +309,7 @@ final class DesktopCodexStore {
     let appServer0153: DesktopAppServer0153Coordinator
     private let utilityInference: DesktopUtilityInferenceCoordinator
     private let gitService: LocalGitService
-    private let realtimeAudio: RealtimeAudioCoordinator
+    let realtimeAudio: RealtimeAudioCoordinator
     private let defaults: UserDefaults
     private let autoContinuationCoordinator: DesktopAutoContinuationCoordinator
     private let threadStore = VeoThreadStore()
@@ -374,6 +375,7 @@ final class DesktopCodexStore {
     @ObservationIgnored private var pendingTimelineDeltasByItemID: [String: PendingTimelineDelta] = [:]
     @ObservationIgnored private var pendingTimelineDeltaOrder: [String] = []
     @ObservationIgnored private var timelineDeltaFlushTask: Task<Void, Never>?
+    @ObservationIgnored private var isSuppressingDeltaFlushAsyncQuestionIngestion = false
     @ObservationIgnored private var interactionSnapshotPersistenceTask: Task<Void, Never>?
     private var messageAttachmentPresentations: [String: DesktopMessageAttachmentPresentation] = [:]
     @ObservationIgnored private var autoTitleTasksByThreadID: [String: Task<Void, Never>] = [:]
@@ -866,6 +868,23 @@ final class DesktopCodexStore {
             )
         }
 
+        let gpt61 = models.filter { $0.isGPT61Family && !$0.isExternal }
+        if !gpt61.isEmpty {
+            groups.append(
+                DesktopEnabledModelGroup(
+                    id: "gpt61",
+                    title: "6.1",
+                    rows: gpt61.map { model in
+                        DesktopEnabledModelRow(
+                            id: model.id,
+                            title: model.userFacingDisplayName,
+                            isLastEnabled: lastEnabled && visibleIDs.contains(model.id)
+                        )
+                    }
+                )
+            )
+        }
+
         let gpt6 = models.filter { $0.isGPT6Family && !$0.isExternal }
         if !gpt6.isEmpty {
             groups.append(
@@ -883,7 +902,9 @@ final class DesktopCodexStore {
             )
         }
 
-        let otherNative = models.filter { !$0.isExternal && !$0.isGPT56Family && !$0.isGPT6Family }
+        let otherNative = models.filter {
+            !$0.isExternal && !$0.isGPT56Family && !$0.isGPT6Family && !$0.isGPT61Family
+        }
         if !otherNative.isEmpty {
             groups.append(
                 DesktopEnabledModelGroup(
@@ -5964,11 +5985,8 @@ final class DesktopCodexStore {
                 if model.isExternal {
                     resolvedLimits[model.id] = externalRecords.first(where: { $0.id == model.id })?.reliableContextLimits
                 } else {
-                    // Veo synthesizes Sol and Luna from Astra when the bundled
-                    // catalog has not listed them yet; mirror that same source.
                     resolvedLimits[model.id] = nativeLimits[model.model]
                         ?? nativeLimits[model.id]
-                        ?? (model.isGPT6Sol || model.isGPT6Luna ? nativeLimits["gpt-6-astra"] : nil)
                 }
             }
             contextLimitsByModelID = resolvedLimits
@@ -9684,7 +9702,13 @@ final class DesktopCodexStore {
         pendingTimelineDeltasByItemID.removeAll(keepingCapacity: true)
         pendingTimelineDeltaOrder.removeAll(keepingCapacity: true)
         timelineIndexByItemID = updatedIndexByItemID
-        timeline = updatedTimeline
+        do {
+            // Delta flushes only change body/status or append plain streaming rows.
+            // Structured question snapshots still use normal event/upsert ingestion.
+            isSuppressingDeltaFlushAsyncQuestionIngestion = true
+            defer { isSuppressingDeltaFlushAsyncQuestionIngestion = false }
+            timeline = updatedTimeline
+        }
         // The batch only appends or updates items at known indices, so the index
         // remains valid despite `timeline`'s observer marking it dirty.
         timelineIndexNeedsRebuild = false

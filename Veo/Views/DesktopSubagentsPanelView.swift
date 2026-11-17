@@ -33,7 +33,7 @@ struct DesktopSubagentsPanelView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 24) {
                 agentSection(title: "Active", agents: agents.filter(\.isActive), showsEmptyState: true)
-                agentSection(title: "Done", agents: agents.filter { !$0.isActive }, showsEmptyState: false)
+                agentSection(title: "Finished", agents: agents.filter { !$0.isActive }, showsEmptyState: false)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 22)
@@ -120,9 +120,10 @@ private struct DesktopSubagentDetailView: View {
     @State private var timeline: [DesktopTimelineItem] = []
     @State private var isLoading = false
     @State private var loadError: String?
+    @State private var refreshID = 0
 
     private var loadKey: String {
-        [agent.id, agent.state.status, agent.state.message ?? ""].joined(separator: "|")
+        [agent.id, agent.state.status, agent.state.message ?? "", String(refreshID)].joined(separator: "|")
     }
 
     var body: some View {
@@ -135,6 +136,7 @@ private struct DesktopSubagentDetailView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Back to subagents")
+                .accessibilityLabel("Back to subagents")
 
                 DesktopSubagentAvatar(id: agent.id, isActive: agent.isActive, size: 23)
                 Text(agent.title)
@@ -157,8 +159,8 @@ private struct DesktopSubagentDetailView: View {
                         if agent.isActive {
                             ProgressView().controlSize(.mini)
                         } else {
-                            Image(systemName: agent.state.status == "errored" ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
-                                .foregroundStyle(agent.state.status == "errored" ? .red : .green)
+                            Image(systemName: statusSymbol)
+                                .foregroundStyle(statusColor)
                         }
                         Text(agent.state.displayStatus)
                             .font(.system(size: 11.5, weight: .medium))
@@ -166,7 +168,7 @@ private struct DesktopSubagentDetailView: View {
                             Text(message)
                                 .font(.system(size: 11.5))
                                 .foregroundStyle(.secondary)
-                                .lineLimit(1)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                     }
 
@@ -188,9 +190,17 @@ private struct DesktopSubagentDetailView: View {
                         .font(.system(size: 11.5))
                         .foregroundStyle(.secondary)
                     } else if let loadError {
-                        Label(loadError, systemImage: "exclamationmark.triangle")
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label(loadError, systemImage: "exclamationmark.triangle")
+                                .font(.system(size: 11.5))
+                                .foregroundStyle(.secondary)
+                            Button("Try Again") { refreshID += 1 }
+                                .controlSize(.small)
+                        }
+                    } else if timeline.isEmpty {
+                        Text(agent.isActive ? "Activity will appear here as the agent works." : "No activity is available for this agent.")
                             .font(.system(size: 11.5))
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(.secondary)
                     } else {
                         ForEach(timeline) { item in
                             DesktopSubagentTranscriptRow(item: item, workspaceURL: store.effectiveWorkspaceURL)
@@ -200,7 +210,30 @@ private struct DesktopSubagentDetailView: View {
                 .padding(16)
             }
         }
-        .task(id: loadKey) { await loadTimeline() }
+        .task(id: loadKey) {
+            repeat {
+                await loadTimeline()
+                guard agent.isActive, !Task.isCancelled else { break }
+                do { try await Task.sleep(for: .seconds(3)) } catch { break }
+            } while !Task.isCancelled
+        }
+    }
+
+    private var statusSymbol: String {
+        switch agent.state.status {
+        case "completed": return "checkmark.circle.fill"
+        case "errored": return "exclamationmark.circle.fill"
+        case "notFound": return "questionmark.circle"
+        default: return "stop.circle"
+        }
+    }
+
+    private var statusColor: Color {
+        switch agent.state.status {
+        case "completed": return .green
+        case "errored": return .red
+        default: return .secondary
+        }
     }
 
     @MainActor
@@ -208,8 +241,11 @@ private struct DesktopSubagentDetailView: View {
         isLoading = true
         loadError = nil
         do {
-            timeline = try await store.loadSubagentTimeline(runtimeThreadID: agent.id)
+            let loaded = try await store.loadSubagentTimeline(runtimeThreadID: agent.id)
+            guard !Task.isCancelled else { return }
+            timeline = loaded
         } catch {
+            guard !Task.isCancelled else { return }
             loadError = "Agent activity is not available yet."
         }
         isLoading = false
@@ -333,7 +369,7 @@ struct DesktopTurnSubagentsPopover: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text("Subagents")
                     .font(.system(size: 13, weight: .semibold))
-                Text("\(agents.filter(\.isActive).count) active · \(agents.filter { !$0.isActive }.count) done")
+                Text("\(agents.filter(\.isActive).count) active · \(agents.filter { !$0.isActive }.count) finished")
                     .font(.system(size: 10.5))
                     .foregroundStyle(.secondary)
             }
@@ -342,29 +378,35 @@ struct DesktopTurnSubagentsPopover: View {
 
             Divider()
 
-            ForEach(agents) { agent in
-                Button { onSelect(agent.id) } label: {
-                    HStack(alignment: .top, spacing: 9) {
-                        DesktopSubagentAvatar(id: agent.id, isActive: agent.isActive, size: 17)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(agent.title)
-                                .font(.system(size: 11.5, weight: .medium))
-                            Text(agent.detail)
-                                .font(.system(size: 10.5))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(2)
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(agents) { agent in
+                        Button { onSelect(agent.id) } label: {
+                            HStack(alignment: .top, spacing: 9) {
+                                DesktopSubagentAvatar(id: agent.id, isActive: agent.isActive, size: 17)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(agent.title)
+                                        .font(.system(size: 11.5, weight: .medium))
+                                    Text(agent.detail)
+                                        .font(.system(size: 10.5))
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(2)
+                                }
+                                Spacer(minLength: 8)
+                                Text(agent.state.displayStatus)
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .padding(.horizontal, 13)
+                            .padding(.vertical, 8)
+                            .contentShape(Rectangle())
                         }
-                        Spacer(minLength: 8)
-                        Text(agent.state.displayStatus)
-                            .font(.system(size: 10))
-                            .foregroundStyle(.tertiary)
+                        .buttonStyle(.plain)
                     }
-                    .padding(.horizontal, 13)
-                    .padding(.vertical, 8)
-                    .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
             }
+            .frame(height: min(CGFloat(agents.count) * 64, 360))
+
         }
         .frame(width: 390)
         .modifier(DesktopFloatingMaterialSurface(material: material))

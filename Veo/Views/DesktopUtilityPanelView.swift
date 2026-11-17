@@ -50,21 +50,28 @@ struct DesktopUtilityPanelView: View {
 
     private var tabBar: some View {
         HStack(spacing: 0) {
-            ScrollView(.horizontal) {
-                HStack(spacing: 1) {
-                    ForEach(Array(model.tabs.enumerated()), id: \.element.id) { index, item in
-                        tabButton(for: item, index: index)
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal) {
+                    HStack(spacing: 1) {
+                        ForEach(Array(model.tabs.enumerated()), id: \.element.id) { index, item in
+                            tabButton(for: item, index: index)
+                                .id(item.id)
+                        }
                     }
-
-                    newTabMenu
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 5)
                 }
-                .padding(.leading, 6)
-                .padding(.trailing, 5)
-                .padding(.vertical, 5)
+                .scrollIndicators(.hidden)
+                .onChange(of: model.selectedTabID) { _, id in
+                    if let id { proxy.scrollTo(id) }
+                }
+                .onAppear {
+                    if let id = model.selectedTabID { proxy.scrollTo(id) }
+                }
             }
-            .scrollIndicators(.hidden)
 
-            Spacer(minLength: 0)
+            newTabMenu
+                .padding(.trailing, 5)
         }
         .frame(height: 40)
         .background(Color.primary.opacity(0.025))
@@ -226,18 +233,21 @@ private struct DesktopUtilityTabButton: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .help(title)
+            .accessibilityLabel(title)
+            .accessibilityAddTraits(isSelected ? .isSelected : [])
 
-            if isSelected || isHovering {
-                Button(action: close) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 8.5, weight: .bold))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 16, height: 16)
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .help("Close tab")
+            Button(action: close) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 8.5, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 16, height: 16)
+                    .contentShape(Circle())
             }
+            .buttonStyle(.plain)
+            .help("Close " + title)
+            .accessibilityLabel("Close " + title + " tab")
+            .opacity(isSelected || isHovering ? 1 : 0.5)
         }
         .padding(.leading, 9)
         .padding(.trailing, 7)
@@ -254,8 +264,6 @@ private struct DesktopUtilityTabButton: View {
         }
         .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         .onHover { isHovering = $0 }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(title)
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .accessibilityElement(children: .contain)
     }
 }

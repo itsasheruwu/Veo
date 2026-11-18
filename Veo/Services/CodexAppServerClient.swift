@@ -68,6 +68,7 @@ final class CodexAppServerClient {
     private var inboundServerRoutes: [DesktopRPCRequestID: CodexAppServerRoute] = [:]
     private var stoppedIntentionally = false
     private var generation = UUID()
+    var runtimeGeneration: UUID { generation }
     private var stdoutReader: CodexStdoutReader?
     private var stdoutChannel: CodexStdoutChannel?
     private var stdoutDrainGeneration: UUID?

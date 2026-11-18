@@ -30,7 +30,11 @@ struct DesktopProjectSettingsView: View {
                             update { $0.modelID = value.isEmpty ? nil : value; $0.reasoningEffort = nil }
                         })) {
                             Text("Use global default").tag("")
-                            ForEach(store.visibleModels) { Text($0.displayName).tag($0.id) }
+                            if let id = configuration.modelID,
+                               store.models.contains(where: { $0.id == id && $0.isStandaloneDaybreakModel }) {
+                                Text("Previously saved model").tag(id).disabled(true)
+                            }
+                            ForEach(store.selectableModels) { Text($0.userFacingDisplayName).tag($0.id) }
                         }
                         Picker("Reasoning", selection: Binding(get: { configuration.reasoningEffort ?? "" }, set: { value in
                             update { $0.reasoningEffort = value.isEmpty ? nil : value }

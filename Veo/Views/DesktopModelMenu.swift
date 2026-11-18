@@ -14,7 +14,7 @@ struct DesktopModelMenu: View {
     @State private var isTriggerHovered = false
 
     private var catalog: DesktopModelCatalogPresentation {
-        DesktopModelCatalogPresentation(models: store.visibleModels)
+        DesktopModelCatalogPresentation(models: store.selectableModels)
     }
 
     private var selectedVariant: DesktopGPT56Variant? {
@@ -25,16 +25,6 @@ struct DesktopModelMenu: View {
 
     private var collapsedModelTitle: String {
         if store.autoModelSelectionEnabled || store.hasLockedAutoModel { return store.modelDisplayName }
-        if store.selectedModel?.isGPT61Sol == true { return "6.1 Sol" }
-        if store.selectedModel?.isGPT61Terra == true { return "6.1 Terra" }
-        guard let variant = selectedVariant else { return store.modelDisplayName }
-        return variant == .astra ? "6 Astra" : "5.6 \(variant.title)"
-    }
-
-    private var sliderModelTitle: String {
-        if store.autoModelSelectionEnabled || store.hasLockedAutoModel { return store.modelDisplayName }
-        if store.selectedModel?.isGPT61Sol == true { return "6.1 Sol" }
-        if store.selectedModel?.isGPT61Terra == true { return "6.1 Terra" }
         guard let variant = selectedVariant else { return store.modelDisplayName }
         return variant == .astra ? "6 Astra" : "5.6 \(variant.title)"
     }
@@ -137,7 +127,7 @@ struct DesktopModelMenu: View {
         }
         .contentShape(Rectangle())
         .buttonStyle(.plain)
-        .disabled(store.visibleModels.isEmpty)
+        .disabled(store.selectableModels.isEmpty && store.selectedModel == nil)
         .help(modelPickerHelp)
         .accessibilityLabel("Model settings")
         .accessibilityValue(modelPickerAccessibilityValue)
@@ -224,7 +214,7 @@ struct DesktopModelMenu: View {
                         .accessibilityHidden(true)
                 }
 
-                Text(sliderModelTitle)
+                Text(collapsedModelTitle)
                     .fontWeight(.medium)
                     .lineLimit(1)
                     .layoutPriority(2)
@@ -681,7 +671,7 @@ private struct DesktopModelSliderAdvancedPicker: View {
         DesktopAdvancedMenuRow(
             title: "Model",
             value: compactModelTitle,
-            isEnabled: !store.visibleModels.isEmpty,
+            isEnabled: !store.selectableModels.isEmpty || store.selectedModel != nil,
             header: "Model",
             items: { modelMenuItems }
         )
@@ -689,14 +679,11 @@ private struct DesktopModelSliderAdvancedPicker: View {
 
     private var modelMenuItems: [DesktopMenuItemSpec] {
         var items: [DesktopMenuItemSpec] = []
-        if !catalog.gpt61Models.isEmpty {
-            items.append(contentsOf: catalog.gpt61Models.map { model in
-                DesktopMenuItemSpec(
-                    title: model.userFacingDisplayName,
-                    systemImage: catalog.identitySystemImage(for: model) ?? "cube",
-                    isSelected: store.routingMode == .direct && store.selectedModelID == model.id,
-                    action: { store.selectModel(model.id) }
-                )
+        for family in catalog.recentGPT6Families {
+            if !items.isEmpty { items.append(.separator) }
+            items.append(DesktopMenuItemSpec(title: family, isEnabled: false))
+            items.append(contentsOf: catalog.models(in: family).map { model in
+                directModelMenuItem(model, systemImage: catalog.identitySystemImage(for: model) ?? "cube")
             })
         }
         if !catalog.gpt6Models.isEmpty {
@@ -704,18 +691,14 @@ private struct DesktopModelSliderAdvancedPicker: View {
             items.append(
                 DesktopMenuItemSpec(
                     title: "6 Auto",
-                    subtitle: "Veo routes across the GPT-6 family",
+                    subtitle: store.isDaybreakOn ? "Turn Daybreak off to use Auto." : "Veo routes across the GPT-6 family",
+                    isEnabled: !store.isDaybreakOn,
                     isSelected: store.routingMode == .autoGPT6,
                     action: { store.selectAutoRouting(family: .gpt6) }
                 )
             )
             items.append(contentsOf: catalog.gpt6Models.map { model in
-                DesktopMenuItemSpec(
-                    title: model.userFacingDisplayName,
-                    systemImage: catalog.identitySystemImage(for: model) ?? "star.fill",
-                    isSelected: store.routingMode == .direct && store.selectedModelID == model.id,
-                    action: { store.selectModel(model.id) }
-                )
+                directModelMenuItem(model, systemImage: catalog.identitySystemImage(for: model) ?? "star.fill")
             })
         }
 
@@ -724,18 +707,18 @@ private struct DesktopModelSliderAdvancedPicker: View {
             items.append(
                 DesktopMenuItemSpec(
                     title: "5.6 Auto",
-                    subtitle: "Veo routes across the 5.6 family",
+                    subtitle: store.isDaybreakOn ? "Turn Daybreak off to use Auto." : "Veo routes across the 5.6 family",
+                    isEnabled: !store.isDaybreakOn,
                     isSelected: store.routingMode == .auto,
                     action: store.selectAutoRouting
                 )
             )
             for option in catalog.variantModels {
                 items.append(
-                    DesktopMenuItemSpec(
+                    directModelMenuItem(
+                        option.model,
                         title: "5.6 \(option.variant.title)",
-                        systemImage: option.variant.systemImage,
-                        isSelected: store.routingMode == .direct && store.selectedModelID == option.model.id,
-                        action: { store.selectModel(option.model.id) }
+                        systemImage: option.variant.systemImage
                     )
                 )
             }
@@ -745,12 +728,10 @@ private struct DesktopModelSliderAdvancedPicker: View {
             if !items.isEmpty { items.append(.separator) }
             for model in catalog.otherModels {
                 items.append(
-                    DesktopMenuItemSpec(
-                        title: model.userFacingDisplayName,
+                    directModelMenuItem(
+                        model,
                         systemImage: catalog.identitySystemImage(for: model),
-                        assetImage: catalog.identityAssetImage(for: model),
-                        isSelected: store.routingMode == .direct && store.selectedModelID == model.id,
-                        action: { store.selectModel(model.id) }
+                        assetImage: catalog.identityAssetImage(for: model)
                     )
                 )
             }
@@ -762,14 +743,42 @@ private struct DesktopModelSliderAdvancedPicker: View {
             return item
         }
         return [
-            DesktopMenuItemSpec(title: "Auto", subtitle: "",
-                                toggleValue: store.autoModelSelectionEnabled,
-                                action: { store.autoModelSelectionEnabled.toggle() }),
+            DesktopMenuItemSpec(
+                title: "Auto", systemImage: "sparkles",
+                subtitle: store.isDaybreakOn ? "Turn Daybreak off to use Auto." : "",
+                isEnabled: !store.isDaybreakOn,
+                toggleValue: store.autoModelSelectionEnabled,
+                toggleKind: .auto,
+                toggleAction: store.setAutoModelSelectionEnabled
+            ),
+            DesktopMenuItemSpec(
+                title: "Daybreak", systemImage: DesktopDaybreakMark.systemImage,
+                subtitle: store.daybreakDetail ?? "",
+                isEnabled: store.canToggleDaybreak,
+                toggleValue: store.isDaybreakOn,
+                toggleKind: .daybreak,
+                toggleAction: store.setDaybreakEnabled
+            ),
             .separator,
             DesktopMenuItemSpec(title: store.autoModelRoutingStatus ?? "Auto mode is on",
                                 subtitle: store.autoModelRoutingDetail ?? "Chooses once for this thread.",
                                 isEnabled: false, visibility: .automatic)
         ] + items
+    }
+
+    private func directModelMenuItem(
+        _ model: DesktopModelOption, title: String? = nil, systemImage: String?, assetImage: String? = nil
+    ) -> DesktopMenuItemSpec {
+        let available = store.canSelectModel(model)
+        return DesktopMenuItemSpec(
+            title: title ?? model.userFacingDisplayName,
+            systemImage: systemImage,
+            assetImage: assetImage,
+            subtitle: available ? "" : "Unavailable while Daybreak is on.",
+            isEnabled: available,
+            isSelected: store.routingMode == .direct && store.selectedModelID == model.id,
+            action: { store.selectModel(model.id) }
+        )
     }
 
     private var effortRow: some View {
@@ -992,8 +1001,11 @@ private struct DesktopMenuItemSpec {
     var isSelected: Bool = false
     var isSeparator: Bool = false
     enum Visibility { case always, manual, automatic }
+    enum ToggleKind: Equatable { case auto, daybreak }
     var visibility: Visibility = .always
     var toggleValue: Bool? = nil
+    var toggleKind: ToggleKind? = nil
+    var toggleAction: ((Bool) -> Void)? = nil
     var action: () -> Void = {}
 
     static var separator: DesktopMenuItemSpec {
@@ -1020,7 +1032,7 @@ private final class DesktopMenuAnchor: NSObject, ObservableObject {
         }
 
         var visibilityItems: [(NSMenuItem, DesktopMenuItemSpec.Visibility)] = []
-        let autoEnabled = items.compactMap(\.toggleValue).first ?? false
+        let autoEnabled = items.first(where: { $0.toggleKind == .auto })?.toggleValue ?? false
         for spec in items {
             guard !spec.isSeparator else {
                 let separator = NSMenuItem.separator()
@@ -1047,15 +1059,26 @@ private final class DesktopMenuAnchor: NSObject, ObservableObject {
             item.isEnabled = spec.isEnabled
             item.state = spec.isSelected ? .on : .off
             if !spec.subtitle.isEmpty {
-                item.attributedTitle = Self.attributedTitle(spec.title, subtitle: spec.subtitle)
+                item.attributedTitle = Self.attributedTitle(spec.title, subtitle: spec.subtitle, isEnabled: spec.isEnabled)
+                item.toolTip = spec.subtitle
             }
-            if let enabled = spec.toggleValue {
-                item.view = DesktopAutoMenuToggle(enabled: enabled) { [weak menu] enabled in
-                    spec.action()
-                    for (row, visibility) in visibilityItems {
-                        row.isHidden = visibility == .manual ? enabled : visibility == .automatic ? !enabled : false
+            if let enabled = spec.toggleValue, let kind = spec.toggleKind {
+                item.view = DesktopModelMenuToggle(
+                    title: spec.title,
+                    systemImage: spec.systemImage ?? "",
+                    accessibilityLabel: kind == .auto ? "Auto model selection" : "Daybreak",
+                    enabled: enabled,
+                    available: spec.isEnabled,
+                    detail: spec.subtitle.isEmpty ? nil : spec.subtitle
+                ) { [weak menu] enabled in
+                    spec.toggleAction?(enabled)
+                    if kind == .auto {
+                        for (row, visibility) in visibilityItems {
+                            row.isHidden = visibility == .manual ? enabled : visibility == .automatic ? !enabled : false
+                        }
                     }
-                    menu?.update()
+                    // Reopen with fresh availability and descriptions after a preference change.
+                    menu?.cancelTracking()
                 }
             }
             actions.append(spec.action)
@@ -1088,14 +1111,14 @@ private final class DesktopMenuAnchor: NSObject, ObservableObject {
         actions[sender.tag]()
     }
 
-    private static func attributedTitle(_ title: String, subtitle: String) -> NSAttributedString {
+    private static func attributedTitle(_ title: String, subtitle: String, isEnabled: Bool) -> NSAttributedString {
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineSpacing = 1
         let result = NSMutableAttributedString(
             string: title,
             attributes: [
                 .font: NSFont.menuFont(ofSize: 0),
-                .foregroundColor: NSColor.labelColor,
+                .foregroundColor: isEnabled ? NSColor.labelColor : NSColor.disabledControlTextColor,
                 .paragraphStyle: paragraph,
             ]
         )
@@ -1104,7 +1127,7 @@ private final class DesktopMenuAnchor: NSObject, ObservableObject {
                 string: "\n" + subtitle,
                 attributes: [
                     .font: NSFont.menuFont(ofSize: NSFont.smallSystemFontSize),
-                    .foregroundColor: NSColor.secondaryLabelColor,
+                .foregroundColor: isEnabled ? NSColor.secondaryLabelColor : NSColor.disabledControlTextColor,
                     .paragraphStyle: paragraph,
                 ]
             )
@@ -1541,7 +1564,7 @@ private struct DesktopModelStudioPicker: View {
                 sectionTitle("Model")
                 Spacer()
 
-                if !catalog.gpt61Models.isEmpty || !catalog.gpt6Models.isEmpty || !catalog.otherModels.isEmpty {
+                if !catalog.models.isEmpty {
                     pageButton(systemName: "arrow.right", label: "Show all models") {
                         withAnimation(.easeInOut(duration: 0.2)) {
                             page = .modelList
@@ -1650,14 +1673,16 @@ private struct DesktopModelStudioPicker: View {
 
             DesktopAutoModelRow(store: store)
             if !store.autoModelSelectionEnabled {
-                if !catalog.gpt61Models.isEmpty {
-                    ForEach(catalog.gpt61Models) { model in
+                ForEach(catalog.recentGPT6Families, id: \.self) { family in
+                    if family != catalog.recentGPT6Families.first { sectionDivider }
+                    sectionTitle(family)
+                    ForEach(catalog.models(in: family)) { model in
                         modelRow(model)
                     }
                 }
 
                 if !catalog.gpt6Models.isEmpty {
-                    if !catalog.gpt61Models.isEmpty { sectionDivider }
+                    if !catalog.recentGPT6Families.isEmpty { sectionDivider }
                     autoRouteRow(family: .gpt6)
                     ForEach(catalog.gpt6Models) { model in
                         modelRow(model)
@@ -1665,13 +1690,14 @@ private struct DesktopModelStudioPicker: View {
                 }
 
                 if catalog.preferredGPT56Model != nil {
-                    if !catalog.gpt6Models.isEmpty || !catalog.gpt61Models.isEmpty { sectionDivider }
+                    if !catalog.gpt6Models.isEmpty || !catalog.recentGPT6Families.isEmpty { sectionDivider }
                     autoRouteRow(family: .gpt56)
                     ForEach(catalog.variantModels, id: \.variant) { option in
                         StudioSelectionRow(
                             title: "5.6 \(option.variant.title)",
-                            description: option.model.description,
+                            description: store.canSelectModel(option.model) ? option.model.description : "Unavailable while Daybreak is on.",
                             systemImage: option.variant.systemImage,
+                            isEnabled: store.canSelectModel(option.model),
                             isSelected: store.routingMode == .direct && store.selectedModelID == option.model.id
                         ) {
                             selectModelAndShowDetails(option.model.id)
@@ -1679,7 +1705,7 @@ private struct DesktopModelStudioPicker: View {
                     }
                 }
 
-                if (!catalog.gpt61Models.isEmpty || !catalog.gpt6Models.isEmpty || catalog.preferredGPT56Model != nil), !catalog.otherModels.isEmpty {
+                if (!catalog.recentGPT6Families.isEmpty || !catalog.gpt6Models.isEmpty || catalog.preferredGPT56Model != nil), !catalog.otherModels.isEmpty {
                     sectionDivider
                 }
 
@@ -1753,18 +1779,32 @@ private struct DesktopModelStudioPicker: View {
         VStack(alignment: .leading, spacing: 6) {
             sectionTitle("Variant")
 
-            Picker("5.6 variant", selection: variantSelection) {
-                Text(DesktopGPT56Variant.auto.title)
-                    .tag(Optional(DesktopGPT56Variant.auto))
+            if store.isDaybreakOn {
                 ForEach(catalog.variantModels, id: \.variant) { option in
-                    Text(option.variant.title)
-                        .tag(Optional(option.variant))
+                    let available = store.canSelectModel(option.model)
+                    StudioSelectionRow(
+                        title: option.variant.title,
+                        description: available ? "" : "Unavailable while Daybreak is on.",
+                        systemImage: option.variant.systemImage,
+                        isEnabled: available,
+                        isSelected: selectedVariant == option.variant,
+                        action: { store.selectModel(option.model.id) }
+                    )
                 }
+            } else {
+                Picker("5.6 variant", selection: variantSelection) {
+                    Text(DesktopGPT56Variant.auto.title)
+                        .tag(Optional(DesktopGPT56Variant.auto))
+                    ForEach(catalog.variantModels, id: \.variant) { option in
+                        Text(option.variant.title)
+                            .tag(Optional(option.variant))
+                    }
+                }
+                .pickerStyle(.segmented)
+                .controlSize(.small)
+                .labelsHidden()
+                .accessibilityLabel("5.6 variant")
             }
-            .pickerStyle(.segmented)
-            .controlSize(.small)
-            .labelsHidden()
-            .accessibilityLabel("5.6 variant")
 
             if let description = selectedVariantDescription, !description.isEmpty {
                 Text(description)
@@ -1951,11 +1991,13 @@ private struct DesktopModelStudioPicker: View {
     }
 
     private func modelRow(_ model: DesktopModelOption) -> some View {
-        StudioSelectionRow(
+        let available = store.canSelectModel(model)
+        return StudioSelectionRow(
             title: model.userFacingDisplayName,
-            description: model.description,
+            description: available ? model.description : "Unavailable while Daybreak is on.",
             systemImage: catalog.identitySystemImage(for: model),
             assetImage: catalog.identityAssetImage(for: model),
+            isEnabled: available,
             isSelected: store.selectedModelID == model.id
         ) {
             selectModelAndShowDetails(model.id)
@@ -1972,8 +2014,9 @@ private struct DesktopModelStudioPicker: View {
     private func autoRouteRow(family: DesktopAutoRouteFamily) -> some View {
         return StudioSelectionRow(
             title: family.title,
-            description: "Veo routes across the \(family.productName) family.",
+            description: store.isDaybreakOn ? "Turn Daybreak off to use Auto." : "Veo routes across the \(family.productName) family.",
             systemImage: "sparkles",
+            isEnabled: !store.isDaybreakOn,
             isSelected: store.routingMode.autoFamily == family
         ) {
             store.selectAutoRouting(family: family)
@@ -2373,8 +2416,14 @@ private struct DesktopModelCatalogPresentation {
         models.filter(isGPT56)
     }
 
-    var gpt61Models: [DesktopModelOption] {
-        models.filter(\.isGPT61Family)
+    var recentGPT6Families: [String] {
+        DesktopModelOption.pickerFamilyOrder.prefix(2).filter { family in
+            models.contains(where: { $0.pickerFamily == family })
+        }
+    }
+
+    func models(in family: String) -> [DesktopModelOption] {
+        models.filter { $0.pickerFamily == family }
     }
 
     var gpt6Models: [DesktopModelOption] {
@@ -2385,7 +2434,7 @@ private struct DesktopModelCatalogPresentation {
             return 3
         }
         return models.enumerated()
-            .filter { $0.element.isGPT6Family }
+            .filter { $0.element.pickerFamily == "6" }
             .sorted { lhs, rhs in
                 let leftOrder = order(lhs.element)
                 let rightOrder = order(rhs.element)
@@ -2399,7 +2448,7 @@ private struct DesktopModelCatalogPresentation {
     }
 
     var otherModels: [DesktopModelOption] {
-        models.filter { !isGPT56($0) && !$0.isGPT6Family && !$0.isGPT61Family }
+        models.filter { $0.pickerFamily == nil }
     }
 
     var variantModels: [VariantModel] {
@@ -2419,7 +2468,7 @@ private struct DesktopModelCatalogPresentation {
     }
 
     func isGPT56(_ model: DesktopModelOption) -> Bool {
-        modelSearchText(model).contains("gpt-5.6")
+        model.pickerFamily == "5.6"
     }
 
     func identitySystemImage(for model: DesktopModelOption) -> String? {

@@ -437,10 +437,15 @@ struct DesktopSettingsPage: View {
                         detail: "Choose a model, reasoning level, and permitted speed once from the first prompt.",
                         systemImage: "sparkles"
                     ) {
-                        Toggle("Enable Auto router", isOn: $store.autoModelSelectionEnabled)
+                        Toggle("Enable Auto router", isOn: Binding(
+                            get: { store.autoModelSelectionEnabled },
+                            set: store.setAutoModelSelectionEnabled
+                        ))
                             .labelsHidden()
                             .toggleStyle(.switch)
                             .controlSize(.small)
+                            .disabled(store.isDaybreakOn)
+                            .accessibilityHint(store.isDaybreakOn ? "Turn Daybreak off to use Auto." : "")
                     }
 
                     if store.autoModelSelectionEnabled {
@@ -720,8 +725,11 @@ struct DesktopSettingsPage: View {
                             get: { store.utilityModelSelectionID },
                             set: { store.setUtilityModel($0) }
                         )) {
+                            if store.models.contains(where: { $0.id == store.utilityModelSelectionID && $0.isStandaloneDaybreakModel }) {
+                                Text("Previously saved model").tag(store.utilityModelSelectionID).disabled(true)
+                            }
                             ForEach(store.utilityModelOptions) { model in
-                                Text(model.displayName).tag(model.id)
+                                Text(model.userFacingDisplayName).tag(model.id)
                             }
                         }
                         .labelsHidden()

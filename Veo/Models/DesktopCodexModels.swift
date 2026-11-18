@@ -266,6 +266,7 @@ struct DesktopComposerPayload: Identifiable, Codable, Hashable {
     var autoRouterMode: DesktopAutoRouterMode = .jev
     var autoSpeedPolicy: DesktopAutoSpeedPolicy = .disallow
     var autoRouterAllowsUltraReasoning: Bool = false
+    var daybreakEnabled: Bool?
     var visionFallback: DesktopVisionFallbackContext?
     let planHandoff: DesktopPlanHandoff?
 
@@ -281,6 +282,7 @@ struct DesktopComposerPayload: Identifiable, Codable, Hashable {
         interactionMode: DesktopInteractionMode = .agentic,
         routingMode: DesktopModelRoutingMode = .direct,
         autoRoutePlan: DesktopAutoRoutePlan? = nil,
+        daybreakEnabled: Bool? = nil,
         visionFallback: DesktopVisionFallbackContext? = nil,
         planHandoff: DesktopPlanHandoff? = nil,
         createdAt: Date = Date()
@@ -296,6 +298,7 @@ struct DesktopComposerPayload: Identifiable, Codable, Hashable {
         self.interactionMode = interactionMode
         self.routingMode = routingMode
         self.autoRoutePlan = autoRoutePlan
+        self.daybreakEnabled = daybreakEnabled
         self.visionFallback = visionFallback
         self.planHandoff = planHandoff
         self.createdAt = createdAt
@@ -320,6 +323,7 @@ struct DesktopComposerPayload: Identifiable, Codable, Hashable {
         case autoRouterMode
         case autoSpeedPolicy
         case autoRouterAllowsUltraReasoning
+        case daybreakEnabled
         case isPlanMode
     }
 
@@ -329,6 +333,7 @@ struct DesktopComposerPayload: Identifiable, Codable, Hashable {
         autoRouterMode = try container.decodeIfPresent(DesktopAutoRouterMode.self, forKey: .autoRouterMode) ?? .jev
         autoSpeedPolicy = try container.decodeIfPresent(DesktopAutoSpeedPolicy.self, forKey: .autoSpeedPolicy) ?? .disallow
         autoRouterAllowsUltraReasoning = try container.decodeIfPresent(Bool.self, forKey: .autoRouterAllowsUltraReasoning) ?? false
+        daybreakEnabled = try container.decodeIfPresent(Bool.self, forKey: .daybreakEnabled)
         id = try container.decode(String.self, forKey: .id)
         text = try container.decode(String.self, forKey: .text)
         createdAt = try container.decode(Date.self, forKey: .createdAt)
@@ -363,6 +368,7 @@ struct DesktopComposerPayload: Identifiable, Codable, Hashable {
         try container.encode(autoRouterMode, forKey: .autoRouterMode)
         try container.encode(autoSpeedPolicy, forKey: .autoSpeedPolicy)
         try container.encode(autoRouterAllowsUltraReasoning, forKey: .autoRouterAllowsUltraReasoning)
+        try container.encodeIfPresent(daybreakEnabled, forKey: .daybreakEnabled)
         try container.encode(id, forKey: .id)
         try container.encode(text, forKey: .text)
         try container.encode(createdAt, forKey: .createdAt)
@@ -547,6 +553,11 @@ enum DesktopModelInputModality: String, Hashable {
     case audio
 }
 
+enum DesktopDaybreakProgram: String, Hashable {
+    case standard
+    case daybreakBlue
+}
+
 struct DesktopModelOption: Identifiable, Hashable {
     let id: String
     let model: String
@@ -567,6 +578,7 @@ struct DesktopModelOption: Identifiable, Hashable {
     let availabilityNotice: String?
     let modelSpecialty: String?
     let multiAgentVersion: String?
+    let cyberAccessPrograms: Set<DesktopDaybreakProgram>
 
     init(
         id: String,
@@ -587,7 +599,8 @@ struct DesktopModelOption: Identifiable, Hashable {
         retirementAt: Date? = nil,
         availabilityNotice: String? = nil,
         modelSpecialty: String? = nil,
-        multiAgentVersion: String? = nil
+        multiAgentVersion: String? = nil,
+        cyberAccessPrograms: Set<DesktopDaybreakProgram> = []
     ) {
         self.id = id
         self.model = model
@@ -608,33 +621,44 @@ struct DesktopModelOption: Identifiable, Hashable {
         self.availabilityNotice = availabilityNotice
         self.modelSpecialty = modelSpecialty
         self.multiAgentVersion = multiAgentVersion
+        self.cyberAccessPrograms = cyberAccessPrograms
     }
 
     var userFacingDisplayName: String {
         Self.displayNameForUser(id: id, model: model, fallback: displayName)
     }
 
+    static let pickerFamilyOrder = ["6.2", "6.1", "6", "5.6"]
+
+    var pickerFamily: String? {
+        let names = [id, model, displayName].map(Self.normalizedModelName)
+        for version in Self.pickerFamilyOrder.prefix(2) where names.contains(where: {
+            Self.nameWithinVersion(version, normalizedName: $0) != nil
+        }) {
+            return version
+        }
+        if isGPT6Family { return "6" }
+        if isGPT56Family { return "5.6" }
+        return nil
+    }
+
+    var isStandaloneDaybreakModel: Bool {
+        !isExternal && [id, model, displayName].contains { value in
+            let name = Self.normalizedModelName(value)
+            let alias = name.hasPrefix("gpt-") ? name.dropFirst(4) : name[...]
+            return alias == "daybreakblue" || alias == "daybreak-blue" || alias.hasPrefix("daybreak-blue-")
+        }
+    }
+
     var isGPT6Astra: Bool {
         [id, model, displayName].contains { Self.normalizedModelName($0).contains("gpt-6-astra") }
     }
 
-    /// Stays outside `isGPT6Family` so the row sits above 6 Auto, Astra, Sol, and Luna.
     var isGPT61Sol: Bool {
         [id, model, displayName].contains { name in
             let normalized = Self.normalizedModelName(name)
             return normalized.contains("gpt-6.1-sol") || normalized == "6.1-sol"
         }
-    }
-
-    var isGPT61Terra: Bool {
-        [id, model, displayName].contains { name in
-            let normalized = Self.normalizedModelName(name)
-            return normalized.contains("gpt-6.1-terra") || normalized == "6.1-terra"
-        }
-    }
-
-    var isGPT61Family: Bool {
-        isGPT61Sol || isGPT61Terra
     }
 
     var isGPT6Sol: Bool {
@@ -672,6 +696,10 @@ struct DesktopModelOption: Identifiable, Hashable {
         id.contains("/")
     }
 
+    func supportsCyberProgram(_ program: DesktopDaybreakProgram) -> Bool {
+        !isExternal && cyberAccessPrograms.contains(program)
+    }
+
     var externalProviderID: String? {
         guard isExternal else { return nil }
         return id.split(separator: "/").first.map(String.init)
@@ -703,6 +731,7 @@ struct DesktopModelOption: Identifiable, Hashable {
         )
 
         let serverDisplayName = object.string("displayName") ?? model
+        let access = (object["availableAccessPrograms"] as? [String: Any])?["cyber"] as? [String] ?? []
 
         return DesktopModelOption(
             id: id,
@@ -727,18 +756,24 @@ struct DesktopModelOption: Identifiable, Hashable {
             retirementAt: (object["upgradeInfo"] as? [String: Any])?.number("retirementAt").map(Date.init(timeIntervalSince1970:)),
             availabilityNotice: (object["availabilityNux"] as? [String: Any])?.string("message"),
             modelSpecialty: object.string("modelSpecialty"),
-            multiAgentVersion: object.string("multiAgentVersion")
+            multiAgentVersion: object.string("multiAgentVersion"),
+            cyberAccessPrograms: Set(access.compactMap(DesktopDaybreakProgram.init(rawValue:)))
         )
     }
 
     static func displayNameForUser(id: String, model: String, fallback: String) -> String {
         let names = [id, model, fallback].map(Self.normalizedModelName)
 
-        if names.contains(where: { $0.contains("gpt-6.1-sol") || $0 == "6.1-sol" }) {
-            return "6.1 Sol"
-        }
-        if names.contains(where: { $0.contains("gpt-6.1-terra") || $0 == "6.1-terra" }) {
-            return "6.1 Terra"
+        for version in pickerFamilyOrder.prefix(2) {
+            let matches = names.compactMap { nameWithinVersion(version, normalizedName: $0) }
+            if let name = matches.first(where: { $0 != version }) {
+                let parts = name.split(separator: "-")
+                if let variant = parts.dropFirst().first, ["astra", "sol", "terra", "luna"].contains(String(variant)) {
+                    return "\(version) \(variant.capitalized)"
+                }
+                return parts.map { String($0).capitalized }.joined(separator: " ")
+            }
+            if !matches.isEmpty { return version }
         }
         if names.contains(where: { $0.contains("gpt-6-astra") }) {
             return "6 Astra"
@@ -786,6 +821,12 @@ struct DesktopModelOption: Identifiable, Hashable {
             return "4.5 Grok"
         }
         return fallback
+    }
+
+    private static func nameWithinVersion(_ version: String, normalizedName: String) -> String? {
+        guard let component = normalizedName.split(separator: "/").last else { return nil }
+        let name = component.hasPrefix("gpt-") ? String(component.dropFirst(4)) : String(component)
+        return name == version || name.hasPrefix("\(version)-") ? name : nil
     }
 
     private static func normalizedModelName(_ value: String) -> String {

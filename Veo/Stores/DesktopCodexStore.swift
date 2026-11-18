@@ -95,6 +95,10 @@ final class DesktopCodexStore {
         guard canAnswerAsyncQuestions, selectedThreadID == request.threadID,
               let current = selectedAsyncQuestions.first(where: { $0.id == request.id }),
               let text = current.answerMessage else { return }
+        if !isRunningTurn, let issue = daybreakTurnIssue {
+            transientError = issue
+            return
+        }
         let payload = DesktopComposerPayload(
             id: current.answerClientID, text: text, accessMode: accessMode,
             model: selectedModel?.model, reasoningEffort: selectedReasoningEffort,
@@ -103,7 +107,8 @@ final class DesktopCodexStore {
                 for: selectedModel?.model,
                 usesAuto: autoModelSelectionEnabled || hasLockedAutoModel || routingMode.isFamilyAuto
             ),
-            interactionMode: interactionMode
+            interactionMode: interactionMode,
+            daybreakEnabled: outgoingDaybreakChoice
         )
         autoContinuationCoordinator.cancel(threadID: current.threadID, detail: "Answered a question.")
         // Persist in the normal outbox before closing the question. Transport
@@ -206,8 +211,93 @@ final class DesktopCodexStore {
     private var appliedContextByRuntimeID: [String: String] = [:]
     /// Bumps when enabled-model or external-provider preferences change so pickers refresh.
     private(set) var catalogPreferenceRevision = 0
-    var autoModelSelectionEnabled = UserDefaults.standard.bool(forKey: "VeoDesktop.autoModelSelectionEnabled") {
+    private(set) var autoModelSelectionEnabled = UserDefaults.standard.bool(forKey: "VeoDesktop.autoModelSelectionEnabled") {
         didSet { defaults.set(autoModelSelectionEnabled, forKey: "VeoDesktop.autoModelSelectionEnabled") }
+    }
+    private static let daybreakPreferenceKey = "VeoDesktop.daybreakEnabled"
+    private(set) var daybreakEnabled: Bool? {
+        didSet { defaults.set(daybreakEnabled, forKey: Self.daybreakPreferenceKey) }
+    }
+    private var daybreakCatalogGeneration: UUID?
+    private var daybreakConfigGeneration: UUID?
+    private var daybreakConfigDefault: Bool?
+
+    private var daybreakModel: DesktopModelOption? {
+        guard runtimeState.isReady, daybreakCatalogGeneration == client.runtimeGeneration,
+              routingMode == .direct, !autoModelSelectionEnabled, !hasLockedAutoModel,
+              modelVariantRequest(for: selectedServiceTier) == nil else { return nil }
+        return selectedModel
+    }
+
+    var daybreakUnavailableReason: String? {
+        if autoModelSelectionEnabled || hasLockedAutoModel || routingMode != .direct {
+            return "Choose a model directly to use Daybreak."
+        }
+        guard daybreakModel?.supportsCyberProgram(.daybreakBlue) == true else {
+            return "Unavailable for the selected model."
+        }
+        return nil
+    }
+
+    var isDaybreakOn: Bool {
+        if let daybreakEnabled { return daybreakEnabled }
+        return daybreakUnavailableReason == nil && daybreakConfigGeneration == client.runtimeGeneration
+            && daybreakConfigDefault == true
+    }
+
+    var daybreakDetail: String? {
+        if let daybreakUnavailableReason { return daybreakUnavailableReason }
+        if !isDaybreakOn, daybreakModel?.supportsCyberProgram(.standard) != true {
+            return "Turning off Daybreak requires a Standard model."
+        }
+        guard daybreakEnabled == nil else { return nil }
+        if daybreakConfigGeneration == client.runtimeGeneration, let daybreakConfigDefault {
+            return daybreakConfigDefault ? "Inherited from Codex (on)." : "Inherited from Codex (off)."
+        }
+        return "Follows the Codex default."
+    }
+
+    var canToggleDaybreak: Bool { daybreakEnabled == true || daybreakUnavailableReason == nil }
+
+    func setDaybreakEnabled(_ enabled: Bool) {
+        if enabled {
+            guard daybreakUnavailableReason == nil else { return }
+            daybreakEnabled = true
+        } else {
+            let model = daybreakModel
+            // Keep Off selected on Blue-only models until a Standard model is chosen.
+            let hasProgram = model?.supportsCyberProgram(.standard) == true
+                || model?.supportsCyberProgram(.daybreakBlue) == true
+            daybreakEnabled = hasProgram ? false : nil
+        }
+    }
+
+    func canSelectModel(_ model: DesktopModelOption) -> Bool {
+        guard !model.isStandaloneDaybreakModel else { return false }
+        return !isDaybreakOn || (daybreakCatalogGeneration == client.runtimeGeneration
+            && model.supportsCyberProgram(.daybreakBlue) && modelVariantRequest(for: model.defaultServiceTier) == nil)
+    }
+
+    private var outgoingDaybreakChoice: Bool? {
+        guard let enabled = daybreakEnabled,
+              daybreakModel?.supportsCyberProgram(enabled ? .daybreakBlue : .standard) == true else { return nil }
+        return enabled
+    }
+
+    private var daybreakTurnIssue: String? {
+        if daybreakEnabled == true, let issue = daybreakUnavailableReason {
+            return "\(issue) Turn off Daybreak or choose a compatible model before sending."
+        }
+        if !isDaybreakOn, daybreakModel?.supportsCyberProgram(.daybreakBlue) == true,
+           daybreakModel?.supportsCyberProgram(.standard) != true {
+            return "Choose a Standard model or turn on Daybreak before sending."
+        }
+        return nil
+    }
+
+    func setAutoModelSelectionEnabled(_ enabled: Bool) {
+        guard !enabled || !isDaybreakOn else { return }
+        autoModelSelectionEnabled = enabled
     }
     var autoRouterMode = DesktopAutoRouterMode(
         rawValue: UserDefaults.standard.string(forKey: DesktopAutoRouterPreferences.modeKey) ?? ""
@@ -405,6 +495,7 @@ final class DesktopCodexStore {
         self.contextChoicesByModelID = defaults.data(forKey: "VeoDesktop.contextChoicesByModelID")
             .flatMap { try? JSONDecoder().decode([String: DesktopContextWindowChoice].self, from: $0) } ?? [:]
         self.autoModelSelectionEnabled = defaults.bool(forKey: "VeoDesktop.autoModelSelectionEnabled")
+        self.daybreakEnabled = defaults.object(forKey: Self.daybreakPreferenceKey) as? Bool
         self.autoRouterMode = DesktopAutoRouterMode(
             rawValue: defaults.string(forKey: DesktopAutoRouterPreferences.modeKey) ?? ""
         ) ?? .jev
@@ -844,81 +935,33 @@ final class DesktopCodexStore {
         }
     }
 
+    /// Only for new manual choices. Existing routes and queued turns still resolve against the live catalog.
+    var selectableModels: [DesktopModelOption] {
+        let models = visibleModels.filter { !$0.isStandaloneDaybreakModel }
+        return DesktopModelOption.pickerFamilyOrder.flatMap { family in models.filter { $0.pickerFamily == family } }
+            + models.filter { $0.pickerFamily == nil }
+    }
+
     var enabledModelsGroups: [DesktopEnabledModelGroup] {
         _ = catalogPreferenceRevision
         let preferences = DesktopModelCatalogPreferences.shared
-        let visibleIDs = Set(visibleModels.map(\.id))
+        let visibleIDs = Set(selectableModels.map(\.id))
         let lastEnabled = visibleIDs.count <= 1
         var groups: [DesktopEnabledModelGroup] = []
 
-        let gpt56 = models.filter { $0.isGPT56Family && !$0.isExternal }
-        if !gpt56.isEmpty {
-            groups.append(
-                DesktopEnabledModelGroup(
-                    id: "gpt56",
-                    title: "5.6",
-                    rows: gpt56.map { model in
-                        DesktopEnabledModelRow(
-                            id: model.id,
-                            title: model.userFacingDisplayName,
-                            isLastEnabled: lastEnabled && visibleIDs.contains(model.id)
-                        )
-                    }
+        let native = models.filter { !$0.isExternal && !$0.isStandaloneDaybreakModel }
+        let families: [String?] = DesktopModelOption.pickerFamilyOrder.map { Optional($0) } + [nil]
+        for family in families {
+            let models = native.filter { $0.pickerFamily == family }
+            if models.isEmpty { continue }
+            let rows = models.map { model in
+                DesktopEnabledModelRow(
+                    id: model.id,
+                    title: model.userFacingDisplayName,
+                    isLastEnabled: lastEnabled && visibleIDs.contains(model.id)
                 )
-            )
-        }
-
-        let gpt61 = models.filter { $0.isGPT61Family && !$0.isExternal }
-        if !gpt61.isEmpty {
-            groups.append(
-                DesktopEnabledModelGroup(
-                    id: "gpt61",
-                    title: "6.1",
-                    rows: gpt61.map { model in
-                        DesktopEnabledModelRow(
-                            id: model.id,
-                            title: model.userFacingDisplayName,
-                            isLastEnabled: lastEnabled && visibleIDs.contains(model.id)
-                        )
-                    }
-                )
-            )
-        }
-
-        let gpt6 = models.filter { $0.isGPT6Family && !$0.isExternal }
-        if !gpt6.isEmpty {
-            groups.append(
-                DesktopEnabledModelGroup(
-                    id: "gpt6",
-                    title: "GPT-6",
-                    rows: gpt6.map { model in
-                        DesktopEnabledModelRow(
-                            id: model.id,
-                            title: model.userFacingDisplayName,
-                            isLastEnabled: lastEnabled && visibleIDs.contains(model.id)
-                        )
-                    }
-                )
-            )
-        }
-
-        let otherNative = models.filter {
-            !$0.isExternal && !$0.isGPT56Family && !$0.isGPT6Family && !$0.isGPT61Family
-        }
-        if !otherNative.isEmpty {
-            groups.append(
-                DesktopEnabledModelGroup(
-                    id: "other",
-                    title: "Other",
-                    rows: otherNative.map { model in
-                        DesktopEnabledModelRow(
-                            id: model.id,
-                            title: model.userFacingDisplayName,
-                            isLastEnabled: lastEnabled && visibleIDs.contains(model.id)
-                        )
-                    }
-                )
-            )
+            }
+            groups.append(DesktopEnabledModelGroup(id: family ?? "other", title: family ?? "Other", rows: rows))
         }
 
         if preferences.includeExternalModels {
@@ -952,12 +995,12 @@ final class DesktopCodexStore {
         return DesktopModelCatalogPreferences.shared.providers
     }
 
-    var enabledModelCount: Int { visibleModels.count }
+    var enabledModelCount: Int { selectableModels.count }
 
     var catalogModelCount: Int {
         _ = catalogPreferenceRevision
         let preferences = DesktopModelCatalogPreferences.shared
-        let native = models.filter { !$0.isExternal }.count
+        let native = models.filter { !$0.isExternal && !$0.isStandaloneDaybreakModel }.count
         let external = preferences.includeExternalModels
             ? preferences.providers.reduce(0) { $0 + $1.models.count }
             : 0
@@ -981,8 +1024,9 @@ final class DesktopCodexStore {
 
     func setModelEnabled(_ id: String, enabled: Bool) {
         let preferences = DesktopModelCatalogPreferences.shared
+        let choices = selectableModels
         if let provider = preferences.provider(forModelID: id) {
-            if !enabled, visibleModels.count <= 1, visibleModels.contains(where: { $0.id == id }) {
+            if !enabled, choices.count <= 1, choices.contains(where: { $0.id == id }) {
                 return
             }
             preferences.setExternalModelEnabled(providerID: provider.id, modelID: id, enabled: enabled)
@@ -991,7 +1035,7 @@ final class DesktopCodexStore {
             requestOverlayReload()
             return
         }
-        let remaining = visibleModels.map(\.id)
+        let remaining = choices.map(\.id)
         guard preferences.setNativeModelEnabled(id, enabled: enabled, remainingEnabledIDs: remaining) else { return }
         catalogPreferenceRevision += 1
         fallbackSelectionIfNeeded()
@@ -1034,7 +1078,7 @@ final class DesktopCodexStore {
     }
 
     private func fallbackSelectionIfNeeded() {
-        let visible = visibleModels
+        let visible = selectableModels
         if let family = routingMode.autoFamily {
             let hasFamilyModel = visible.contains(where: family.contains)
             if !hasFamilyModel, let first = visible.first {
@@ -1042,6 +1086,7 @@ final class DesktopCodexStore {
             }
             return
         }
+        if selectedModel?.isStandaloneDaybreakModel == true { return }
         if let selectedModelID, visible.contains(where: { $0.id == selectedModelID }) { return }
         if let first = visible.first {
             selectModel(first.id)
@@ -1111,10 +1156,12 @@ final class DesktopCodexStore {
     }
 
     var utilityModelOptions: [DesktopModelOption] {
-        visibleModels.filter { model in
-            model.supportedReasoningEfforts.contains(where: {
-                $0.id.caseInsensitiveCompare(DesktopUtilityModelPreferences.reasoningEffort) == .orderedSame
-            })
+        selectableModels.filter(supportsUtilityReasoning)
+    }
+
+    private func supportsUtilityReasoning(_ model: DesktopModelOption) -> Bool {
+        model.supportedReasoningEfforts.contains {
+            $0.id.caseInsensitiveCompare(DesktopUtilityModelPreferences.reasoningEffort) == .orderedSame
         }
     }
 
@@ -1133,7 +1180,7 @@ final class DesktopCodexStore {
 
     private var resolvedUtilityModel: DesktopModelOption? {
         if let savedID = defaults.string(forKey: DesktopUtilityModelPreferences.modelIDKey),
-           let saved = utilityModelOptions.first(where: { $0.id == savedID }) {
+           let saved = visibleModels.first(where: { $0.id == savedID && supportsUtilityReasoning($0) }) {
             return saved
         }
         let canonical = DesktopUtilityModelPreferences.defaultModelName
@@ -4238,15 +4285,16 @@ final class DesktopCodexStore {
     }
 
     private func presentModelSuggestions() {
-        guard !visibleModels.isEmpty else {
+        let models = selectableModels
+        guard !models.isEmpty else {
             setTransientError("No models are available from the local Codex runtime.", recovery: .reloadModels)
             return
         }
         composerPaletteContext = .models
-        composerSuggestions = visibleModels.map { model in
+        composerSuggestions = models.map { model in
             DesktopComposerSuggestion(
                 kind: .model,
-                title: model.displayName,
+                title: model.userFacingDisplayName,
                 subtitle: model.description,
                 source: model.id
             )
@@ -4578,7 +4626,8 @@ final class DesktopCodexStore {
 
     func selectModel(_ id: String) {
         guard !autoModelSelectionEnabled else { return }
-        guard let model = visibleModels.first(where: { $0.id == id }) ?? models.first(where: { $0.id == id }) else { return }
+        guard let model = visibleModels.first(where: { $0.id == id }) ?? models.first(where: { $0.id == id }),
+              canSelectModel(model) else { return }
         let isNewDirectModel = selectedModelID != model.id
         setRoutingMode(.direct)
         selectedModelID = model.id
@@ -4703,7 +4752,7 @@ final class DesktopCodexStore {
     }
 
     func selectAutoRouting(family: DesktopAutoRouteFamily) {
-        guard !autoModelSelectionEnabled else { return }
+        guard !autoModelSelectionEnabled, !isDaybreakOn else { return }
         setRoutingMode(family == .gpt6 ? .autoGPT6 : .auto)
         updateActiveThreadSettings()
     }
@@ -4725,7 +4774,8 @@ final class DesktopCodexStore {
     }
 
     func selectServiceTier(_ tier: String?) {
-        guard tier == nil || selectedModel?.serviceTiers.contains(where: { $0.id == tier }) == true else { return }
+        guard tier == nil || selectedModel?.serviceTiers.contains(where: { $0.id == tier }) == true,
+              !isDaybreakOn || modelVariantRequest(for: tier) == nil else { return }
         selectedServiceTier = tier
         persistServiceTier(tier)
         updateActiveThreadSettings()
@@ -4926,6 +4976,10 @@ final class DesktopCodexStore {
             planErrorsByID[reference.storageID] = "No model is available to implement this plan."
             return
         }
+        if let issue = daybreakTurnIssue {
+            planErrorsByID[reference.storageID] = issue
+            return
+        }
 
         let payload = DesktopComposerPayload(
             text: "Implement the plan.",
@@ -4940,6 +4994,7 @@ final class DesktopCodexStore {
             interactionMode: .agentic,
             routingMode: routingMode,
             autoRoutePlan: route.autoRoutePlan,
+            daybreakEnabled: outgoingDaybreakChoice,
             planHandoff: DesktopPlanHandoff(
                 source: reference,
                 approvedMarkdown: artifact.approvedMarkdown
@@ -5027,6 +5082,10 @@ final class DesktopCodexStore {
     func sendDraft(willSubmit: ((DesktopComposerPayload) -> Void)? = nil) {
         let message = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard canSend else { return }
+        if let issue = daybreakTurnIssue {
+            transientError = issue
+            return
+        }
         let autoPlan: DesktopAutoRoutePlan?
         if let family = routingMode.autoFamily, !autoModelSelectionEnabled && !hasLockedAutoModel {
             guard hasLoadedAutoCapabilities else {
@@ -5060,7 +5119,8 @@ final class DesktopCodexStore {
             ),
             interactionMode: interactionMode,
             routingMode: (autoModelSelectionEnabled || hasLockedAutoModel) ? .direct : routingMode,
-            autoRoutePlan: autoPlan
+            autoRoutePlan: autoPlan,
+            daybreakEnabled: outgoingDaybreakChoice
         )
 
         payload.autoModelSelectionEnabled = autoModelSelectionEnabled || hasLockedAutoModel
@@ -5958,6 +6018,7 @@ final class DesktopCodexStore {
     }
 
     private func loadModels() async {
+        let catalogGeneration = client.runtimeGeneration
         do {
             var rows: [[String: Any]] = []
             var cursor: String?
@@ -5979,6 +6040,7 @@ final class DesktopCodexStore {
             let nativeLimits = await Task.detached(priority: .utility) {
                 DesktopExternalModelCatalog.nativeContextLimits()
             }.value
+            guard catalogGeneration == client.runtimeGeneration else { return }
             let externalRecords = DesktopModelCatalogPreferences.shared.providers.flatMap(\.models)
             var resolvedLimits: [String: DesktopContextWindowLimits] = [:]
             for model in parsed {
@@ -5991,13 +6053,16 @@ final class DesktopCodexStore {
             }
             contextLimitsByModelID = resolvedLimits
             models = parsed
+            daybreakCatalogGeneration = catalogGeneration
             let visible = visibleModels
-            guard let model = visible.first(where: { $0.id == selectedModelID })
-                    ?? visible.first(where: \.isDefault)
-                    ?? visible.first
-                    ?? parsed.first(where: { $0.id == selectedModelID })
-                    ?? parsed.first(where: \.isDefault)
-                    ?? parsed.first else {
+            let manualModels = parsed.filter { !$0.isStandaloneDaybreakModel }
+            guard let model = parsed.first(where: { $0.id == selectedModelID && $0.isStandaloneDaybreakModel })
+                    ?? visible.first(where: { $0.id == selectedModelID })
+                    ?? visible.first(where: { $0.isDefault && !$0.isStandaloneDaybreakModel })
+                    ?? visible.first(where: { !$0.isStandaloneDaybreakModel })
+                    ?? manualModels.first(where: { $0.id == selectedModelID })
+                    ?? manualModels.first(where: \.isDefault)
+                    ?? manualModels.first else {
                 setTransientError("No models are available from the local Codex runtime.", recovery: .reloadModels)
                 return
             }
@@ -6013,7 +6078,7 @@ final class DesktopCodexStore {
             // Catalog refresh validates global defaults independently of the
             // currently selected chat, which may carry a project override.
             if let globalModel = parsed.first(where: { $0.id == defaults.string(forKey: "VeoDesktop.modelID") })
-                ?? parsed.first(where: \.isDefault) ?? parsed.first {
+                ?? manualModels.first(where: \.isDefault) ?? manualModels.first {
                 defaults.set(globalModel.id, forKey: "VeoDesktop.modelID")
                 if !globalModel.supportedReasoningEfforts.contains(where: { $0.id == defaults.string(forKey: "VeoDesktop.reasoningEffort") }) {
                     defaults.set(globalModel.defaultReasoningEffort, forKey: "VeoDesktop.reasoningEffort")
@@ -6187,9 +6252,14 @@ final class DesktopCodexStore {
         }
 
         if capabilities.supports(method: "config/read") {
+            let configGeneration = client.runtimeGeneration
             do {
                 let response = try await client.request(method: "config/read", params: [:])
                 let config = response["config"] as? [String: Any] ?? [:]
+                if configGeneration == client.runtimeGeneration {
+                    daybreakConfigGeneration = configGeneration
+                    daybreakConfigDefault = config["daybreak"] as? Bool
+                }
                 let keys = ["model", "modelProvider", "approvalPolicy", "sandboxMode", "serviceTier", "personality"]
                 codexConfigDetails = keys.compactMap { key in
                     guard let value = config[key], !(value is NSNull) else { return nil }
@@ -6200,6 +6270,8 @@ final class DesktopCodexStore {
                 }
             } catch {
                 codexConfigDetails = []
+                daybreakConfigGeneration = nil
+                daybreakConfigDefault = nil
                 failures.append("Codex configuration")
             }
         } else {
@@ -7703,6 +7775,15 @@ final class DesktopCodexStore {
                     }
                 }
             }
+            if let enabled = payload.daybreakEnabled {
+                let program: DesktopDaybreakProgram = enabled ? .daybreakBlue : .standard
+                guard daybreakCatalogGeneration == client.runtimeGeneration, !payload.autoModelSelectionEnabled,
+                      payload.routingMode == .direct, autoModelChoices[uiThreadID] == nil, deliveryProviderID == nil,
+                      modelOption(for: deliveryModel)?.supportsCyberProgram(program) == true else {
+                    throw CodexAppServerClientError.invalidInput("The saved Daybreak choice is unavailable for this model or Codex runtime.")
+                }
+                turnParams["cyberAccessProgram"] = program.rawValue
+            }
             let response = try await client.request(
                 method: "turn/start",
                 params: turnParams
@@ -7918,6 +7999,8 @@ final class DesktopCodexStore {
         uiThreadID: String,
         runtimeThreadID: String
     ) async {
+        // Server queue items carry only input. The local queue preserves the program until turn/start.
+        guard payload.daybreakEnabled == nil else { return }
         do {
             _ = try await appServer0153.addServerQueue(
                 payload, runtimeThreadID: runtimeThreadID, uiThreadID: uiThreadID

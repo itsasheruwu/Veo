@@ -15,6 +15,7 @@ struct DesktopTerminalView: NSViewRepresentable {
     /// Full terminal workspace panes should take keyboard focus when activated.
     /// Docked terminals remain click-to-focus so they do not steal composer focus.
     var requestsFocus = false
+    var onAddContext: ((String) -> Void)?
     @Binding var isFileDropTargeted: Bool
 
     func makeCoordinator() -> Coordinator {
@@ -22,7 +23,8 @@ struct DesktopTerminalView: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> DesktopTerminalDropHostView {
-        let terminalView = TerminalView(frame: .zero)
+        let terminalView = ContextTerminalView(frame: .zero)
+        terminalView.onAddContext = onAddContext
         terminalView.terminalDelegate = context.coordinator
         terminalView.configureNativeColors()
         terminalView.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
@@ -43,6 +45,7 @@ struct DesktopTerminalView: NSViewRepresentable {
     }
 
     func updateNSView(_ host: DesktopTerminalDropHostView, context: Context) {
+        (host.terminalView as? ContextTerminalView)?.onAddContext = onAddContext
         context.coordinator.hub = hub
         context.coordinator.isFileDropTargeted = $isFileDropTargeted
         if context.coordinator.session !== session {
@@ -466,5 +469,22 @@ final class DesktopTerminalDropHostView: NSView {
         let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
         if UUID(uuidString: trimmed) != nil { return nil }
         return string
+    }
+}
+
+private final class ContextTerminalView: TerminalView {
+    var onAddContext: ((String) -> Void)?
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        guard getSelection()?.isEmpty == false, onAddContext != nil else { return super.menu(for: event) }
+        let menu = super.menu(for: event) ?? NSMenu()
+        let item = NSMenuItem(title: "Add selection to chat", action: #selector(addSelectionToChat), keyEquivalent: "")
+        item.target = self
+        menu.addItem(item)
+        return menu
+    }
+
+    @objc private func addSelectionToChat() {
+        if let selection = getSelection() { onAddContext?(selection) }
     }
 }

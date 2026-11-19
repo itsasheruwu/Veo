@@ -262,6 +262,10 @@ actor VeoThreadStore {
             try stepDone(statement)
         }
         try deletePlanArtifacts(threadID: veoID)
+        let summaries = try prepare("DELETE FROM turn_presentations WHERE thread_key = ?;")
+        defer { sqlite3_finalize(summaries) }
+        try bindText(summaries, 1, veoID)
+        try stepDone(summaries)
     }
 
     func loadPlanArtifacts(threadID: String) throws -> [DesktopPlanArtifact] {
@@ -475,6 +479,36 @@ actor VeoThreadStore {
         return items
     }
 
+    func recordTurnPresentation(_ presentation: DesktopTurnPresentation, threadID: String) throws {
+        try openIfNeeded()
+        let data = try JSONEncoder().encode(presentation)
+        let statement = try prepare("""
+            INSERT INTO turn_presentations (thread_key, turn_id, presentation)
+            VALUES (?, ?, ?)
+            ON CONFLICT (thread_key, turn_id) DO UPDATE SET presentation = excluded.presentation;
+            """)
+        defer { sqlite3_finalize(statement) }
+        try bindText(statement, 1, threadID)
+        try bindText(statement, 2, presentation.id)
+        try bindText(statement, 3, String(decoding: data, as: UTF8.self))
+        try stepDone(statement)
+    }
+
+    func loadTurnPresentations(threadID: String) throws -> [DesktopTurnPresentation] {
+        try openIfNeeded()
+        let statement = try prepare("SELECT presentation FROM turn_presentations WHERE thread_key = ?;")
+        defer { sqlite3_finalize(statement) }
+        try bindText(statement, 1, threadID)
+        var values: [DesktopTurnPresentation] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            if let json = columnText(statement, 0),
+               let presentation = try? JSONDecoder().decode(DesktopTurnPresentation.self, from: Data(json.utf8)) {
+                values.append(presentation)
+            }
+        }
+        return values
+    }
+
     // MARK: - Private
 
     private func loadLocalPresentationItems(veoID: String) throws -> [PersistedItem] {
@@ -573,6 +607,14 @@ actor VeoThreadStore {
             implementation_turn_id TEXT,
             updated_at REAL NOT NULL,
             PRIMARY KEY (thread_key, item_id)
+        );
+        """)
+        try exec("""
+        CREATE TABLE IF NOT EXISTS turn_presentations (
+            thread_key TEXT NOT NULL,
+            turn_id TEXT NOT NULL,
+            presentation TEXT NOT NULL,
+            PRIMARY KEY (thread_key, turn_id)
         );
         """)
         try exec("CREATE INDEX IF NOT EXISTS idx_threads_archived_updated ON threads(is_archived, updated_at DESC);")

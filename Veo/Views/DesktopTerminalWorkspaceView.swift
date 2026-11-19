@@ -377,6 +377,7 @@ private struct DesktopTerminalSplitStack: View {
 }
 
 private struct DesktopTerminalWorkspaceLeaf: View {
+    @Environment(\.terminalContextInsertion) private var insertTerminalContext
     @ObservedObject var session: DesktopLocalTerminalSession
     @ObservedObject var hub: DesktopLocalTerminalHub
     let isFocused: Bool
@@ -524,6 +525,7 @@ private struct DesktopTerminalWorkspaceLeaf: View {
                         hub: hub,
                         viewportSize: geo.size,
                         requestsFocus: isFocused,
+                        onAddContext: insertTerminalContext,
                         isFileDropTargeted: $isFileDropTargeted
                     )
                         .frame(width: geo.size.width, height: geo.size.height)
@@ -556,5 +558,16 @@ private struct DesktopTerminalWorkspaceLeaf: View {
         if hub.agentCLIPermissionPrompt?.sessionID == session.id { return 5 }
         if isFileDropTargeted { return 8 }
         return 0
+    }
+}
+
+private struct TerminalContextInsertionKey: EnvironmentKey {
+    static let defaultValue: ((String) -> Void)? = nil
+}
+
+extension EnvironmentValues {
+    var terminalContextInsertion: ((String) -> Void)? {
+        get { self[TerminalContextInsertionKey.self] }
+        set { self[TerminalContextInsertionKey.self] = newValue }
     }
 }

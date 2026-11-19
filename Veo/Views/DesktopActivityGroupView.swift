@@ -46,6 +46,7 @@ enum DesktopTimelineEntry: Identifiable, Equatable {
                 imageItems.append(item)
             case .reasoning, .command, .fileChange, .activity, .planUpdate:
                 flushImages()
+                if let previous = activityItems.last, previous.turnID != item.turnID { flushActivity() }
                 activityItems.append(item)
             case .plan:
                 flushActivity()
@@ -73,6 +74,35 @@ struct DesktopActivityGroup: Identifiable, Equatable {
 
     var id: String { "activity-group-\(items.first?.id ?? "empty")" }
     var itemIDs: [String] { items.map(\.id) }
+    var hasFailure: Bool {
+        items.contains { item in
+            let status = (item.status ?? "").lowercased()
+            return status.contains("fail") || status.contains("error") || status.contains("cancel")
+                || item.toolMetadata?.errorMessage?.isEmpty == false
+                || item.toolMetadata?.exitCode.map { $0 != 0 } == true
+        }
+    }
+
+    var completedSummary: String? {
+        if let failed = items.first(where: {
+            let status = ($0.status ?? "").lowercased()
+            return status.contains("fail") || status.contains("error")
+                || $0.toolMetadata?.errorMessage?.isEmpty == false
+                || $0.toolMetadata?.exitCode.map { $0 != 0 } == true
+        }) {
+            return "Failed: " + failed.title
+        }
+        let files = items.filter { $0.kind == .fileChange }
+        let paths = Set(files.filter { $0.body != "Updated project files" }.flatMap { $0.body.split(separator: "\n") })
+        let commands = items.count { $0.kind == .command }
+        let searches = items.count { $0.title.localizedCaseInsensitiveContains("web search") }
+        var summary: [String] = []
+        if paths.count > 0 { summary.append(paths.count == 1 ? "Edited 1 file" : "Edited \(paths.count) files") }
+        else if !files.isEmpty { summary.append("Updated files") }
+        if commands > 0 { summary.append(commands == 1 ? "Ran 1 command" : "Ran \(commands) commands") }
+        if searches > 0 { summary.append(searches == 1 ? "Searched the web" : "Ran \(searches) web searches") }
+        return summary.isEmpty ? nil : summary.joined(separator: " · ")
+    }
 }
 
 struct DesktopViewedImagesGroup: Identifiable, Equatable {
@@ -106,30 +136,18 @@ struct DesktopActivityGroupView: View {
         }
     }
 
-    private var hasFailure: Bool {
-        group.items.contains { item in
-            let status = (item.status ?? "").lowercased()
-            return status.contains("fail") || status.contains("error") || status.contains("cancel")
-                || item.toolMetadata?.errorMessage?.isEmpty == false
-        }
-    }
+    private var hasFailure: Bool { group.hasFailure }
 
     private var title: String {
         let tools = group.items.filter { $0.kind != .reasoning }
         let reasoningCount = group.items.count - tools.count
-        let webCount = tools.filter { $0.title.localizedCaseInsensitiveContains("web search") }.count
-        let commandCount = tools.filter { $0.kind == .command }.count
-        let fileCount = tools.filter { $0.kind == .fileChange }.count
 
         if isActive {
             if let latestTool = tools.last { return activeTitle(for: latestTool) }
             return "Thinking"
         }
-        if hasFailure { return "Work stopped with an issue" }
+        if let summary = group.completedSummary { return summary }
         if tools.isEmpty { return reasoningCount == 1 ? "Thought through the approach" : "Reasoned through the task" }
-        if webCount == tools.count { return webCount == 1 ? "Searched the web" : "Researched on the web" }
-        if commandCount == tools.count { return commandCount == 1 ? "Ran a command" : "Ran \(commandCount) commands" }
-        if fileCount == tools.count { return fileCount == 1 ? "Updated files" : "Updated files" }
         if tools.count == 1, let tool = tools.first { return completedTitle(for: tool) }
         return "Worked through the task"
     }

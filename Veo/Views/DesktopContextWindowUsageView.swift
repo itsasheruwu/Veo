@@ -1,5 +1,5 @@
 // FILE: DesktopContextWindowUsageView.swift
-// Purpose: Shows live context-window usage beside the composer send button.
+// Purpose: Shows live context-window usage beside the composer model picker.
 // Layer: Desktop app view
 
 import SwiftUI
@@ -66,6 +66,7 @@ struct DesktopContextWindowUsageView: View {
                             .mask(surgeMask)
                     }
                 }
+                .frame(minWidth: 24, minHeight: 24)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -95,7 +96,7 @@ struct DesktopContextWindowUsageView: View {
                 .monospacedDigit()
                 .contentTransition(.numericText(value: displayedFraction))
                 .foregroundStyle(usageColor)
-                .frame(minWidth: 30, alignment: .trailing)
+                .frame(minWidth: 28, alignment: .center)
 
         case .circle:
             ZStack {
@@ -132,7 +133,7 @@ struct DesktopContextWindowUsageView: View {
             Text("\(displayedPercent)%")
                 .font(.system(size: 10.5, weight: .semibold, design: .rounded))
                 .monospacedDigit()
-                .frame(minWidth: 30, alignment: .trailing)
+                .frame(minWidth: 28, alignment: .center)
         case .circle:
             Circle()
                 .stroke(lineWidth: 2.5)

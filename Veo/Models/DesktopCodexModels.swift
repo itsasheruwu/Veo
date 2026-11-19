@@ -1147,7 +1147,7 @@ struct DesktopTokenUsage: Equatable {
     }
 }
 
-struct DesktopFilePatch: Identifiable, Hashable {
+struct DesktopFilePatch: Identifiable, Hashable, Codable {
     let path: String
     let diff: String
     let kind: String
@@ -1166,7 +1166,7 @@ struct DesktopFilePatch: Identifiable, Hashable {
     }
 }
 
-struct DesktopTurnDiff: Equatable {
+struct DesktopTurnDiff: Equatable, Codable {
     var turnID: String?
     var unifiedDiff: String = ""
     var files: [DesktopFilePatch] = []

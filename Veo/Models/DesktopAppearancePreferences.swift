@@ -50,6 +50,8 @@ enum DesktopModelPickerAppearance: String, CaseIterable, Identifiable {
     case native
     case sliderAdvanced
 
+    static let defaultAppearance: Self = .sliderAdvanced
+
     var id: Self { self }
 
     var title: String {
@@ -180,8 +182,8 @@ enum DesktopAppearancePreferences {
     }
 
     static var modelPickerAppearance: DesktopModelPickerAppearance {
-        let raw = defaults.string(forKey: modelPickerAppearanceKey) ?? DesktopModelPickerAppearance.native.rawValue
-        return DesktopModelPickerAppearance(rawValue: raw) ?? .native
+        let raw = defaults.string(forKey: modelPickerAppearanceKey) ?? DesktopModelPickerAppearance.defaultAppearance.rawValue
+        return DesktopModelPickerAppearance(rawValue: raw) ?? .defaultAppearance
     }
 
     static var viewedImagesInitialExpansion: DesktopViewedImagesInitialExpansion {

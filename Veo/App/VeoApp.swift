@@ -19,6 +19,7 @@ struct VeoApp: App {
         DesktopAppearanceMode.dark.rawValue
 
     init() {
+        DesktopModelPickerUpgrade.applyIfNeeded()
         DesktopNotificationPreferences.registerDefaults()
         DesktopBrowserPreferences.registerDefaults()
         DesktopAutoContinuationPreferences.registerDefaults()

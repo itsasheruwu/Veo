@@ -18,6 +18,7 @@ enum DesktopComposerCommandAction: Hashable {
     case temporaryChat
     case compact
     case review
+    case sideChat
     case rename
     case archive
     case fork
@@ -43,6 +44,7 @@ enum DesktopComposerCommandAction: Hashable {
 
 enum DesktopComposerCommandDestination: Hashable {
     case review
+    case sideChat
     case settings(DesktopSettingsCategory)
     case changes
     case terminal
@@ -72,6 +74,7 @@ struct DesktopComposerCommand: Identifiable, Hashable {
         .init(name: "reasoning", description: "Choose reasoning effort in the command palette", action: .reasoning, systemImage: "brain"),
         .init(name: "permissions", description: "Choose workspace access in the command palette", action: .permissions, systemImage: "shield"),
         .init(name: "review", description: "Review current changes and find issues", action: .review, systemImage: "doc.text.magnifyingglass", supportsInlineArguments: true),
+        .init(name: "btw", description: "Ask a side question", action: .sideChat, systemImage: "bubble.left.and.bubble.right", supportsInlineArguments: true),
         .init(name: "rename", description: "Rename the current chat in Veo", action: .rename, systemImage: "pencil", supportsInlineArguments: true),
         .init(name: "new", description: "Start a new chat", action: .newChat, systemImage: "square.and.pencil", supportsInlineArguments: true),
         .init(name: "temporary", description: "Make this unused projectless chat temporary", action: .temporaryChat, systemImage: "timer"),

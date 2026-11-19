@@ -289,6 +289,7 @@ struct DesktopInteractiveTerminalPanel: View {
                         session: session,
                         hub: hub,
                         viewportSize: geo.size,
+                        onAddContext: store.addTerminalContext,
                         isFileDropTargeted: $isFileDropTargeted
                     )
                         .frame(width: geo.size.width, height: geo.size.height)

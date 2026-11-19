@@ -319,10 +319,11 @@ private struct DesktopTurnPlanPopover: View {
 
 }
 
-private struct DesktopTurnChangesPopover: View {
+struct DesktopTurnChangesPopover: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let summary: DesktopTurnDiffSummary
     let material: DesktopComposerMaterial
+    var isInInspector = false
     @State private var selectedPath: String?
 
     private var selectedFile: DesktopTurnDiffSummary.FileSummary? {
@@ -376,7 +377,7 @@ private struct DesktopTurnChangesPopover: View {
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-        .frame(width: 500)
+        .frame(width: isInInspector ? nil : 500)
         .modifier(DesktopFloatingMaterialSurface(material: material))
         .padding(8)
         .accessibilityElement(children: .contain)
@@ -420,7 +421,7 @@ private struct DesktopCompactPatchView: View {
     }
 }
 
-private struct DesktopTurnDiffSummary {
+struct DesktopTurnDiffSummary {
     struct FileSummary: Identifiable {
         let path: String
         let patch: String
@@ -436,10 +437,11 @@ private struct DesktopTurnDiffSummary {
     var deletions: Int { files.reduce(0) { $0 + $1.deletions } }
 
     init(diff: DesktopTurnDiff) {
-        if !diff.files.isEmpty {
-            files = diff.files.map { Self.makeFile(path: $0.path, patch: $0.diff) }
+        let unified = Self.parseUnifiedDiff(diff.unifiedDiff)
+        if !unified.isEmpty {
+            files = unified
         } else {
-            files = Self.parseUnifiedDiff(diff.unifiedDiff)
+            files = diff.files.map { Self.makeFile(path: $0.path, patch: $0.diff) }
         }
     }
 
@@ -477,5 +479,28 @@ private struct DesktopTurnDiffSummary {
         }
         appendCurrent()
         return result.isEmpty ? [makeFile(path: "Changes", patch: diff)] : result
+    }
+}
+
+struct DesktopTurnDiffLink: View {
+    let diff: DesktopTurnDiff
+    let open: () -> Void
+
+    var body: some View {
+        let summary = DesktopTurnDiffSummary(diff: diff)
+        Button(action: open) {
+            HStack(spacing: 8) {
+                Label(summary.files.count == 1 ? "1 file changed" : "\(summary.files.count) files changed",
+                      systemImage: "doc.text")
+                Text("+\(summary.additions)").foregroundStyle(.green)
+                Text("−\(summary.deletions)").foregroundStyle(.red)
+                Text("Review")
+            }
+            .font(.caption)
+            .monospacedDigit()
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .accessibilityHint("Open the changes from this turn")
     }
 }

@@ -40,7 +40,9 @@ struct DesktopDiffCommentEditor: View {
                         let excerpt = lines.map { line in
                             "old:\(line.oldLineNumber.map(String.init) ?? "–") new:\(line.newLineNumber.map(String.init) ?? "–") \(line.text)"
                         }.joined(separator: "\n")
-                        addToDraft("Review comment on \(path) (\(side.title.lowercased())):\n\(comment.trimmingCharacters(in: .whitespacesAndNewlines))\n\nSelected patch lines:\n" + excerpt.split(separator: "\n", omittingEmptySubsequences: false).map { "> \($0)" }.joined(separator: "\n"))
+                        let label = "Review · " + path + (lines.first?.newLineNumber.map { ":\($0)" } ?? "")
+                        let reference = DesktopInlineContext.reference(label, kind: "review", value: path, line: lines.first?.newLineNumber)
+                        addToDraft("\(reference) (\(side.title.lowercased())):\n\(comment.trimmingCharacters(in: .whitespacesAndNewlines))\n\nSelected patch lines:\n" + excerpt.split(separator: "\n", omittingEmptySubsequences: false).map { "> \($0)" }.joined(separator: "\n"))
                         comment = ""; selection = []; expanded = false
                     }.disabled(selection.isEmpty || comment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }

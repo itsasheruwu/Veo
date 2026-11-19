@@ -360,7 +360,7 @@ section { padding: 88px 0; }
 
 .dl-hero img { width: 88px; height: 88px; border-radius: 20px; flex: none; }
 .dl-hero .meta { flex: 1; min-width: 240px; }
-.dl-hero .actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.download-actions { display: flex; gap: 10px; flex-wrap: wrap; }
 
 .hash {
   font-family: var(--mono);
@@ -477,9 +477,17 @@ details p { color: var(--muted); font-size: 14.5px; margin-top: 10px; }
 
 @media (max-width: 620px) {
   section { padding: 60px 0; }
-  .grid-3, .grid-2, .keys { grid-template-columns: 1fr; }
+  .grid-3, .grid-2, .keys { grid-template-columns: minmax(0, 1fr); }
   .nav-links { gap: 16px; }
   .nav-links .hide-sm { display: none; }
   .hero { padding: 56px 0 30px; }
   .dl-hero { padding: 22px; }
+  .dl-hero .meta { min-width: min(240px, 100%); }
+  .download-table th, .download-table td { padding: 10px 8px; overflow-wrap: anywhere; }
+  .download-table td:first-child { white-space: normal; }
+}
+
+@media (max-width: 380px) {
+  .nav-inner { gap: 8px; padding-inline: 10px; }
+  .nav-links { gap: 6px; }
 }

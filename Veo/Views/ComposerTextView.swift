@@ -22,6 +22,9 @@ struct ComposerTextView: NSViewRepresentable {
     var onTextViewReady: (NSTextView) -> Void = { _ in }
     /// Moves the active autocomplete row. Returns false when no palette is open.
     var onMoveAutocomplete: (Int) -> Bool = { _ in false }
+    var onSelection: (String, NSRange) -> Void = { _, _ in }
+    var onOpenContext: (URL) -> Void = { _ in }
+    var onRecallPrompt: (Int) -> Bool = { _ in false }
     /// Accepts the active autocomplete row. Returns false when no palette is open.
     var onAcceptAutocomplete: () -> Bool = { false }
     /// Closes autocomplete without changing the draft. Returns false when no palette is open.
@@ -34,7 +37,8 @@ struct ComposerTextView: NSViewRepresentable {
     func makeNSView(context: Context) -> NSScrollView {
         let textView = ComposerNSTextView()
         textView.delegate = context.coordinator
-        textView.isRichText = false
+        textView.isRichText = true
+        textView.isAutomaticLinkDetectionEnabled = false
         textView.importsGraphics = false
         textView.allowsUndo = true
         textView.drawsBackground = false
@@ -87,13 +91,20 @@ struct ComposerTextView: NSViewRepresentable {
             needsDisplay = true
         }
 
-        if textView.string != text {
-            let selected = textView.selectedRange()
-            textView.string = text
+        let previousSource = textView.sourceText()
+        if (previousSource != text || !DesktopInlineContext.scan(textView.string).isEmpty) && !textView.hasMarkedText() {
+            let selected = textView.sourceSelection()
             let limit = (text as NSString).length
-            textView.setSelectedRange(NSRange(location: min(selected.location, limit), length: 0))
+            let oldLength = (previousSource as NSString).length
+            let shouldAdvance = selected.location == oldLength || (text as NSString).substring(to: min(selected.location, limit))
+                == (previousSource as NSString).substring(to: min(selected.location, oldLength))
+            let offset = shouldAdvance ? max(0, selected.location + limit - oldLength) : selected.location
+            let rendered = ComposerNSTextView.render(text, font: desiredFont)
+            textView.textStorage?.setAttributedString(rendered)
+            textView.setSelectedRange(NSRange(location: textView.visibleOffset(min(offset, limit)), length: 0))
             needsDisplay = true
         }
+        textView.typingAttributes = [.font: desiredFont, .foregroundColor: NSColor.labelColor]
         if needsDisplay {
             textView.needsDisplay = true
         }
@@ -136,16 +147,28 @@ struct ComposerTextView: NSViewRepresentable {
         }
 
         func textDidChange(_ notification: Notification) {
-            guard let textView = notification.object as? NSTextView else { return }
-            parent.text = textView.string
+            guard let textView = notification.object as? ComposerNSTextView else { return }
+            parent.text = textView.sourceText()
+            parent.onSelection(parent.text, textView.sourceSelection())
+        }
+
+        func textViewDidChangeSelection(_ notification: Notification) {
+            guard let textView = notification.object as? ComposerNSTextView else { return }
+            parent.onSelection(textView.sourceText(), textView.sourceSelection())
+        }
+
+        func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
+            guard let url = link as? URL, ["veo-context", "veo-quote"].contains(url.scheme ?? "") else { return false }
+            parent.onOpenContext(url)
+            return true
         }
 
         func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
             switch commandSelector {
             case #selector(NSResponder.moveUp(_:)):
-                return parent.onMoveAutocomplete(-1)
+                return parent.onMoveAutocomplete(-1) || (!textView.hasMarkedText() && textView.selectedRange().length == 0 && parent.onRecallPrompt(-1))
             case #selector(NSResponder.moveDown(_:)):
-                return parent.onMoveAutocomplete(1)
+                return parent.onMoveAutocomplete(1) || (!textView.hasMarkedText() && textView.selectedRange().length == 0 && parent.onRecallPrompt(1))
             case #selector(NSResponder.insertTab(_:)):
                 return parent.onMoveAutocomplete(1)
             case #selector(NSResponder.cancelOperation(_:)):
@@ -172,6 +195,66 @@ struct ComposerTextView: NSViewRepresentable {
 private final class ComposerNSTextView: NSTextView {
     var placeholder: String = ""
     var placeholderColor: NSColor = .tertiaryLabelColor
+
+    static func render(_ source: String, font: NSFont) -> NSAttributedString {
+        let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.labelColor]
+        let output = NSMutableAttributedString(string: source, attributes: attributes)
+        for context in DesktopInlineContext.scan(source).reversed() {
+            let chip = NSMutableAttributedString(attachment: DesktopComposerContextAttachment(context: context, fontSize: font.pointSize))
+            chip.addAttributes([.link: context.url, .font: font], range: NSRange(location: 0, length: 1))
+            output.replaceCharacters(in: context.range, with: chip)
+        }
+        return output
+    }
+
+    func sourceText(in range: NSRange? = nil) -> String {
+        guard let storage = textStorage else { return string }
+        let range = range ?? NSRange(location: 0, length: storage.length)
+        let text = storage.string as NSString
+        var result = ""
+        storage.enumerateAttribute(.attachment, in: range) { attachment, range, _ in
+            if let reference = (attachment as? DesktopComposerContextAttachment)?.context {
+                result += reference.source
+            } else {
+                result += text.substring(with: range)
+            }
+        }
+        return result
+    }
+
+    func sourceSelection() -> NSRange {
+        let selection = selectedRange()
+        guard selection.location != NSNotFound else { return NSRange(location: (sourceText() as NSString).length, length: 0) }
+        let start = (sourceText(in: NSRange(location: 0, length: selection.location)) as NSString).length
+        return NSRange(location: start, length: (sourceText(in: selection) as NSString).length)
+    }
+
+    func visibleOffset(_ sourceOffset: Int) -> Int {
+        let text = sourceText()
+        var offset = sourceOffset
+        for context in DesktopInlineContext.scan(text) {
+            if sourceOffset >= NSMaxRange(context.range) {
+                offset -= context.range.length - 1
+            } else if sourceOffset >= context.range.location {
+                offset -= sourceOffset - context.range.location
+                break
+            } else {
+                break
+            }
+        }
+        return offset
+    }
+
+    override func copy(_ sender: Any?) {
+        guard selectedRange().length > 0 else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(sourceText(in: selectedRange()), forType: .string)
+    }
+
+    override func paste(_ sender: Any?) {
+        pasteAsPlainText(sender)
+    }
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)

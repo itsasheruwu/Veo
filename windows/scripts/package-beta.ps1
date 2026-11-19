@@ -29,7 +29,7 @@ $properties = @(
 
 Push-Location -LiteralPath $windowsRoot
 try {
-    dotnet restore $project --locked-mode -r win-x64 @properties -m:1
+    dotnet restore $project --locked-mode -p:Platform=x64 -m:1
     if ($LASTEXITCODE -ne 0) { throw 'The x64 beta dependencies could not be restored in locked mode.' }
     dotnet publish $project --no-restore -c Release -r win-x64 --self-contained @properties -m:1 -o $payload
     if ($LASTEXITCODE -ne 0) { throw 'The portable x64 beta build failed.' }

@@ -10,10 +10,12 @@ final class DesktopModelCatalogPreferences {
     static let shared = DesktopModelCatalogPreferences()
 
     static let includeExternalModelsKey = "VeoDesktop.includeExternalModels"
+    static let includeGPT56ModelsKey = "VeoDesktop.includeGPT56Models"
     static let disabledModelIDsKey = "VeoDesktop.disabledModelIDs"
     static let providersKey = "VeoDesktop.externalProviders"
 
     private(set) var includeExternalModels: Bool
+    private(set) var includeGPT56Models: Bool
     private(set) var disabledModelIDs: Set<String>
     private(set) var providers: [DesktopConnectedProvider]
     private let defaults: UserDefaults
@@ -21,6 +23,7 @@ final class DesktopModelCatalogPreferences {
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         includeExternalModels = defaults.bool(forKey: Self.includeExternalModelsKey)
+        includeGPT56Models = defaults.bool(forKey: Self.includeGPT56ModelsKey)
         if let stored = defaults.array(forKey: Self.disabledModelIDsKey) as? [String] {
             disabledModelIDs = Set(stored)
         } else {
@@ -40,8 +43,8 @@ final class DesktopModelCatalogPreferences {
         return providers.flatMap(\.enabledModels)
     }
 
-    func isNativeModelEnabled(_ id: String) -> Bool {
-        !disabledModelIDs.contains(id)
+    func isNativeModelEnabled(_ model: DesktopModelOption) -> Bool {
+        (includeGPT56Models || !model.isGPT56Family) && !disabledModelIDs.contains(model.id)
     }
 
     func isExternalModelEnabled(_ id: String) -> Bool {
@@ -67,6 +70,11 @@ final class DesktopModelCatalogPreferences {
     func setIncludeExternalModels(_ enabled: Bool) {
         includeExternalModels = enabled
         defaults.set(enabled, forKey: Self.includeExternalModelsKey)
+    }
+
+    func setIncludeGPT56Models(_ enabled: Bool) {
+        includeGPT56Models = enabled
+        defaults.set(enabled, forKey: Self.includeGPT56ModelsKey)
     }
 
     func upsertProvider(_ provider: DesktopConnectedProvider) {

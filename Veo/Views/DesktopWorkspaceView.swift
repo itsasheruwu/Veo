@@ -4251,6 +4251,8 @@ private struct DesktopComposerView: View {
 
                     Spacer(minLength: 4)
                     sendNewlineHint
+                    DesktopComposerModePills(store: store)
+                        .layoutPriority(1)
                     Button {
                         submitDraft()
                     } label: {
@@ -4314,8 +4316,6 @@ private struct DesktopComposerView: View {
                             .accessibilityLabel("Plan ready. Scroll to plan")
                             .layoutPriority(1)
                         }
-
-                        DesktopComposerModePills(store: store)
 
                         if store.realtimeVoiceEnabled,
                            store.capabilities.supports(.realtimeVoice),
@@ -4488,7 +4488,6 @@ private struct DesktopComposerView: View {
 
     private var hasSecondaryComposerControls: Bool {
         store.isBusyTurn || reviewPlan != nil
-            || store.isPlanModeEnabled || store.isDebugModeEnabled || store.isGoalModeEnabled
             || (store.realtimeVoiceEnabled && store.capabilities.supports(.realtimeVoice) && store.selectedThreadID != nil)
             || !store.selectedQueuedDrafts.isEmpty
             || (showsContextWindowUsage && store.selectedThreadID != nil && store.selectedTokenUsage?.fractionUsed != nil)

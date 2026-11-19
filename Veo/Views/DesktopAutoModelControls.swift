@@ -71,52 +71,46 @@ final class DesktopModelMenuToggle: NSView {
         static let iconInset: CGFloat = 9
         static let iconSize: CGFloat = 14
         static let height: CGFloat = 30
-        static let detailHeight: CGFloat = 43
     }
 
     private let toggle = NSSwitch()
     private let title: NSTextField
-    private let detail: NSTextField?
     private let icon = NSImageView()
     private let onChange: (Bool) -> Void
 
     init(title: String, systemImage: String, accessibilityLabel: String, enabled: Bool,
-         available: Bool, detail: String? = nil, onChange: @escaping (Bool) -> Void) {
+         available: Bool, onChange: @escaping (Bool) -> Void) {
         self.title = NSTextField(labelWithString: title)
-        self.detail = detail.map(NSTextField.init(labelWithString:))
         self.onChange = onChange
-        super.init(frame: NSRect(x: 0, y: 0, width: 244,
-                                 height: detail == nil ? Metrics.height : Metrics.detailHeight))
+        super.init(frame: NSRect(x: 0, y: 0, width: 244, height: Metrics.height))
         autoresizingMask = [.width]
         self.title.font = .menuFont(ofSize: 0)
-        self.title.textColor = available ? .labelColor : .secondaryLabelColor
         addSubview(self.title)
-        if let detail = self.detail {
-            detail.font = .systemFont(ofSize: 10.5)
-            detail.textColor = .secondaryLabelColor
-            detail.cell?.lineBreakMode = .byTruncatingTail
-            addSubview(detail)
-        }
         icon.image = NSImage(systemSymbolName: systemImage, accessibilityDescription: nil)?
             .withSymbolConfiguration(.init(pointSize: Metrics.iconSize, weight: .regular))
-        icon.contentTintColor = available ? .labelColor : .secondaryLabelColor
         icon.imageScaling = .scaleProportionallyDown
         icon.setAccessibilityElement(false)
         addSubview(icon)
         toggle.controlSize = .small
-        toggle.state = enabled ? .on : .off
-        toggle.isEnabled = available
         toggle.target = self
         toggle.action = #selector(changed)
         toggle.setAccessibilityLabel(accessibilityLabel)
-        toggle.toolTip = detail
-        if let detail { toggle.setAccessibilityHelp(detail) }
         addSubview(toggle)
+        update(enabled: enabled, available: available)
+    }
+
+    func update(enabled: Bool, available: Bool) {
+        let tint: NSColor = available ? .labelColor : .secondaryLabelColor
+        if title.textColor != tint { title.textColor = tint }
+        if icon.contentTintColor != tint { icon.contentTintColor = tint }
+        let state: NSControl.StateValue = enabled ? .on : .off
+        if toggle.state != state { toggle.state = state }
+        if toggle.isEnabled != available { toggle.isEnabled = available }
     }
 
     override func layout() {
         super.layout()
-        let rowCenter = bounds.midY + (detail == nil ? 0 : 6)
+        let rowCenter = bounds.midY
         let rowY = rowCenter - 10
         toggle.sizeToFit()
         let alignmentSize = toggle.alignmentRect(forFrame: toggle.frame).size
@@ -126,8 +120,6 @@ final class DesktopModelMenuToggle: NSView {
             width: alignmentSize.width, height: alignmentSize.height))
         title.frame = NSRect(x: Metrics.textInset, y: rowY,
                              width: max(0, toggle.frame.minX - Metrics.textInset - 8), height: 20)
-        detail?.frame = NSRect(x: Metrics.textInset, y: rowY - 13,
-                               width: max(0, bounds.width - Metrics.textInset - Metrics.trailingInset), height: 14)
         icon.frame = NSRect(x: Metrics.iconInset, y: rowCenter - Metrics.iconSize / 2,
                             width: Metrics.iconSize, height: Metrics.iconSize)
     }

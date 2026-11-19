@@ -29,12 +29,11 @@ struct DesktopModelMenu: View {
         return variant == .astra ? "6 Astra" : "5.6 \(variant.title)"
     }
 
-    private var selectedGPT6SystemImage: String? {
-        if store.selectedModel?.isGPT61Sol == true || store.selectedModel?.isGPT6Sol == true {
-            return "sun.max.fill"
-        }
-        if store.selectedModel?.isGPT6Luna == true { return "moon.fill" }
-        return nil
+    private var composerVariant: DesktopGPT56Variant? {
+        if let selectedVariant { return selectedVariant }
+        guard store.routingMode == .direct, store.selectedModel?.pickerFamily != nil,
+              let name = collapsedModelTitle.split(separator: " ").dropFirst().first else { return nil }
+        return DesktopGPT56Variant(rawValue: name.lowercased())
     }
 
     private var isFamilyAutoSelected: Bool { store.routingMode.isFamilyAuto }
@@ -61,21 +60,11 @@ struct DesktopModelMenu: View {
         DesktopModelPickerAppearance(rawValue: pickerAppearanceRaw) ?? .native
     }
 
-    private var isFastModeEnabled: Bool {
-        guard store.routingMode == .direct else { return false }
-        guard let model = store.selectedModel,
-              let fastTier = model.serviceTiers.first(where: \.isFastModeTier) else {
-            return false
-        }
-        return store.selectedServiceTier == fastTier.id
-    }
-
-    private var isSparkModel: Bool {
-        store.routingMode == .direct && store.selectedModel?.isGPT53CodexSpark == true
-    }
+    private var isFastModeEnabled: Bool { store.selectedModelServiceTier?.isFastModeTier == true }
 
     private var isUltraFastModeEnabled: Bool {
-        isSparkModel
+        store.selectedModelServiceTier?.isUltrafastTier == true
+            || (store.routingMode == .direct && store.selectedModel?.isGPT53CodexSpark == true)
     }
 
     private var speedAccessibilitySuffix: String {
@@ -84,7 +73,7 @@ struct DesktopModelMenu: View {
                 ? ", Auto may use Fast mode"
                 : ", Auto cannot use Fast mode"
         }
-        if isUltraFastModeEnabled { return ", Ultra Fast on" }
+        if isUltraFastModeEnabled { return ", Ultrafast on" }
         if isFastModeEnabled { return ", Fast Mode on" }
         return ""
     }
@@ -95,10 +84,7 @@ struct DesktopModelMenu: View {
             DesktopAutoSpeedPermissionIndicator(policy: store.displayedAutoSpeedPolicy)
         } else if isFastModeEnabled || isUltraFastModeEnabled {
             if isUltraFastModeEnabled {
-                SparkBoltPair(
-                    color: SliderPickerPalette.peakText(colorScheme, usesBlueTheme: store.selectedModel?.usesAstraBluePickerStyle == true),
-                    fontSize: 10
-                )
+                UltrafastBoltPair(fontSize: 10)
             } else {
                 Text(Image(systemName: "bolt.fill"))
                     .font(.system(size: 10, weight: .semibold))
@@ -147,23 +133,7 @@ struct DesktopModelMenu: View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             speedIndicator
 
-            if store.autoModelSelectionEnabled || store.hasLockedAutoModel {
-                Image(systemName: store.autoModelRoutingDetail == nil ? "sparkles" : "exclamationmark.triangle").accessibilityHidden(true)
-            } else if isFamilyAutoSelected {
-                Image(systemName: "sparkles").accessibilityHidden(true)
-            } else if store.selectedModel?.isGrok == true {
-                DesktopGrokMark(fontSize: 12)
-            } else if let selectedVariant {
-                DesktopGPT56VariantIcon(variant: selectedVariant, fontSize: 12)
-            } else if let selectedGPT6SystemImage {
-                Image(systemName: selectedGPT6SystemImage)
-                    .font(.system(size: 11, weight: .medium))
-                    .accessibilityHidden(true)
-            } else {
-                Image(systemName: "cube")
-                    .font(.system(size: 11, weight: .medium))
-                    .accessibilityHidden(true)
-            }
+            composerIdentity(showsFallback: true)
 
             Text(collapsedModelTitle)
                 .fontWeight(.medium)
@@ -185,6 +155,24 @@ struct DesktopModelMenu: View {
         .fixedSize()
     }
 
+    @ViewBuilder
+    private func composerIdentity(showsFallback: Bool) -> some View {
+        if store.autoModelSelectionEnabled || store.hasLockedAutoModel {
+            Image(systemName: store.autoModelRoutingDetail == nil ? "sparkles" : "exclamationmark.triangle")
+                .accessibilityHidden(true)
+        } else if isFamilyAutoSelected {
+            Image(systemName: "sparkles").accessibilityHidden(true)
+        } else if store.selectedModel?.isGrok == true {
+            DesktopGrokMark(fontSize: 12)
+        } else if let composerVariant {
+            DesktopGPT56VariantIcon(variant: composerVariant, fontSize: 12)
+        } else if showsFallback {
+            Image(systemName: "cube")
+                .font(.system(size: 11, weight: .medium))
+                .accessibilityHidden(true)
+        }
+    }
+
     private var reasoningOptions: [DesktopReasoningOption] {
         guard store.routingMode == .direct else { return [] }
         return store.selectedModel?.supportedReasoningEfforts ?? []
@@ -200,19 +188,7 @@ struct DesktopModelMenu: View {
             HStack(alignment: .firstTextBaseline, spacing: 5) {
                 speedIndicator
 
-                if store.autoModelSelectionEnabled || store.hasLockedAutoModel {
-                    Image(systemName: store.autoModelRoutingDetail == nil ? "sparkles" : "exclamationmark.triangle").accessibilityHidden(true)
-                } else if store.routingMode.isFamilyAuto {
-                    Image(systemName: "sparkles").accessibilityHidden(true)
-                } else if store.selectedModel?.isGrok == true {
-                    DesktopGrokMark(fontSize: 12)
-                } else if let selectedVariant {
-                    DesktopGPT56VariantIcon(variant: selectedVariant, fontSize: 12)
-                } else if let selectedGPT6SystemImage {
-                    Image(systemName: selectedGPT6SystemImage)
-                        .font(.system(size: 11, weight: .medium))
-                        .accessibilityHidden(true)
-                }
+                composerIdentity(showsFallback: false)
 
                 Text(collapsedModelTitle)
                     .fontWeight(.medium)
@@ -298,13 +274,17 @@ private enum SliderPickerPalette {
 
     static func peakText(_ scheme: ColorScheme, usesBlueTheme: Bool) -> Color {
         if !usesBlueTheme {
-            return scheme == .dark
-                ? Color(red: 0.72, green: 0.56, blue: 1.0)
-                : Color(red: 0.40, green: 0.13, blue: 0.84)
+            return ultrafastText(scheme)
         }
         return scheme == .dark
             ? Color(red: 0.57, green: 0.81, blue: 1.0)
             : Color(red: 0.07, green: 0.32, blue: 0.65)
+    }
+
+    static func ultrafastText(_ scheme: ColorScheme) -> Color {
+        scheme == .dark
+            ? Color(red: 0.72, green: 0.56, blue: 1.0)
+            : Color(red: 0.40, green: 0.13, blue: 0.84)
     }
 
     static var track: Color { Color.primary.opacity(0.09) }
@@ -327,6 +307,7 @@ private struct DesktopModelSliderAdvancedPicker: View {
     @State private var page: Page = .compact
     @State private var isSliderEngaged = false
     @State private var previewReasoningIndex: Int?
+    @StateObject private var speedMenuAnchor = DesktopMenuAnchor()
 
     private enum Page {
         case compact
@@ -373,22 +354,19 @@ private struct DesktopModelSliderAdvancedPicker: View {
         return "Uses your limits faster"
     }
 
-    private var fastTier: DesktopModelServiceTier? {
-        guard store.routingMode == .direct else { return nil }
-        return store.selectedModel?.serviceTiers.first(where: \.isFastModeTier)
+    private var speedChoices: [DesktopPickerSpeed] {
+        guard store.routingMode == .direct, let model = store.selectedModel else { return [] }
+        return DesktopPickerSpeed.choices(for: model)
     }
 
     private var isSparkModel: Bool {
         store.routingMode == .direct && store.selectedModel?.isGPT53CodexSpark == true
     }
 
-    private var isFastModeEnabled: Bool {
-        guard let fastTier else { return false }
-        return store.selectedServiceTier == fastTier.id
-    }
+    private var isFastModeEnabled: Bool { store.selectedModelServiceTier?.isFastModeTier == true }
 
     private var isUltraFastModeEnabled: Bool {
-        isSparkModel
+        isSparkModel || store.selectedModelServiceTier?.isUltrafastTier == true
     }
 
     private var isAutoRouteSelected: Bool {
@@ -402,16 +380,9 @@ private struct DesktopModelSliderAdvancedPicker: View {
     private var speedTitle: String {
         if isAutoRouteSelected { return store.displayedAutoSpeedPolicy.title }
         guard store.routingMode == .direct else { return "Auto" }
-        if isSparkModel { return "Ultrafast" }
-        guard let selectedServiceTier = store.selectedServiceTier,
-              let tier = store.selectedModel?.serviceTiers.first(where: { $0.id == selectedServiceTier }) else {
-            return standardTierName
-        }
-        return tier.name
-    }
-
-    private var standardTierName: String {
-        store.selectedModel?.serviceTiers.first(where: { !$0.isFastModeTier })?.name ?? "Standard"
+        if isUltraFastModeEnabled { return "Ultrafast" }
+        if isFastModeEnabled { return "Fast Mode" }
+        return "Standard"
     }
 
     private var canReset: Bool {
@@ -483,39 +454,14 @@ private struct DesktopModelSliderAdvancedPicker: View {
 
                 Spacer(minLength: 0)
 
-                if !isAutoRouteSelected && (isSparkModel || fastTier != nil) {
-                    SliderPickerQuietButton {
-                        guard !isSparkModel, let fastTier else { return }
-                        store.selectServiceTier(isFastModeEnabled ? store.selectedModel?.defaultServiceTier : fastTier.id)
-                    } label: {
-                        if isSparkModel {
-                            SparkBoltPair(
-                                color: SliderPickerPalette.peakText(colorScheme, usesBlueTheme: store.selectedModel?.usesAstraBluePickerStyle == true),
-                                fontSize: 12
-                            )
-                        } else {
-                            Image(systemName: isFastModeEnabled ? "bolt.fill" : "bolt")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(
-                                    isFastModeEnabled
-                                        ? (isPeakSelected
-                                            ? SliderPickerPalette.peakText(colorScheme, usesBlueTheme: store.selectedModel?.usesAstraBluePickerStyle == true)
-                                            : Color(red: 0.11, green: 0.40, blue: 0.85))
-                                        : Color.secondary
-                                )
-                                .frame(width: 14, height: 16)
-                        }
+                if !isAutoRouteSelected {
+                    if isSparkModel {
+                        UltrafastBoltPair(fontSize: 12)
+                            .frame(width: 16, height: 16)
+                            .help("Ultrafast is always on for 5.3 Spark.")
+                    } else if !speedChoices.isEmpty {
+                        compactSpeedButton
                     }
-                    .help(
-                        isSparkModel
-                            ? "Ultra Fast is always on for 5.3 Spark."
-                            : (isFastModeEnabled
-                                ? "Turn off Fast Mode"
-                                : "Turn on Fast Mode: \(fastTier?.description.isEmpty == false ? fastTier!.description : "faster, uses more of your limits")")
-                    )
-                    .disabled(store.autoModelSelectionEnabled || store.hasLockedAutoModel)
-                    .accessibilityLabel(isSparkModel ? "Ultra Fast" : "Fast Mode")
-                    .accessibilityValue(isSparkModel || isFastModeEnabled ? "On" : "Off")
                 }
             }
             .opacity(isSliderEngaged ? 0 : 1)
@@ -681,7 +627,6 @@ private struct DesktopModelSliderAdvancedPicker: View {
         var items: [DesktopMenuItemSpec] = []
         for family in catalog.recentGPT6Families {
             if !items.isEmpty { items.append(.separator) }
-            items.append(DesktopMenuItemSpec(title: family, isEnabled: false))
             items.append(contentsOf: catalog.models(in: family).map { model in
                 directModelMenuItem(model, systemImage: catalog.identitySystemImage(for: model) ?? "cube")
             })
@@ -691,7 +636,7 @@ private struct DesktopModelSliderAdvancedPicker: View {
             items.append(
                 DesktopMenuItemSpec(
                     title: "6 Auto",
-                    subtitle: store.isDaybreakOn ? "Turn Daybreak off to use Auto." : "Veo routes across the GPT-6 family",
+                    subtitle: "Veo routes across the GPT-6 family",
                     isEnabled: !store.isDaybreakOn,
                     isSelected: store.routingMode == .autoGPT6,
                     action: { store.selectAutoRouting(family: .gpt6) }
@@ -707,7 +652,7 @@ private struct DesktopModelSliderAdvancedPicker: View {
             items.append(
                 DesktopMenuItemSpec(
                     title: "5.6 Auto",
-                    subtitle: store.isDaybreakOn ? "Turn Daybreak off to use Auto." : "Veo routes across the 5.6 family",
+                    subtitle: "Veo routes across the 5.6 family",
                     isEnabled: !store.isDaybreakOn,
                     isSelected: store.routingMode == .auto,
                     action: store.selectAutoRouting
@@ -745,7 +690,6 @@ private struct DesktopModelSliderAdvancedPicker: View {
         return [
             DesktopMenuItemSpec(
                 title: "Auto", systemImage: "sparkles",
-                subtitle: store.isDaybreakOn ? "Turn Daybreak off to use Auto." : "",
                 isEnabled: !store.isDaybreakOn,
                 toggleValue: store.autoModelSelectionEnabled,
                 toggleKind: .auto,
@@ -753,7 +697,6 @@ private struct DesktopModelSliderAdvancedPicker: View {
             ),
             DesktopMenuItemSpec(
                 title: "Daybreak", systemImage: DesktopDaybreakMark.systemImage,
-                subtitle: store.daybreakDetail ?? "",
                 isEnabled: store.canToggleDaybreak,
                 toggleValue: store.isDaybreakOn,
                 toggleKind: .daybreak,
@@ -774,7 +717,6 @@ private struct DesktopModelSliderAdvancedPicker: View {
             title: title ?? model.userFacingDisplayName,
             systemImage: systemImage,
             assetImage: assetImage,
-            subtitle: available ? "" : "Unavailable while Daybreak is on.",
             isEnabled: available,
             isSelected: store.routingMode == .direct && store.selectedModelID == model.id,
             action: { store.selectModel(model.id) }
@@ -827,17 +769,45 @@ private struct DesktopModelSliderAdvancedPicker: View {
         }
     }
 
+    private var compactSpeedButton: some View {
+        SliderPickerQuietButton {
+            if speedChoices.contains(where: { $0.kind == .ultrafast }) {
+                speedMenuAnchor.present(header: nil, items: { speedMenuItems })
+            } else if let next = speedChoices.first(where: { $0.kind == (isFastModeEnabled ? .standard : .fast) }) {
+                store.selectServiceTier(next.tierID)
+            }
+        } label: {
+            Group {
+                if isUltraFastModeEnabled {
+                    UltrafastBoltPair(fontSize: 12)
+                } else {
+                    Image(systemName: isFastModeEnabled ? "bolt.fill" : "bolt")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(
+                            isFastModeEnabled
+                                ? (isPeakSelected
+                                    ? SliderPickerPalette.peakText(colorScheme, usesBlueTheme: store.selectedModel?.usesAstraBluePickerStyle == true)
+                                    : Color(red: 0.11, green: 0.40, blue: 0.85))
+                                : Color.secondary
+                        )
+                }
+            }
+            .frame(width: 16, height: 16)
+        }
+        .background(DesktopMenuAnchorView(anchor: speedMenuAnchor))
+        .help(speedChoices.contains(where: { $0.kind == .ultrafast })
+            ? "Choose Standard, Fast Mode, or Ultrafast"
+            : (isFastModeEnabled ? "Turn off Fast Mode" : "Turn on Fast Mode"))
+        .accessibilityLabel("Speed")
+        .accessibilityValue(speedTitle)
+    }
+
     private var speedRow: some View {
         DesktopAdvancedMenuRow(
             title: "Speed",
             value: speedTitle,
-            valueTint: !isAutoRouteSelected && isUltraFastModeEnabled
-                ? SliderPickerPalette.peakText(colorScheme, usesBlueTheme: store.selectedModel?.usesAstraBluePickerStyle == true)
-                : nil,
-            isEnabled: canEditAutoRoute || (!isAutoRouteSelected
-                && store.routingMode == .direct
-                && store.selectedModel != nil
-                && (isSparkModel || fastTier != nil)),
+            valueTint: !isAutoRouteSelected && isUltraFastModeEnabled ? SliderPickerPalette.ultrafastText(colorScheme) : nil,
+            isEnabled: canEditAutoRoute || (!isAutoRouteSelected && !speedChoices.isEmpty),
             header: "Speed",
             items: { speedMenuItems }
         )
@@ -860,54 +830,16 @@ private struct DesktopModelSliderAdvancedPicker: View {
                 ),
             ]
         }
-        let standardTier = store.selectedModel?.serviceTiers.first(where: {
-            !$0.isFastModeTier
-        })
-
-        if isSparkModel {
-            return [
-                DesktopMenuItemSpec(
-                    title: standardTierName,
-                    subtitle: standardTier?.description.isEmpty == false ? standardTier!.description : "Default speed",
-                    isEnabled: false
-                ),
-                DesktopMenuItemSpec(
-                    title: "Fast",
-                    subtitle: "1.5x speed, increased usage",
-                    isEnabled: false
-                ),
-                DesktopMenuItemSpec(
-                    title: "Ultrafast",
-                    subtitle: "Up to 14x faster using Cerebras.",
-                    isEnabled: false,
-                    isSelected: true
-                )
-            ]
-        }
-
-        var items: [DesktopMenuItemSpec] = []
-
-        items.append(
+        return speedChoices.map { speed in
             DesktopMenuItemSpec(
-                title: standardTierName,
-                subtitle: standardTier?.description.isEmpty == false ? standardTier!.description : "Default speed",
-                isSelected: !isFastModeEnabled,
-                action: { store.selectServiceTier(store.selectedModel?.defaultServiceTier) }
-            )
-        )
-
-        if let fastTier {
-            items.append(
-                DesktopMenuItemSpec(
-                    title: fastTier.name,
-                    subtitle: fastTier.description.isEmpty ? "Faster, uses more of your limits" : fastTier.description,
-                    isSelected: isFastModeEnabled,
-                    action: { store.selectServiceTier(fastTier.id) }
-                )
+                title: speed.title,
+                systemImage: speed.systemImage,
+                subtitle: speed.detail,
+                isSelected: speed.isSelected(in: store),
+                usesUltrafastBolts: speed.kind == .ultrafast,
+                action: { store.selectServiceTier(speed.tierID) }
             )
         }
-
-        return items
     }
 
     private func handleEscape() {
@@ -954,7 +886,7 @@ private struct DesktopAdvancedMenuRow: View {
 
     var body: some View {
         Button {
-            anchor.present(header: header, items: items())
+            anchor.present(header: header, items: items)
         } label: {
             HStack(spacing: 10) {
                 Text(title)
@@ -1000,6 +932,7 @@ private struct DesktopMenuItemSpec {
     var isEnabled: Bool = true
     var isSelected: Bool = false
     var isSeparator: Bool = false
+    var usesUltrafastBolts: Bool = false
     enum Visibility { case always, manual, automatic }
     enum ToggleKind: Equatable { case auto, daybreak }
     var visibility: Visibility = .always
@@ -1020,7 +953,8 @@ private final class DesktopMenuAnchor: NSObject, ObservableObject {
     weak var view: NSView?
     private var actions: [() -> Void] = []
 
-    func present(header: String?, items: [DesktopMenuItemSpec]) {
+    func present(header: String?, items makeItems: @escaping () -> [DesktopMenuItemSpec]) {
+        let items = makeItems()
         guard let view, !items.isEmpty else { return }
 
         actions = []
@@ -1031,13 +965,10 @@ private final class DesktopMenuAnchor: NSObject, ObservableObject {
             menu.addItem(.sectionHeader(title: header))
         }
 
-        var visibilityItems: [(NSMenuItem, DesktopMenuItemSpec.Visibility)] = []
-        let autoEnabled = items.first(where: { $0.toggleKind == .auto })?.toggleValue ?? false
+        let headerCount = menu.items.count
         for spec in items {
             guard !spec.isSeparator else {
-                let separator = NSMenuItem.separator()
-                menu.addItem(separator)
-                visibilityItems.append((separator, spec.visibility))
+                menu.addItem(.separator())
                 continue
             }
 
@@ -1046,7 +977,9 @@ private final class DesktopMenuAnchor: NSObject, ObservableObject {
                 action: #selector(handleMenuSelection(_:)),
                 keyEquivalent: ""
             )
-            if let assetImage = spec.assetImage, let named = NSImage(named: assetImage) {
+            if spec.usesUltrafastBolts {
+                item.image = Self.ultrafastMenuImage
+            } else if let assetImage = spec.assetImage, let named = NSImage(named: assetImage) {
                 let image = named.copy() as? NSImage ?? named
                 image.size = NSSize(width: 14, height: 14)
                 image.isTemplate = true
@@ -1056,41 +989,26 @@ private final class DesktopMenuAnchor: NSObject, ObservableObject {
             }
             item.target = self
             item.tag = actions.count
-            item.isEnabled = spec.isEnabled
-            item.state = spec.isSelected ? .on : .off
-            if !spec.subtitle.isEmpty {
-                item.attributedTitle = Self.attributedTitle(spec.title, subtitle: spec.subtitle, isEnabled: spec.isEnabled)
-                item.toolTip = spec.subtitle
-            }
             if let enabled = spec.toggleValue, let kind = spec.toggleKind {
                 item.view = DesktopModelMenuToggle(
                     title: spec.title,
                     systemImage: spec.systemImage ?? "",
                     accessibilityLabel: kind == .auto ? "Auto model selection" : "Daybreak",
                     enabled: enabled,
-                    available: spec.isEnabled,
-                    detail: spec.subtitle.isEmpty ? nil : spec.subtitle
-                ) { [weak menu] enabled in
+                    available: spec.isEnabled
+                ) { [weak self, weak menu] enabled in
                     spec.toggleAction?(enabled)
-                    if kind == .auto {
-                        for (row, visibility) in visibilityItems {
-                            row.isHidden = visibility == .manual ? enabled : visibility == .automatic ? !enabled : false
-                        }
-                    }
-                    // Reopen with fresh availability and descriptions after a preference change.
-                    menu?.cancelTracking()
+                    guard let self, let menu else { return }
+                    self.updateMenu(menu, specs: makeItems(), headerCount: headerCount)
                 }
             }
             actions.append(spec.action)
             menu.addItem(item)
-            visibilityItems.append((item, spec.visibility))
         }
 
         let rowOnScreen = view.window?.convertToScreen(view.convert(view.bounds, to: nil))
+        updateMenu(menu, specs: items, headerCount: headerCount)
         let menuHeight = menu.size.height
-        for (row, visibility) in visibilityItems {
-            row.isHidden = visibility == .manual ? autoEnabled : visibility == .automatic ? !autoEnabled : false
-        }
 
         DispatchQueue.main.async { [weak view] in
             guard let view else { return }
@@ -1101,9 +1019,55 @@ private final class DesktopMenuAnchor: NSObject, ObservableObject {
 
             let visible = screen.visibleFrame
             var origin = NSPoint(x: rowOnScreen.maxX + 8, y: rowOnScreen.maxY + 6)
+            origin.x = min(max(origin.x, visible.minX + 8), max(visible.minX + 8, visible.maxX - menu.size.width - 8))
             origin.y = min(max(origin.y, visible.minY + menuHeight + 8), visible.maxY - 8)
             menu.popUp(positioning: nil, at: origin, in: nil)
         }
+    }
+
+    private func updateMenu(_ menu: NSMenu, specs: [DesktopMenuItemSpec], headerCount: Int) {
+        let rows = menu.items.dropFirst(headerCount)
+        guard rows.count == specs.count else { return }
+        let autoEnabled = specs.first(where: { $0.toggleKind == .auto })?.toggleValue ?? false
+        for (row, spec) in zip(rows, specs) {
+            let isHidden = spec.visibility == .manual ? autoEnabled : spec.visibility == .automatic ? !autoEnabled : false
+            if row.isHidden != isHidden { row.isHidden = isHidden }
+            guard !spec.isSeparator else { continue }
+
+            if row.isEnabled != spec.isEnabled { row.isEnabled = spec.isEnabled }
+            let state: NSControl.StateValue = spec.isSelected ? .on : .off
+            if row.state != state { row.state = state }
+            if spec.subtitle.isEmpty {
+                if row.attributedTitle != nil { row.attributedTitle = nil }
+                if row.title != spec.title { row.title = spec.title }
+            } else {
+                let title = Self.attributedTitle(spec.title, subtitle: spec.subtitle, isEnabled: spec.isEnabled)
+                if row.attributedTitle != title { row.attributedTitle = title }
+            }
+            let toolTip = spec.subtitle.isEmpty ? nil : spec.subtitle
+            if row.toolTip != toolTip { row.toolTip = toolTip }
+            if let toggle = row.view as? DesktopModelMenuToggle, let value = spec.toggleValue {
+                toggle.update(enabled: value, available: spec.isEnabled)
+            }
+            if actions.indices.contains(row.tag) { actions[row.tag] = spec.action }
+        }
+    }
+
+    private static var ultrafastMenuImage: NSImage? {
+        let tint = NSColor(name: nil) { appearance in
+            let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            return NSColor(SliderPickerPalette.ultrafastText(dark ? .dark : .light))
+        }
+        guard let symbol = NSImage(systemSymbolName: "bolt.fill", accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(paletteColors: [tint])) else { return nil }
+        let image = NSImage(size: NSSize(width: 18, height: 16), flipped: false) { _ in
+            for x in [CGFloat(0), 5] {
+                symbol.draw(in: NSRect(x: x, y: 1, width: 13, height: 14))
+            }
+            return true
+        }
+        image.isTemplate = false
+        return image
     }
 
     @objc private func handleMenuSelection(_ sender: NSMenuItem) {
@@ -1418,21 +1382,73 @@ private struct DesktopAutoSpeedPermissionIndicator: View {
     }
 }
 
-/// Spark's speed treatment is intentionally a visual composite. It does not
-/// represent a service tier or alter the model payload.
-private struct SparkBoltPair: View {
-    let color: Color
+private struct DesktopPickerSpeed: Identifiable {
+    enum Kind: String {
+        case standard, fast, ultrafast
+    }
+
+    let kind: Kind
+    let tier: DesktopModelServiceTier?
+
+    var id: Kind { kind }
+    var tierID: String? { tier?.id }
+
+    var title: String {
+        switch kind {
+        case .standard: "Standard"
+        case .fast: "Fast Mode"
+        case .ultrafast: "Ultrafast"
+        }
+    }
+
+    var systemImage: String? {
+        switch kind {
+        case .standard: nil
+        case .fast: "bolt.fill"
+        case .ultrafast: nil
+        }
+    }
+
+    var detail: String {
+        if let description = tier?.description, !description.isEmpty { return description }
+        switch kind {
+        case .standard: return "Default speed"
+        case .fast, .ultrafast: return "Faster, uses more of your limits"
+        }
+    }
+
+    @MainActor
+    func isSelected(in store: DesktopCodexStore) -> Bool {
+        let selected = store.selectedModelServiceTier
+        switch kind {
+        case .standard: return selected?.isFastModeTier != true && selected?.isUltrafastTier != true
+        case .fast, .ultrafast: return selected?.id == tierID
+        }
+    }
+
+    static func choices(for model: DesktopModelOption) -> [Self] {
+        guard !model.isGPT53CodexSpark,
+              model.fastServiceTier != nil || model.ultrafastServiceTier != nil else { return [] }
+        var choices = [Self(kind: .standard, tier: model.standardServiceTier)]
+        if let fast = model.fastServiceTier { choices.append(Self(kind: .fast, tier: fast)) }
+        if let ultrafast = model.ultrafastServiceTier { choices.append(Self(kind: .ultrafast, tier: ultrafast)) }
+        return choices
+    }
+}
+
+private struct UltrafastBoltPair: View {
     let fontSize: CGFloat
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         ZStack {
             Image(systemName: "bolt.fill")
-                .offset(x: -1.5)
+                .offset(x: -2.5)
             Image(systemName: "bolt.fill")
-                .offset(x: 1.5)
+                .offset(x: 2.5)
         }
         .font(.system(size: fontSize, weight: .semibold))
-        .foregroundStyle(color)
+        .foregroundStyle(SliderPickerPalette.ultrafastText(colorScheme))
         .frame(width: fontSize + 4, height: fontSize + 5)
         .accessibilityHidden(true)
     }
@@ -1514,9 +1530,10 @@ private struct DesktopModelStudioPicker: View {
                                 sectionDivider
                                 reasoningSection(for: model)
 
-                                if let fastTier = fastTier(for: model) {
+                                let speeds = DesktopPickerSpeed.choices(for: model)
+                                if !speeds.isEmpty {
                                     sectionDivider
-                                    fastModeSection(tier: fastTier)
+                                    speedSection(speeds)
                                 }
 
                                 if model.supportsPersonality {
@@ -1675,7 +1692,6 @@ private struct DesktopModelStudioPicker: View {
             if !store.autoModelSelectionEnabled {
                 ForEach(catalog.recentGPT6Families, id: \.self) { family in
                     if family != catalog.recentGPT6Families.first { sectionDivider }
-                    sectionTitle(family)
                     ForEach(catalog.models(in: family)) { model in
                         modelRow(model)
                     }
@@ -1870,17 +1886,21 @@ private struct DesktopModelStudioPicker: View {
         }
     }
 
-    private func fastModeSection(tier: DesktopModelServiceTier) -> some View {
+    private func speedSection(_ speeds: [DesktopPickerSpeed]) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             sectionTitle("Speed")
 
-            Toggle("Fast Mode", isOn: fastModeBinding(tier: tier))
-                .toggleStyle(.switch)
-                .controlSize(.small)
-                .font(.system(size: 12.5, weight: .medium))
-                .help(fastModeHelp(tier: tier))
-                .accessibilityLabel("Fast Mode")
-                .accessibilityHint(fastModeHelp(tier: tier))
+            ForEach(speeds) { speed in
+                StudioSelectionRow(
+                    title: speed.title,
+                    description: speed.detail,
+                    systemImage: speed.systemImage,
+                    usesUltrafastBolts: speed.kind == .ultrafast,
+                    isSelected: speed.isSelected(in: store)
+                ) {
+                    store.selectServiceTier(speed.tierID)
+                }
+            }
         }
     }
 
@@ -1956,21 +1976,6 @@ private struct DesktopModelStudioPicker: View {
                 ?? "Veo-owned orchestration across the 5.6 family."
         }
         return catalog.variantModels.first(where: { $0.variant == selectedVariant })?.model.description
-    }
-
-    private func fastTier(for model: DesktopModelOption) -> DesktopModelServiceTier? {
-        model.serviceTiers.first(where: \.isFastModeTier)
-    }
-
-    private func fastModeBinding(tier: DesktopModelServiceTier) -> Binding<Bool> {
-        Binding(
-            get: { store.selectedServiceTier == tier.id },
-            set: { store.selectServiceTier($0 ? tier.id : nil) }
-        )
-    }
-
-    private func fastModeHelp(tier: DesktopModelServiceTier) -> String {
-        tier.description.isEmpty ? "Use the faster service tier." : tier.description
     }
 
     private func familyDescription(fallback: DesktopModelOption, family: DesktopAutoRouteFamily) -> String {
@@ -2054,6 +2059,7 @@ private struct StudioSelectionRow: View {
     var systemImage: String? = nil
     var assetImage: String? = nil
     var isEnabled: Bool = true
+    var usesUltrafastBolts = false
     let isSelected: Bool
     let action: () -> Void
 
@@ -2070,7 +2076,9 @@ private struct StudioSelectionRow: View {
 
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(alignment: .firstTextBaseline, spacing: 4) {
-                        if systemImage == "star.fill" {
+                        if usesUltrafastBolts {
+                            UltrafastBoltPair(fontSize: 11)
+                        } else if systemImage == "star.fill" {
                             DesktopGPT56VariantIcon(variant: .astra, fontSize: 12.5)
                         } else if assetImage == DesktopGrokMark.assetName {
                             DesktopGrokMark(fontSize: 12.5)

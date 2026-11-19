@@ -48,7 +48,7 @@ struct DesktopEnabledModelsPopover: View {
                                 .controlSize(.small)
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 7)
-                                .disabled(row.isLastEnabled)
+                                .disabled(row.isLastEnabled || (group.id == "5.6" && !store.includeGPT56Models))
                                 .help(row.isLastEnabled ? "Keep at least one model enabled." : row.title)
                             }
                         }

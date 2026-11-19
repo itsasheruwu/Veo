@@ -241,32 +241,34 @@ struct DesktopComposerModePills: View {
     @Bindable var store: DesktopCodexStore
 
     var body: some View {
-        HStack(spacing: 6) {
-            if store.isPlanModeEnabled {
-                DesktopComposerModePill(
-                    title: "Plan",
-                    systemImage: "list.bullet.clipboard",
-                    color: .orange,
-                    onDismiss: { store.setPlanModeEnabled(false) }
-                )
-            }
+        if store.isPlanModeEnabled || store.isDebugModeEnabled || store.isGoalModeEnabled {
+            HStack(spacing: 6) {
+                if store.isPlanModeEnabled {
+                    DesktopComposerModePill(
+                        title: "Plan",
+                        systemImage: "list.bullet.clipboard",
+                        color: .orange,
+                        onDismiss: { store.setPlanModeEnabled(false) }
+                    )
+                }
 
-            if store.isDebugModeEnabled {
-                DesktopComposerModePill(
-                    title: "Debug",
-                    systemImage: "ladybug",
-                    color: .purple,
-                    onDismiss: { store.setInteractionMode(.agentic) }
-                )
-            }
+                if store.isDebugModeEnabled {
+                    DesktopComposerModePill(
+                        title: "Debug",
+                        systemImage: "ladybug",
+                        color: .purple,
+                        onDismiss: { store.setInteractionMode(.agentic) }
+                    )
+                }
 
-            if store.isGoalModeEnabled {
-                DesktopComposerModePill(
-                    title: "Goal",
-                    systemImage: "target",
-                    color: .green,
-                    onDismiss: { store.setGoalModeEnabled(false) }
-                )
+                if store.isGoalModeEnabled {
+                    DesktopComposerModePill(
+                        title: "Goal",
+                        systemImage: "target",
+                        color: .green,
+                        onDismiss: { store.setGoalModeEnabled(false) }
+                    )
+                }
             }
         }
     }

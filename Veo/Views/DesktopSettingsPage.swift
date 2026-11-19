@@ -93,15 +93,21 @@ struct DesktopSettingsSidebarView: View {
                     .foregroundStyle(isSelected ? veoAccent : .secondary)
                     .frame(width: 18)
 
-                Text(category.title)
-                    .font(.system(size: 12.5, weight: isSelected ? .semibold : .medium))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(category.title)
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                    Text(category.detail)
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
 
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 10)
-            .frame(height: 36)
+            .frame(height: 46)
             .contentShape(Rectangle())
             .background(
                 veoAccent.opacity(isSelected ? 0.14 : 0),
@@ -300,7 +306,7 @@ struct DesktopSettingsPage: View {
                     VStack(alignment: .leading, spacing: 30) {
                         VStack(alignment: .leading, spacing: 6) {
                             Text(navigation.settingsCategory.title)
-                                .font(.system(size: 25, weight: .semibold, design: .rounded))
+                                .font(.system(size: 27, weight: .semibold, design: .rounded))
                             Text(navigation.settingsCategory.detail)
                                 .font(.system(size: 13))
                                 .foregroundStyle(.secondary)
@@ -308,10 +314,10 @@ struct DesktopSettingsPage: View {
 
                         settingsContent
                     }
-                    .padding(.horizontal, 32)
-                    .padding(.top, 32)
+                    .padding(.horizontal, 38)
+                    .padding(.top, 48)
                     .padding(.bottom, 40)
-                    .frame(maxWidth: 760, alignment: .leading)
+                    .frame(maxWidth: 700, alignment: .leading)
                     .frame(maxWidth: .infinity)
                 }
                 // A different category is a new document, not a continuation
@@ -650,6 +656,23 @@ struct DesktopSettingsPage: View {
                     .accessibilityLabel("Enabled models")
                     .accessibilityValue("\(store.enabledModelCount) of \(max(store.catalogModelCount, store.enabledModelCount)) on")
                     .accessibilityHint("Shows a list of switches for each model")
+
+                    SettingsPanelDivider()
+
+                    SettingsRow(
+                        title: "Include GPT-5.6 models",
+                        detail: "Show the GPT-5.6 family and 5.6 Auto in the composer picker.",
+                        systemImage: "cube"
+                    ) {
+                        Toggle("Include GPT-5.6 models", isOn: Binding(
+                            get: { store.includeGPT56Models },
+                            set: { store.setIncludeGPT56Models($0) }
+                        ))
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                        .disabled(store.includeGPT56Models && !store.canDisableGPT56Models)
+                    }
 
                     SettingsPanelDivider()
 
@@ -2194,7 +2217,7 @@ struct DesktopSettingsPage: View {
                             selection: windowMaterialBinding,
                             title: \.title
                         )
-                        .frame(width: 280)
+                        .frame(maxWidth: 280)
                     }
                 }
             }
@@ -2229,7 +2252,7 @@ struct DesktopSettingsPage: View {
                             selection: leftSidebarMaterialBinding,
                             title: \.title
                         )
-                        .frame(width: 280)
+                        .frame(maxWidth: 280)
                     }
 
                     SettingsPanelDivider()
@@ -2245,7 +2268,7 @@ struct DesktopSettingsPage: View {
                             selection: rightSidebarMaterialBinding,
                             title: \.title
                         )
-                        .frame(width: 280)
+                        .frame(maxWidth: 280)
                     }
                 }
 
@@ -2276,7 +2299,7 @@ struct DesktopSettingsPage: View {
                             selection: modelPickerAppearanceBinding,
                             title: \.title
                         )
-                        .frame(width: 280)
+                        .frame(maxWidth: 280)
                     }
 
                     SettingsPanelDivider()
@@ -2292,7 +2315,7 @@ struct DesktopSettingsPage: View {
                             selection: composerMaterialBinding,
                             title: \.title
                         )
-                        .frame(width: 280)
+                        .frame(maxWidth: 280)
                     }
 
                     SettingsPanelDivider()
@@ -2356,7 +2379,7 @@ struct DesktopSettingsPage: View {
                             selection: notificationMaterialBinding,
                             title: \.title
                         )
-                        .frame(width: 280)
+                        .frame(maxWidth: 280)
                     }
                 }
                 .id(DesktopSettingsAnchor.notificationMaterial)
@@ -2406,7 +2429,7 @@ struct DesktopSettingsPage: View {
                                 selection: threadMinimapMaterialBinding,
                                 title: \.title
                             )
-                            .frame(width: 280)
+                            .frame(maxWidth: 280)
                         }
                     }
                 }
@@ -2427,7 +2450,7 @@ struct DesktopSettingsPage: View {
                             selection: textStreamingModeBinding,
                             title: \.title
                         )
-                        .frame(width: 280)
+                        .frame(maxWidth: 280)
                     }
 
                     SettingsPanelDivider()
@@ -2443,7 +2466,7 @@ struct DesktopSettingsPage: View {
                             selection: viewedImagesInitialExpansionBinding,
                             title: \.title
                         )
-                        .frame(width: 240)
+                        .frame(maxWidth: 240)
                     }
                 }
             }
@@ -3166,24 +3189,15 @@ private struct SettingsRow<Trailing: View>: View {
     }
 
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 14) {
-                rowLabel.frame(minWidth: 170)
-                Spacer(minLength: 14)
-                trailing().fixedSize(horizontal: true, vertical: false)
-            }
-            VStack(alignment: .leading, spacing: 10) {
-                rowLabel
-                HStack {
-                    Spacer(minLength: 0)
-                    trailing()
-                }
-            }
+        HStack(spacing: nestStyle.isNested ? 8 : 14) {
+            rowLabel
+            Spacer(minLength: 18)
+            trailing().layoutPriority(1)
         }
         .padding(.leading, nestStyle.isNested ? nestIndent : 16)
         .padding(.trailing, 16)
-        .padding(.vertical, 11)
-        .frame(minHeight: 62)
+        .padding(.vertical, 12)
+        .frame(minHeight: 68)
         .contentShape(Rectangle())
         .overlay(alignment: .leading) {
             if nestStyle.isNested {

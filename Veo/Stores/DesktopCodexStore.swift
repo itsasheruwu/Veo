@@ -348,11 +348,9 @@ final class DesktopCodexStore {
         let speed: String?
         if selectedOption?.isGPT53CodexSpark == true {
             speed = "Ultrafast"
-        } else if let tierID = autoModelServiceTiers[id],
-                  selectedOption?.serviceTiers.first(where: { $0.id == tierID })?.isFastModeTier == true {
-            speed = "Fast"
         } else {
-            speed = nil
+            let tier = selectedOption?.serviceTiers.first { $0.id == autoModelServiceTiers[id] }
+            speed = tier?.isUltrafastTier == true ? "Ultrafast" : (tier?.isFastModeTier == true ? "Fast" : nil)
         }
         let details = [effort, speed].compactMap { $0 }.joined(separator: " · ")
         return "Auto chose \(modelName)" + (details.isEmpty ? "" : " · \(details)")
@@ -360,6 +358,10 @@ final class DesktopCodexStore {
     var selectedModelID: String?
     var selectedReasoningEffort: String?
     var selectedServiceTier: String?
+    var selectedModelServiceTier: DesktopModelServiceTier? {
+        guard routingMode == .direct else { return nil }
+        return selectedModel?.serviceTiers.first { $0.id == selectedServiceTier }
+    }
     var selectedPersonality: String = "none"
     var realtimeProtocolChoice: DesktopRealtimeProtocolChoice = .automatic
     private(set) var historyNextCursor: String?
@@ -565,7 +567,9 @@ final class DesktopCodexStore {
            ) {
             routingModeByThreadID = decodedRoutingModes
         }
-        routingMode = selectedThreadID.flatMap { routingModeByThreadID[$0] } ?? .direct
+        let restoredRoutingMode = selectedThreadID.flatMap { routingModeByThreadID[$0] } ?? .direct
+        routingMode = restoredRoutingMode == .auto && !DesktopModelCatalogPreferences.shared.includeGPT56Models
+            ? .direct : restoredRoutingMode
         threadsWithStartedAutoTurns = Set(
             defaults.stringArray(forKey: "VeoDesktop.threadsWithStartedAutoTurns") ?? []
         )
@@ -931,7 +935,7 @@ final class DesktopCodexStore {
             if model.isExternal {
                 return preferences.isExternalModelEnabled(model.id)
             }
-            return preferences.isNativeModelEnabled(model.id)
+            return preferences.isNativeModelEnabled(model)
         }
     }
 
@@ -990,6 +994,27 @@ final class DesktopCodexStore {
         return DesktopModelCatalogPreferences.shared.includeExternalModels
     }
 
+    var includeGPT56Models: Bool {
+        _ = catalogPreferenceRevision
+        return DesktopModelCatalogPreferences.shared.includeGPT56Models
+    }
+
+    var canDisableGPT56Models: Bool {
+        models.isEmpty || selectableModels.contains { ($0.isExternal || !$0.isGPT56Family) && canSelectModel($0) }
+    }
+
+    func setIncludeGPT56Models(_ enabled: Bool) {
+        guard enabled || canDisableGPT56Models else { return }
+        DesktopModelCatalogPreferences.shared.setIncludeGPT56Models(enabled)
+        catalogPreferenceRevision += 1
+        routingMode = availableRoutingMode(routingMode)
+        fallbackSelectionIfNeeded()
+    }
+
+    private func availableRoutingMode(_ mode: DesktopModelRoutingMode) -> DesktopModelRoutingMode {
+        mode == .auto && !includeGPT56Models ? .direct : mode
+    }
+
     var connectedExternalProviders: [DesktopConnectedProvider] {
         _ = catalogPreferenceRevision
         return DesktopModelCatalogPreferences.shared.providers
@@ -1016,7 +1041,8 @@ final class DesktopCodexStore {
                 if DesktopModelCatalogPreferences.shared.provider(forModelID: id) != nil {
                     return DesktopModelCatalogPreferences.shared.isExternalModelEnabled(id)
                 }
-                return DesktopModelCatalogPreferences.shared.isNativeModelEnabled(id)
+                guard let model = self.models.first(where: { $0.id == id }) else { return false }
+                return DesktopModelCatalogPreferences.shared.isNativeModelEnabled(model)
             },
             set: { self.setModelEnabled(id, enabled: $0) }
         )
@@ -1088,7 +1114,7 @@ final class DesktopCodexStore {
         }
         if selectedModel?.isStandaloneDaybreakModel == true { return }
         if let selectedModelID, visible.contains(where: { $0.id == selectedModelID }) { return }
-        if let first = visible.first {
+        if let first = visible.first(where: canSelectModel) {
             selectModel(first.id)
         }
     }
@@ -3778,7 +3804,7 @@ final class DesktopCodexStore {
         isRunningTurn = false
         applyPendingOverlayReloadIfNeeded()
         interactionMode = .agentic
-        routingMode = defaultRoutingMode
+        routingMode = availableRoutingMode(defaultRoutingMode)
         selectedModelID = defaults.string(forKey: "VeoDesktop.modelID")
         selectedReasoningEffort = defaults.string(forKey: "VeoDesktop.reasoningEffort")
         selectedServiceTier = defaults.string(forKey: "VeoDesktop.serviceTier")
@@ -3888,7 +3914,9 @@ final class DesktopCodexStore {
         isSubmittingTurn = false
         isRunningTurn = false
         interactionMode = id.flatMap { interactionModeByThreadID[$0] } ?? .agentic
-        routingMode = id.flatMap { routingModeByThreadID[$0] } ?? (id == nil ? defaultRoutingMode : .direct)
+        routingMode = availableRoutingMode(
+            id.flatMap { routingModeByThreadID[$0] } ?? (id == nil ? defaultRoutingMode : .direct)
+        )
         isGoalModeEnabled = false
         activeGoalObjective = nil
         transientError = nil
@@ -4615,6 +4643,7 @@ final class DesktopCodexStore {
             return
         }
         // Project overrides must not overwrite the user's global default.
+        guard model.isExternal || !model.isGPT56Family || includeGPT56Models else { return }
         selectedModelID = model.id
         selectedReasoningEffort = model.supportedReasoningEfforts.contains(where: { $0.id == configuration.reasoningEffort })
             ? configuration.reasoningEffort : model.defaultReasoningEffort
@@ -6077,8 +6106,14 @@ final class DesktopCodexStore {
 
             // Catalog refresh validates global defaults independently of the
             // currently selected chat, which may carry a project override.
-            if let globalModel = parsed.first(where: { $0.id == defaults.string(forKey: "VeoDesktop.modelID") })
-                ?? manualModels.first(where: \.isDefault) ?? manualModels.first {
+            let savedGlobalModel = parsed.first {
+                $0.id == defaults.string(forKey: "VeoDesktop.modelID")
+                    && ($0.isExternal || !$0.isGPT56Family || includeGPT56Models)
+            }
+            if let globalModel = savedGlobalModel
+                ?? visible.first(where: { $0.isDefault && !$0.isStandaloneDaybreakModel })
+                ?? visible.first(where: { !$0.isStandaloneDaybreakModel })
+                ?? manualModels.first {
                 defaults.set(globalModel.id, forKey: "VeoDesktop.modelID")
                 if !globalModel.supportedReasoningEfforts.contains(where: { $0.id == defaults.string(forKey: "VeoDesktop.reasoningEffort") }) {
                     defaults.set(globalModel.defaultReasoningEffort, forKey: "VeoDesktop.reasoningEffort")
@@ -7753,7 +7788,11 @@ final class DesktopCodexStore {
                 turnParams["modelProvider"] = deliveryProviderID
             }
             if let deliveryEffort { turnParams["effort"] = deliveryEffort }
-            if let deliveryTier { turnParams["serviceTier"] = deliveryTier }
+            if let deliveryTier {
+                turnParams["serviceTier"] = deliveryTier
+            } else if payload.routingMode == .direct, !payload.autoModelSelectionEnabled, deliveryProviderID == nil {
+                turnParams["serviceTier"] = NSNull()
+            }
             if let collaborationMode = collaborationModePayload(
                 model: deliveryModel,
                 reasoningEffort: deliveryEffort,
@@ -8943,7 +8982,10 @@ final class DesktopCodexStore {
             return
         }
         if method == "account/updated" {
-            Task { await loadAccountResources() }
+            Task {
+                await loadModels()
+                await loadAccountResources()
+            }
             return
         }
         if method == "account/rateLimits/updated" {

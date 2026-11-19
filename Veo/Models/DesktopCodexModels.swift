@@ -538,12 +538,15 @@ struct DesktopModelServiceTier: Identifiable, Hashable {
     let description: String
 
     var isFastModeTier: Bool {
-        [id, name].contains { value in
-            let normalized = value.lowercased()
-                .replacingOccurrences(of: "_", with: "-")
-                .replacingOccurrences(of: " ", with: "-")
-            return normalized == "fast" || normalized == "fast-mode"
-        }
+        !isUltrafastTier && normalizedNames.contains { ["fast", "fastmode", "priority"].contains($0) }
+    }
+
+    var isUltrafastTier: Bool {
+        normalizedNames.contains { $0 == "ultrafast" || $0 == "ultrafastmode" }
+    }
+
+    private var normalizedNames: [String] {
+        [id, name].map { $0.lowercased().filter(\.isLetter) }
     }
 }
 
@@ -707,6 +710,18 @@ struct DesktopModelOption: Identifiable, Hashable {
 
     var supportsImageInput: Bool {
         inputModalities.contains(.image)
+    }
+
+    var fastServiceTier: DesktopModelServiceTier? {
+        serviceTiers.first(where: \.isFastModeTier)
+    }
+
+    var ultrafastServiceTier: DesktopModelServiceTier? {
+        serviceTiers.first(where: \.isUltrafastTier)
+    }
+
+    var standardServiceTier: DesktopModelServiceTier? {
+        serviceTiers.first { !$0.isFastModeTier && !$0.isUltrafastTier }
     }
 
     static func parse(_ object: [String: Any]) -> DesktopModelOption? {

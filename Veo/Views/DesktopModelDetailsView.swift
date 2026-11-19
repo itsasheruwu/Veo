@@ -23,6 +23,7 @@ struct DesktopModelDetailsView: View {
                     if let notice = model.availabilityNotice, !notice.isEmpty {
                         Label(notice, systemImage: "info.circle").font(.callout)
                     }
+                    speedAvailability(model)
                     if model.supportsPersonality {
                         VStack(alignment: .leading, spacing: 6) {
                             Text("Personality").font(.subheadline.weight(.medium))
@@ -131,4 +132,15 @@ struct DesktopModelDetailsView: View {
         }
     }
 
+    private func speedAvailability(_ model: DesktopModelOption) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(!model.isExternal && store.accountOverview.accountType == "ChatGPT"
+                 ? "Speed on your plan" : "Speed availability")
+                .font(.subheadline.weight(.medium))
+            LabeledContent("Fast", value: model.fastServiceTier != nil && !model.isGPT53CodexSpark
+                           ? "Supported" : "Not supported")
+            LabeledContent("Ultrafast", value: model.isGPT53CodexSpark ? "Always on"
+                           : model.ultrafastServiceTier != nil ? "Supported" : "Not supported")
+        }
+    }
 }

@@ -19,10 +19,23 @@ struct DesktopUtilityPanelView: View {
             case .some(.plan(let reference)):
                 DesktopPlanPanelView(store: store, reference: reference)
             case .some(.review):
-                DesktopReviewPanelView(
-                    store: store,
-                    presentsAIReview: $model.presentsAIReview
-                )
+                if let diff = model.turnDiff {
+                    VStack(alignment: .leading) {
+                        HStack {
+                            Text("Changes from this turn").font(.headline)
+                            Spacer()
+                            Button("Workspace changes") { model.turnDiff = nil }
+                        }
+                        .padding()
+                        DesktopTurnChangesPopover(summary: .init(diff: diff), material: .solid, isInInspector: true)
+                            .id(diff.turnID)
+                        Spacer(minLength: 0)
+                    }
+                } else {
+                    DesktopReviewPanelView(store: store, presentsAIReview: $model.presentsAIReview)
+                }
+            case .some(.sideChat):
+                DesktopSideChatView(store: store)
             case .some(.browser):
                 DesktopBrowserPanelView(
                     model: model.browser,
@@ -96,6 +109,12 @@ struct DesktopUtilityPanelView: View {
                 } label: {
                     Label("Files", systemImage: DesktopUtilityPanelTab.files.systemImage)
                 }
+                Button {
+                    model.show(.sideChat)
+                } label: {
+                    Label("Side chat", systemImage: DesktopUtilityPanelTab.sideChat.systemImage)
+                }
+                .disabled(store.selectedThreadID == nil)
                 if model.subagentsAvailable {
                     Button {
                         model.addTab(.subagents)
@@ -144,6 +163,16 @@ struct DesktopUtilityPanelView: View {
                 title: "Files",
                 systemImage: DesktopUtilityPanelTab.files.systemImage,
                 isLoading: false,
+                isSelected: model.selectedTabID == item.id,
+                select: { model.selectTab(item.id) },
+                close: { model.closeTab(item.id) }
+            )
+            .contextMenu { tabContextMenu(item: item, index: index) }
+        case .sideChat:
+            DesktopUtilityTabButton(
+                title: "Side chat",
+                systemImage: DesktopUtilityPanelTab.sideChat.systemImage,
+                isLoading: store.selectedSideChat?.isRunning == true,
                 isSelected: model.selectedTabID == item.id,
                 select: { model.selectTab(item.id) },
                 close: { model.closeTab(item.id) }

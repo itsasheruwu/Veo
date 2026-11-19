@@ -367,7 +367,7 @@ struct DesktopReviewPanelView: View {
                                     store.applyGitHunk(.init(fileDiffID: file.id, hunkID: hunk.id))
                                 }
                                 DesktopDiffCommentEditor(path: file.path, side: file.side, hunk: hunk) { comment in
-                                    store.appendContextToDraft(comment)
+                                    store.insertContextAtCaret(comment)
                                 }
                                 .id(file.id.id + ":" + hunk.id)
 

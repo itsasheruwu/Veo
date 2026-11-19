@@ -354,6 +354,7 @@ struct DesktopWorkspaceView: View {
     @ObservedObject var navigation: DesktopNavigationState
     @State private var inspectorVisible = false
     @State private var utilityPanelExpanded = false
+    @State private var showsModelPickerUpgrade = false
     @SceneStorage("VeoDesktop.utilityPanel.width") private var utilityPanelWidth = 560.0
     @State private var utilityPanelResizeStartWidth: Double?
     @AppStorage(DesktopAppearancePreferences.accentColorKey) private var accentColorHex =
@@ -443,6 +444,7 @@ struct DesktopWorkspaceView: View {
             }
             menuBarController.setVisible(showsMenuBarIcon)
             store.startIfNeeded()
+            if DesktopModelPickerUpgrade.claimNotice() { showsModelPickerUpgrade = true }
         }
         .onChange(of: navigation.page) { _, page in
             if page == .settings {
@@ -455,6 +457,10 @@ struct DesktopWorkspaceView: View {
         .onChange(of: store.composerCommandDestinationRequest) { _, destination in
             guard let destination else { return }
             switch destination {
+            case .sideChat:
+                utilityPanel.show(.sideChat)
+                utilityPanelExpanded = false
+                inspectorVisible = true
             case .review:
                 utilityPanel.show(.review, aiReview: true)
                 if !utilityPanelExpanded { inspectorVisible = true }
@@ -473,6 +479,19 @@ struct DesktopWorkspaceView: View {
                 commandDeleteTarget = store.selectedThread
             }
             store.consumeComposerCommandDestinationRequest()
+        }
+        .sheet(isPresented: $showsModelPickerUpgrade, onDismiss: {
+            DesktopModelPickerUpgrade.finishNotice()
+        }) {
+            DesktopPickerUpgradeNotice {
+                DesktopModelPickerUpgrade.finishNotice(restoreNative: true)
+                showsModelPickerUpgrade = false
+            } keep: {
+                DesktopModelPickerUpgrade.finishNotice()
+                showsModelPickerUpgrade = false
+            }
+            .tint(accentColor)
+            .environment(\.veoAccent, accentColor)
         }
         .sheet(item: $store.pendingRequest) { request in
             DesktopPendingRequestView(request: request, store: store)
@@ -726,6 +745,7 @@ struct DesktopWorkspaceView: View {
                             isWorkspace: $isTerminalWorkspace,
                             isPresented: $showsInteractiveTerminal
                         )
+                        .environment(\.terminalContextInsertion, store.addTerminalContext)
                     } else {
                         DesktopConversationView(
                             store: store,
@@ -739,6 +759,11 @@ struct DesktopWorkspaceView: View {
                                 if utilityPanelExpanded {
                                     utilityPanelExpanded = false
                                 }
+                                inspectorVisible = true
+                            },
+                            onOpenTurnDiff: { diff in
+                                utilityPanel.showTurnDiff(diff)
+                                utilityPanelExpanded = false
                                 inspectorVisible = true
                             },
                             onOpenPlan: { reference in
@@ -2879,6 +2904,7 @@ private struct DesktopConversationView: View {
     let availableHeight: CGFloat
     let isInputVisible: Bool
     let onOpenSubagent: (String) -> Void
+    let onOpenTurnDiff: (DesktopTurnDiff) -> Void
     let onOpenPlan: (DesktopPlanReference) -> Void
     @AppStorage(DesktopAppearancePreferences.composerMaterialKey) private var composerMaterialRaw =
         DesktopComposerMaterial.liquidGlass.rawValue
@@ -2889,6 +2915,8 @@ private struct DesktopConversationView: View {
         DesktopWindowMaterial.solid.rawValue
     @State private var isPinnedToBottom = true
     @State private var composerHeight: CGFloat = 0
+    @State private var expandedWorkTurns: Set<String> = []
+    @State private var expansionThreadID: String?
     @State private var autoScrollGeneration = 0
     @State private var isAutoScrollInFlight = false
     @State private var pendingAutoScrollAnimation = false
@@ -3009,11 +3037,29 @@ private struct DesktopConversationView: View {
         }
     }
 
+    private var liveWorkStatus: some View {
+        let waiting = store.selectedUserInputRequest != nil ? "Waiting for your answer"
+            : store.pendingRequest != nil ? "Waiting for approval"
+            : store.isSelectedThreadCompacting ? "Compacting context…"
+            : store.isSubmittingTurn && store.selectedLiveTurnStart == nil ? "Starting turn…" : nil
+        return DesktopConversationTurnStatus(
+            presentation: .init(id: "live", startedAt: store.selectedLiveTurnStart),
+            isRunning: true,
+            waitingLabel: waiting,
+            hasDetails: false,
+            isExpanded: false,
+            toggle: {}
+        )
+    }
+
     private var conversation: some View {
         GeometryReader { viewport in
             ScrollViewReader { proxy in
                 let timelineEntries = store.timelineEntries
                 let activeTimelineItemIDs = store.selectedActiveTimelineItemIDs
+                let turnAnchors = DesktopConversationTurnAnchors(store.timeline)
+                let presentations = store.selectedTurnPresentations
+                let livePromptID = store.timeline.first { $0.kind == .user && activeTimelineItemIDs.contains($0.id) }?.id
                 let hasCurrentMinimapSnapshot = showsThreadMinimap
                     && minimapSnapshotThreadID == store.selectedThreadID
                     // Keep the last settled map visible while a turn streams. Rebuilding
@@ -3096,6 +3142,37 @@ private struct DesktopConversationView: View {
                                         }
                                     }
 
+                                    if item.kind == .user,
+                                       let turnID = item.turnID,
+                                       let presentation = presentations[turnID],
+                                       presentation.completedAt != nil {
+                                        let isContinuation = turnAnchors.promptByTurn[turnID] != item.id
+                                        let segment = isContinuation ? item.id : turnID
+                                        if !isContinuation || turnAnchors.workBySegment[segment] != nil {
+                                            DesktopConversationTurnStatus(
+                                                presentation: isContinuation ? turnAnchors.continuation(after: item, turn: presentation) : presentation,
+                                                isRunning: false,
+                                                isContinuation: isContinuation,
+                                                summary: turnAnchors.summary(for: segment),
+                                                hasDetails: turnAnchors.workBySegment[segment] != nil,
+                                                isExpanded: expandedWorkTurns.contains(segment),
+                                                toggle: {
+                                                    if !expandedWorkTurns.insert(segment).inserted {
+                                                        expandedWorkTurns.remove(segment)
+                                                    }
+                                                }
+                                            )
+                                        }
+                                    } else if livePromptID == item.id {
+                                        liveWorkStatus
+                                    }
+
+                                    if let turnID = item.turnID,
+                                       turnAnchors.replyByTurn[turnID] == item.id,
+                                       let diff = presentations[turnID]?.diff {
+                                        DesktopTurnDiffLink(diff: diff) { onOpenTurnDiff(diff) }
+                                    }
+
                                 case .plan(let item):
                                     if let threadID = store.selectedThreadID {
                                         let reference = DesktopPlanReference(
@@ -3119,6 +3196,15 @@ private struct DesktopConversationView: View {
                                     }
 
                                 case .activity(let group):
+                                    let groupTurn = group.items.first?.turnID
+                                    let collapsed = groupTurn.map {
+                                        presentations[$0]?.completedAt != nil
+                                            && turnAnchors.promptByTurn[$0] != nil
+                                            && !expandedWorkTurns.contains(
+                                                group.items.first.flatMap { turnAnchors.segmentByItem[$0.id] } ?? $0
+                                            )
+                                    } ?? false
+                                    if !collapsed || group.hasFailure {
                                     DesktopActivityGroupView(
                                         group: group,
                                         workspaceURL: store.effectiveWorkspaceURL,
@@ -3133,6 +3219,7 @@ private struct DesktopConversationView: View {
                                         }
                                     }
 
+                                    }
                                 case .viewedImages(let group):
                                     DesktopViewedImagesView(
                                         group: group,
@@ -3148,19 +3235,8 @@ private struct DesktopConversationView: View {
                             }
                         }
 
-                        if store.isSubmittingTurn {
-                            ProgressView()
-                                .controlSize(.small)
-                                .help("Starting turn")
-                        } else if store.isRunningTurn {
-                            HStack(spacing: 8) {
-                                ProgressView()
-                                    .controlSize(.small)
-                                Text("Codex is working locally")
-                                    .font(.system(size: 12, weight: .medium))
-                                    .foregroundStyle(.secondary)
-                            }
-                            .id("running")
+                        if store.isBusyTurn && livePromptID == nil {
+                            liveWorkStatus
                         }
 
                         if store.visibleTransientError != nil {
@@ -3274,6 +3350,13 @@ private struct DesktopConversationView: View {
                     minimapHover = nil
                     clearMinimapPresentation()
                     scheduleScrollToEndIfPinned(proxy, animated: false)
+                }
+                .task(id: store.selectedThreadID) {
+                    if expansionThreadID != store.selectedThreadID {
+                        expandedWorkTurns = []
+                        expansionThreadID = store.selectedThreadID
+                    }
+                    if let threadID = store.selectedThreadID { await store.loadTurnPresentations(threadID: threadID) }
                 }
                 .onChange(of: showsThreadMinimap) { _, isVisible in
                     if !isVisible {
@@ -3624,7 +3707,7 @@ private struct DesktopTimelineRow: View {
             Text("The prompt and attachments return to your draft. Restoring files replaces tracked and nonignored workspace files and staged changes with the saved checkpoint, including removing new files. A recovery checkpoint is saved first. External actions are not undone.")
         }
         .sheet(isPresented: $showsQuoteEditor) {
-            DesktopQuoteEditor(item: item, threadID: store.selectedThreadID ?? "") { store.appendContextToDraft($0) }
+            DesktopQuoteEditor(item: item, threadID: store.selectedThreadID ?? "") { store.insertContextAtCaret($0) }
         }
         .confirmationDialog(
             "Revert conversation history?",
@@ -3645,14 +3728,17 @@ private struct DesktopTimelineRow: View {
             Spacer(minLength: 90)
             VStack(alignment: .leading, spacing: 8) {
                 if !item.body.isEmpty {
-                    Text(item.body)
+                    Text(DesktopInlineContext.displayText(item.body))
                         .font(.system(size: 14))
                         .textSelection(.enabled)
                         .modifier(DesktopSendGeometry(part: .text, role: .message(item.clientID)))
                 }
-                ForEach(Array(DesktopQuoteReference.parse(item.body).enumerated()), id: \.offset) { _, reference in
-                    Button("Go to quoted response", systemImage: "quote.bubble") { store.navigateToQuote(reference) }
-                        .buttonStyle(.borderless).font(.caption)
+                ForEach(DesktopInlineContext.scan(item.body), id: \.range.location) { reference in
+                    Button(reference.label, systemImage: reference.url.scheme == "veo-quote" ? "quote.bubble" : "link") {
+                        store.openInlineContext(reference.url)
+                    }
+                    .buttonStyle(.borderless)
+                    .font(.caption)
                 }
                 if !item.attachments.isEmpty {
                     DesktopAttachmentStrip(attachments: item.attachments, sendRole: .message(item.clientID))
@@ -4026,7 +4112,7 @@ private struct DesktopComposerView: View {
         DesktopContextWindowUsageStyle.percent.rawValue
     @State private var focusToken = 0
     @State private var isOptionsPresented = false
-    @State private var isQueuePresented = false
+    @State private var recalledPromptIndex: Int?
     @State private var isAttachmentDropTarget = false
     @State private var askQuestionDraftsByRequestID: [String: DesktopAskQuestionsComposerDraft] = [:]
 
@@ -4048,7 +4134,10 @@ private struct DesktopComposerView: View {
         .onChange(of: isInputVisible) { _, visible in
             if visible { requestFocus() }
         }
-        .onChange(of: store.selectedThreadID) { _, _ in requestFocus() }
+        .onChange(of: store.selectedThreadID) { _, _ in
+            recalledPromptIndex = nil
+            requestFocus()
+        }
         .onChange(of: store.hasExplicitWorkspace) { _, _ in requestFocus() }
         .onChange(of: store.selectedUserInputRequest?.id) { previousID, requestID in
             if requestID != nil { isAttachmentDropTarget = false }
@@ -4069,6 +4158,26 @@ private struct DesktopComposerView: View {
             properties: composerMaterial == .liquidGlass ? .frame : .position,
             isSource: isWelcome
         ))
+    }
+
+    private func recallPrompt(_ direction: Int) -> Bool {
+        guard store.attachments.isEmpty else { return false }
+        let prompts = store.timeline.reversed().filter { $0.kind == .user && !$0.body.isEmpty }.map(\.body)
+        if let index = recalledPromptIndex, prompts.indices.contains(index), prompts[index] == store.draft {
+            let next = index - direction
+            if next < 0 {
+                recalledPromptIndex = nil
+                store.draft = ""
+            } else if prompts.indices.contains(next) {
+                recalledPromptIndex = next
+                store.draft = prompts[next]
+            }
+            return true
+        }
+        guard direction == -1, store.draft.isEmpty, let latest = prompts.first else { return false }
+        recalledPromptIndex = 0
+        store.draft = latest
+        return true
     }
 
     private func submitDraft() {
@@ -4129,6 +4238,13 @@ private struct DesktopComposerView: View {
 
     private var composerCard: some View {
         VStack(spacing: 0) {
+            if !isWelcome && !store.selectedQueuedDrafts.isEmpty {
+                DesktopQueuedDraftsView(store: store)
+                    .transition(.asymmetric(
+                        insertion: .offset(y: 5).combined(with: .opacity),
+                        removal: .opacity
+                    ))
+            }
             if !store.selectedAsyncQuestions.isEmpty {
                 DesktopAsyncQuestionsView(store: store)
                 Divider()
@@ -4212,6 +4328,9 @@ private struct DesktopComposerView: View {
                 },
                 onTextViewReady: { messageSendTransition?.registerTextView($0) },
                 onMoveAutocomplete: store.moveComposerSuggestionSelection,
+                onSelection: store.updateComposerSelection,
+                onOpenContext: store.openInlineContext,
+                onRecallPrompt: recallPrompt,
                 onAcceptAutocomplete: store.acceptSelectedComposerSuggestion,
                 onDismissAutocomplete: store.dismissComposerSuggestions
             )
@@ -4242,8 +4361,18 @@ private struct DesktopComposerView: View {
                     .disabled(store.visionFallbackStatus != nil)
                     .layoutPriority(1)
 
-                    DesktopModelMenu(store: store)
-                        .layoutPriority(1)
+                    HStack(spacing: 7) {
+                        DesktopModelMenu(store: store)
+                        if showsContextWindowUsage, let usage = store.selectedTokenUsage, usage.fractionUsed != nil {
+                            DesktopContextWindowUsageView(
+                                usage: usage,
+                                style: DesktopContextWindowUsageStyle(rawValue: contextWindowUsageStyleRaw) ?? .percent,
+                                modelName: store.modelDisplayName,
+                                isCompacting: store.isSelectedThreadCompacting
+                            )
+                        }
+                    }
+                    .layoutPriority(1)
 
                     accessModeMenu
                         .fixedSize(horizontal: true, vertical: false)
@@ -4256,7 +4385,7 @@ private struct DesktopComposerView: View {
                     Button {
                         submitDraft()
                     } label: {
-                        Image(systemName: "arrow.up")
+                        Image(systemName: store.isBusyTurn ? store.followUpBehavior.systemImage : "arrow.up")
                             .font(.system(size: 12, weight: .bold))
                             .frame(width: 28, height: 28)
                             .background(.white, in: Circle())
@@ -4361,40 +4490,6 @@ private struct DesktopComposerView: View {
                             }
                         }
 
-                        if !store.selectedQueuedDrafts.isEmpty {
-                            Button {
-                                isQueuePresented.toggle()
-                            } label: {
-                                Label("Queued \(store.selectedQueuedDrafts.count)", systemImage: "text.line.last.and.arrowtriangle.forward")
-                                    .font(.system(size: 10.5, weight: .semibold))
-                                    .lineLimit(1)
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 4)
-                                    .background(.orange.opacity(0.14), in: Capsule())
-                                    .overlay(Capsule().stroke(.orange.opacity(0.28), lineWidth: 1))
-                            }
-                            .buttonStyle(.plain)
-                            .foregroundStyle(.orange)
-                            .popover(isPresented: $isQueuePresented, arrowEdge: .bottom) {
-                                DesktopQueuedDraftsPopover(store: store)
-                            }
-                            .help("Review queued follow-ups")
-                            .layoutPriority(1)
-                        }
-
-                        if showsContextWindowUsage,
-                           store.selectedThreadID != nil,
-                           let usage = store.selectedTokenUsage,
-                           usage.fractionUsed != nil {
-                            DesktopContextWindowUsageView(
-                                usage: usage,
-                                style: DesktopContextWindowUsageStyle(rawValue: contextWindowUsageStyleRaw) ?? .percent,
-                                modelName: store.modelDisplayName,
-                                isCompacting: store.isSelectedThreadCompacting
-                            )
-                            .layoutPriority(1)
-                        }
-
                         if let plan = reviewPlan {
                             DesktopPlanImplementControl(
                                 isImplementing: plan.lifecycle == .implementing,
@@ -4455,6 +4550,7 @@ private struct DesktopComposerView: View {
         .overlay {
             attachmentDropOverlay
         }
+        .animation(reduceMotion ? nil : .smooth(duration: 0.24), value: store.selectedQueuedDrafts.isEmpty)
         .animation(commandPaletteAnimation, value: store.composerSuggestions.isEmpty)
         .animation(askQuestionsAnimation, value: store.selectedUserInputRequest?.id)
         .animation(askQuestionsAnimation, value: reviewPlan?.reference.itemID)
@@ -4489,8 +4585,6 @@ private struct DesktopComposerView: View {
     private var hasSecondaryComposerControls: Bool {
         store.isBusyTurn || reviewPlan != nil
             || (store.realtimeVoiceEnabled && store.capabilities.supports(.realtimeVoice) && store.selectedThreadID != nil)
-            || !store.selectedQueuedDrafts.isEmpty
-            || (showsContextWindowUsage && store.selectedThreadID != nil && store.selectedTokenUsage?.fractionUsed != nil)
     }
 
     private var composerPlaceholderColor: NSColor {
@@ -4665,95 +4759,7 @@ private struct ComposerTransitionGeometry: ViewModifier {
     }
 }
 
-private struct DesktopQueuedDraftsPopover: View {
-    @Bindable var store: DesktopCodexStore
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Label("Queued follow-ups", systemImage: "text.line.last.and.arrowtriangle.forward")
-                    .font(.system(size: 13, weight: .semibold))
-                Spacer()
-                Text("\(store.selectedQueuedDrafts.count)")
-                    .font(.system(size: 11, weight: .bold, design: .rounded))
-                    .foregroundStyle(.secondary)
-            }
-            .padding(14)
-
-            Divider()
-
-            ScrollView {
-                VStack(spacing: 10) {
-                    ForEach(Array(store.selectedQueuedDrafts.enumerated()), id: \.element.id) { index, payload in
-                        VStack(alignment: .leading, spacing: 8) {
-                            TextField(
-                                "Queued message",
-                                text: Binding(
-                                    get: { payload.text },
-                                    set: { store.updateQueuedDraft(payload.id, text: $0) }
-                                ),
-                                axis: .vertical
-                            )
-                            .textFieldStyle(.plain)
-                            .lineLimit(2...6)
-                            .font(.system(size: 12.5))
-
-                            if !payload.attachments.isEmpty {
-                                DesktopAttachmentStrip(attachments: payload.attachments)
-                            }
-
-                            HStack {
-                                Text(payload.createdAt, style: .relative)
-                                    .font(.system(size: 10.5))
-                                    .foregroundStyle(.tertiary)
-                                Spacer()
-                                Button {
-                                    store.moveQueuedDraft(payload.id, offset: -1)
-                                } label: { Image(systemName: "arrow.up") }
-                                .buttonStyle(.plain)
-                                .disabled(index == 0)
-                                .help("Move earlier")
-                                .accessibilityLabel("Move queued message earlier")
-
-                                Button {
-                                    store.moveQueuedDraft(payload.id, offset: 1)
-                                } label: { Image(systemName: "arrow.down") }
-                                .buttonStyle(.plain)
-                                .disabled(index == store.selectedQueuedDrafts.count - 1)
-                                .help("Move later")
-                                .accessibilityLabel("Move queued message later")
-                                Button("Remove", role: .destructive) {
-                                    store.removeQueuedDraft(payload.id)
-                                }
-                                .buttonStyle(.link)
-
-                                if store.isRunningTurn {
-                                    Button("Steer now") {
-                                        store.steerQueuedDraft(payload.id)
-                                    }
-                                    .buttonStyle(.bordered)
-                                    .disabled(!store.capabilities.supports(.turnSteering))
-                                } else if !store.isBusyTurn,
-                                          payload.id == store.selectedQueuedDrafts.first?.id {
-                                    Button("Send now") {
-                                        store.sendNextQueuedDraft()
-                                    }
-                                    .buttonStyle(.borderedProminent)
-                                }
-                            }
-                            .controlSize(.small)
-                        }
-                        .padding(10)
-                        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-                    }
-                }
-                .padding(12)
-            }
-            .frame(maxHeight: 340)
-        }
-        .frame(width: 390)
-    }
-}
 
 struct DesktopFloatingMaterialSurface: ViewModifier {
     @Environment(\.colorScheme) private var colorScheme

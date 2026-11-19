@@ -8,7 +8,7 @@ import SwiftUI
 struct DesktopModelMenu: View {
     @Bindable var store: DesktopCodexStore
     @AppStorage(DesktopAppearancePreferences.modelPickerAppearanceKey) private var pickerAppearanceRaw =
-        DesktopModelPickerAppearance.native.rawValue
+        DesktopModelPickerAppearance.defaultAppearance.rawValue
     @Environment(\.colorScheme) private var colorScheme
     @State private var isPresented = false
     @State private var isTriggerHovered = false
@@ -57,7 +57,7 @@ struct DesktopModelMenu: View {
     }
 
     private var pickerAppearance: DesktopModelPickerAppearance {
-        DesktopModelPickerAppearance(rawValue: pickerAppearanceRaw) ?? .native
+        DesktopModelPickerAppearance(rawValue: pickerAppearanceRaw) ?? .defaultAppearance
     }
 
     private var isFastModeEnabled: Bool { store.selectedModelServiceTier?.isFastModeTier == true }

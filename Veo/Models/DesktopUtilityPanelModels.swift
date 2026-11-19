@@ -10,10 +10,11 @@ enum DesktopUtilityPanelTab: String, CaseIterable, Identifiable {
     case browser
     case files
     case subagents
+    case sideChat
 
     var id: Self { self }
 
-    var title: String { rawValue.capitalized }
+    var title: String { self == .sideChat ? "Side chat" : rawValue.capitalized }
 
     var systemImage: String {
         switch self {
@@ -22,6 +23,7 @@ enum DesktopUtilityPanelTab: String, CaseIterable, Identifiable {
         case .browser: return "globe"
         case .files: return "folder"
         case .subagents: return "person.2.wave.2"
+        case .sideChat: return "bubble.left.and.bubble.right"
         }
     }
 }
@@ -33,6 +35,7 @@ struct DesktopUtilityPanelItem: Identifiable, Hashable {
         case browser(UUID)
         case files
         case subagents
+        case sideChat
 
         var kind: DesktopUtilityPanelTab {
             switch self {
@@ -41,6 +44,7 @@ struct DesktopUtilityPanelItem: Identifiable, Hashable {
             case .browser: return .browser
             case .files: return .files
             case .subagents: return .subagents
+            case .sideChat: return .sideChat
             }
         }
     }
@@ -75,6 +79,7 @@ final class DesktopUtilityPanelModel: ObservableObject {
     @Published private(set) var tabs: [DesktopUtilityPanelItem] = []
     @Published private(set) var selectedTabID: UUID?
     @Published var presentsAIReview = false
+    @Published var turnDiff: DesktopTurnDiff?
     @Published private(set) var subagentsAvailable = false
     @Published var selectedSubagentID: String?
 
@@ -120,6 +125,12 @@ final class DesktopUtilityPanelModel: ObservableObject {
             addTab(tab)
         }
         presentsAIReview = aiReview
+        if tab == .review { turnDiff = nil }
+    }
+
+    func showTurnDiff(_ diff: DesktopTurnDiff) {
+        show(.review)
+        turnDiff = diff
     }
 
     func addTab(_ kind: DesktopUtilityPanelTab) {
@@ -134,6 +145,10 @@ final class DesktopUtilityPanelModel: ObservableObject {
             _ = browser.addTab()
         case .files:
             let item = DesktopUtilityPanelItem(content: .files)
+            tabs.append(item)
+            selectTab(item.id)
+        case .sideChat:
+            let item = DesktopUtilityPanelItem(content: .sideChat)
             tabs.append(item)
             selectTab(item.id)
         case .subagents:
@@ -242,6 +257,7 @@ final class DesktopUtilityPanelModel: ObservableObject {
         files.switchWorkspace(to: canonical)
         browser.switchWorkspace(to: canonical)
         workspaceKey = canonical?.path ?? "__no_workspace__"
+        if currentThreadID != threadID { turnDiff = nil }
         currentThreadID = threadID
 
         let validBrowserIDs = Set(browser.tabs.map(\.id))

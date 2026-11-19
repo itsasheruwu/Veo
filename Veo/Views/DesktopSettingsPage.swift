@@ -162,7 +162,7 @@ struct DesktopSettingsPage: View {
     @AppStorage(DesktopAppearancePreferences.threadMinimapMaterialKey) private var threadMinimapMaterialRaw =
         DesktopMinimapMaterial.liquidGlass.rawValue
     @AppStorage(DesktopAppearancePreferences.modelPickerAppearanceKey) private var modelPickerAppearanceRaw =
-        DesktopModelPickerAppearance.native.rawValue
+        DesktopModelPickerAppearance.defaultAppearance.rawValue
     @AppStorage(DesktopAppearancePreferences.textStreamingModeKey) private var textStreamingModeRaw =
         DesktopTextStreamingMode.token.rawValue
     @AppStorage(DesktopAppearancePreferences.viewedImagesInitialExpansionKey) private var viewedImagesInitialExpansionRaw =
@@ -274,7 +274,7 @@ struct DesktopSettingsPage: View {
 
     private var modelPickerAppearanceBinding: Binding<DesktopModelPickerAppearance> {
         Binding(
-            get: { DesktopModelPickerAppearance(rawValue: modelPickerAppearanceRaw) ?? .native },
+            get: { DesktopModelPickerAppearance(rawValue: modelPickerAppearanceRaw) ?? .defaultAppearance },
             set: { modelPickerAppearanceRaw = $0.rawValue }
         )
     }

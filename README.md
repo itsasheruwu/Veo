@@ -105,7 +105,7 @@ When a turn reaches a reported usage limit, Veo can retain the interrupted turn 
 
 ## Install a release
 
-Download the latest DMG from [GitHub Releases](https://github.com/itsasheruwu/Veo/releases), open it, and drag **Veo** to the **Applications** shortcut. A standard macOS `.pkg` installer is also attached to each release.
+Download the DMG from the [latest stable release](https://github.com/itsasheruwu/Veo/releases/latest), open it, and drag **Veo** to the **Applications** shortcut. A macOS `.pkg` installer is also attached.
 
 Veo is currently distributed with a hardened-runtime ad-hoc signature, not a Developer ID signature or Apple notarization. On first launch, right-click **Veo** in Applications and choose **Open**. If macOS still blocks it, use **System Settings → Privacy & Security → Open Anyway**. Only download installers from this repository.
 
@@ -123,6 +123,10 @@ Veo discovers Codex from, in order:
 3. Standard Homebrew and common local binary locations
 
 If discovery fails, set `CODEX_EXECUTABLE` to the absolute path of the `codex` binary before opening Veo.
+
+## Windows beta
+
+The [Windows x64 beta](https://github.com/itsasheruwu/Veo/releases/tag/v2.4.1-windows-beta.1) is a portable ZIP for Windows 11 24H2 or later. Extract it and run `Veo.Windows.exe` inside the `Veo` folder. Install and authenticate Codex locally. The [Windows beta branch](https://github.com/itsasheruwu/Veo/tree/codex/windows-beta/windows) contains the source and build instructions.
 
 ## Build and run
 

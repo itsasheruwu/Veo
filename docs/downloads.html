@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Downloads — Veo</title>
-<meta name="description" content="Download Veo for macOS as a DMG or PKG, verify the checksum, or build it from source with Xcode.">
+<meta name="description" content="Download Veo for macOS or try the portable Windows x64 beta. Verify release checksums and find installation instructions.">
 <meta name="color-scheme" content="dark">
 <link rel="icon" href="assets/favicon.png">
 <link rel="stylesheet" href="styles.css">
@@ -29,7 +29,7 @@
 <section class="page-head">
   <div class="wrap">
     <h1>Downloads</h1>
-    <p class="lede">One app, two installers, no account. Veo is a universal binary for Apple silicon and Intel Macs.</p>
+    <p class="lede">Download the stable universal build for Mac or try the portable Windows beta.</p>
   </div>
 </section>
 
@@ -39,14 +39,14 @@
     <div class="meta">
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
         <span class="tag">Latest</span>
-        <strong style="font-size:20px;letter-spacing:-.02em">Veo 2.4</strong>
-        <span class="faint">· 18 Nov 2026</span>
+        <strong style="font-size:20px;letter-spacing:-.02em">Veo 2.4.1</strong>
+        <span class="faint">· 19 Nov 2026</span>
       </div>
-      <p class="muted" style="margin-bottom:18px;font-size:14.5px">Dedicated GPT-6.2 model groups, a Daybreak toggle for supported Codex models, and a more responsive workspace. macOS 14 or later.</p>
-      <div class="actions">
-        <a class="btn btn-primary" href="https://github.com/itsasheruwu/Veo/releases/download/v2.4.0/Veo-2.4-macOS-universal.dmg">Download DMG · 17.9 MB</a>
-        <a class="btn btn-ghost" href="https://github.com/itsasheruwu/Veo/releases/download/v2.4.0/Veo-2.4-macOS-universal.pkg">Installer PKG · 14.8 MB</a>
-        <a class="btn btn-ghost" href="changelog.html#v2-4-0">Release notes</a>
+      <p class="muted" style="margin-bottom:18px;font-size:14.5px">Ultrafast speed for supported models, clearer model details, and restored settings and composer layouts. macOS 14 or later.</p>
+      <div class="download-actions">
+        <a class="btn btn-primary" href="https://github.com/itsasheruwu/Veo/releases/download/v2.4.1/Veo-2.4.1-macOS-universal.dmg">Download DMG · 18.8 MB</a>
+        <a class="btn btn-ghost" href="https://github.com/itsasheruwu/Veo/releases/download/v2.4.1/Veo-2.4.1-macOS-universal.pkg">Installer PKG · 15.5 MB</a>
+        <a class="btn btn-ghost" href="changelog.html#v2-4-1">Release notes</a>
       </div>
     </div>
   </div>
@@ -74,14 +74,32 @@
   </div>
 </section>
 
+<section class="section-tight" id="windows-beta">
+  <div class="wrap">
+    <div class="card">
+      <div class="section-label">Prerelease</div>
+      <h2>Veo for Windows beta</h2>
+      <p class="muted">Windows 11 24H2 or later, x64. Install Codex locally, extract the entire ZIP, then open <code>Veo.Windows.exe</code> inside the Veo folder.</p>
+      <p class="muted" style="margin-bottom:18px">This portable build is unsigned. Updates are manual, and background quiet wake requires a packaged build.</p>
+      <div class="download-actions">
+        <a class="btn btn-primary" href="https://github.com/itsasheruwu/Veo/releases/download/v2.4.1-windows-beta.1/Veo-2.4.1-beta.1-Windows-x64.zip">Download ZIP · 147.7 MB</a>
+        <a class="btn btn-ghost" href="https://github.com/itsasheruwu/Veo/releases/tag/v2.4.1-windows-beta.1">Windows beta release notes</a>
+      </div>
+    </div>
+  </div>
+</section>
+
 <section class="section-tight">
   <div class="wrap">
     <div class="section-label">Verify</div>
     <h2>Checksums</h2>
-      <p class="lede mt-32">Compare before you open. Run <code>shasum -a 256 ~/Downloads/Veo-2.4-macOS-universal.dmg</code> and match the digest below.</p>
-    <table class="table mt-32">
+    <p class="lede mt-32">On a Mac, run <code>shasum -a 256 ~/Downloads/Veo-2.4.1-macOS-universal.dmg</code>. On Windows, run <code>Get-FileHash</code> in PowerShell with the path to the downloaded ZIP. Compare the result with the matching digest below.</p>
+    <table class="table download-table mt-32">
       <thead><tr><th>File</th><th>SHA-256</th></tr></thead>
       <tbody>
+        <tr><td>Veo 2.4.1 · Mac DMG</td><td class="hash">26e798d7a7daf54b6035e4c078efc4f25358faed702bf23f1093da169f75e2d9</td></tr>
+        <tr><td>Veo 2.4.1 · Mac PKG</td><td class="hash">a747804cab02281e3a46f72a552c19fe64b053ee6f66bdeb7b2ecd62b118d7c2</td></tr>
+        <tr><td>Veo 2.4.1 beta.1 · Windows x64 ZIP</td><td class="hash">155a1466d281ee91608b3d8037653d2b8abac2fea1e04b94ec21a2ac45a5231f</td></tr>
         <tr><td>Veo-2.4 · DMG</td><td class="hash">0e6b813ee55aa16bb7d0ff007b54fd411680c03407ac76a2c8d4289634ed6759</td></tr>
         <tr><td>Veo-2.4 · PKG</td><td class="hash">330608516c939ff2d1b6042cd834b64586aa563a660e8e70214d3783d5273ca4</td></tr>
         <tr><td>Veo-2.3 · DMG</td><td class="hash">7f1ad4165d97dff4613eea10708bc1dbc8a9cfd9fe2593404f7678ba13127ac3</td></tr>
@@ -151,9 +169,13 @@ open /tmp/veo-derived/Build/Products/Debug/Veo.app</pre>
   <div class="wrap">
     <div class="section-label">Archive</div>
     <h2>Previous versions</h2>
-    <table class="table mt-32">
+    <table class="table download-table mt-32">
       <thead><tr><th>Version</th><th>Released</th><th>Highlight</th><th>Files</th></tr></thead>
       <tbody>
+        <tr>
+          <td>2.4</td><td>18 Nov 2026</td><td>GPT-6.2 groups and Daybreak</td>
+          <td><a href="https://github.com/itsasheruwu/Veo/releases/tag/v2.4.0" style="color:var(--accent)">Release</a></td>
+        </tr>
         <tr>
           <td>2.3</td><td>24 Sep 2026</td><td>Auto routing, GPT-6, and context controls</td>
           <td><a href="https://github.com/itsasheruwu/Veo/releases/tag/v2.3.0" style="color:var(--accent)">Release</a></td>

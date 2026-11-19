@@ -126,7 +126,7 @@ If discovery fails, set `CODEX_EXECUTABLE` to the absolute path of the `codex` b
 
 ## Windows beta
 
-The [Windows x64 beta](https://github.com/itsasheruwu/Veo/releases/tag/v2.4.1-windows-beta.1) is a portable ZIP for Windows 11 24H2 or later. Extract it and run `Veo.Windows.exe` inside the `Veo` folder. Install and authenticate Codex locally. The [Windows beta branch](https://github.com/itsasheruwu/Veo/tree/codex/windows-beta/windows) contains the source and build instructions.
+The [Windows x64 beta](https://github.com/itsasheruwu/Veo/releases/tag/v2.5.0-windows-beta.1) is a portable ZIP for Windows 11 24H2 or later. Extract it and run `Veo.Windows.exe` inside the `Veo` folder. Install and authenticate Codex locally. The [Windows beta branch](https://github.com/itsasheruwu/Veo/tree/codex/windows-beta/windows) contains the source and build instructions.
 
 ## Build and run
 

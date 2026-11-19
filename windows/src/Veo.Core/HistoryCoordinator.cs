@@ -223,7 +223,7 @@ public sealed class HistoryCoordinator(WorkspaceCoordinator workspace, ICoordina
     }
     static TimelineItem? Item(JsonElement raw, string? turn, long order) => raw.Str("id") is { } id ? new(id, turn, raw.Str("type") ?? "unknown", TimelineReducer.ExtractText(raw), raw.Str("status") ?? "completed", raw.Clone(), order) : null;
     static bool Running(JsonElement value) => (value.Str("status") ?? (value.TryObjectProperty("status", out var status) ? status.Str("type") : null)) is "active" or "running" or "inProgress";
-    static PersistedTurn[] PersistTurns(HistoryPage page) => (page.TurnMetadata ?? []).Select(t => new PersistedTurn(t.Id, t.Status, t.StartedAt, t.ErrorJson, t.Order, t.TerminalObserved)).ToArray();
+    static PersistedTurn[] PersistTurns(HistoryPage page) => (page.TurnMetadata ?? []).Select(t => new PersistedTurn(t.Id, t.Status, t.StartedAt, t.ErrorJson, t.Order, t.TerminalObserved, t.CompletedAt, t.Diff, t.Steers)).ToArray();
     static PersistedItem[] Persist(IReadOnlyList<TimelineItem> items) => items.Select(item =>
     {
         var raw = JsonNode.Parse(item.Raw.GetRawText())!.AsObject(); raw["veoRenderedText"] = item.Text;

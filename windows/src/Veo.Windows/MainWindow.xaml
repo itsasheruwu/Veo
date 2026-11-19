@@ -33,6 +33,13 @@
             </TitleBar.Resources>
             <TitleBar.LeftHeader>
                 <Grid x:Name="SidebarToggleSlot" Width="280">
+                    <StackPanel Orientation="Horizontal" Spacing="7" Margin="12,0,0,0"
+                                HorizontalAlignment="Left" VerticalAlignment="Center">
+                        <Image Source="ms-appx:///Assets/TitleBarIcon.png" Width="12" Height="12"
+                               VerticalAlignment="Center" Stretch="Uniform" AutomationProperties.AccessibilityView="Raw" />
+                        <TextBlock Text="Veo" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"
+                                   AutomationProperties.AutomationId="VeoTitleBarLabel" />
+                    </StackPanel>
                     <Button x:Name="SidebarToggle" Style="{StaticResource CaptionCommand}"
                             HorizontalAlignment="Right" Margin="0,0,4,0"
                             TitleBar.IsDragRegion="False" Click="Sidebar_Click"

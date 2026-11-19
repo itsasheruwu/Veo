@@ -7,7 +7,11 @@ public sealed record VeoPreferences
 {
     public int Version { get; init; } = 1;
     public string Appearance { get; set; } = "System";
-    public string ModelPicker { get; set; } = "Native";
+    public const string NativePicker = "Native";
+    public const string SliderPicker = "Slider / Advanced";
+    public string ModelPicker { get; set; } = SliderPicker;
+    public bool ModelPickerUpgradeApplied { get; set; }
+    public bool ModelPickerUpgradeNoticePending { get; set; }
     public string Streaming { get; set; } = "Token";
     public string ViewedImages { get; set; } = "Expanded";
     public string Accent { get; set; } = "#2E8CFA";
@@ -48,6 +52,7 @@ public sealed record VeoPreferences
     public bool WindowMaximized { get; set; }
     public double UtilityWidth { get; set; } = 360;
     public bool UtilityVisible { get; set; } = true;
+    public bool SteerFollowUps { get; set; }
     public string UtilityTab { get; set; } = "Review";
     public Dictionary<string, BrowserTabState[]> BrowserTabs { get; set; } = [];
     [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
@@ -59,14 +64,31 @@ public sealed class PreferencesStore(string dataRoot)
     readonly SemaphoreSlim writer = new(1, 1);
     public async Task<VeoPreferences> LoadAsync()
     {
-        if (!File.Exists(path)) return new();
+        if (!File.Exists(path))
+        {
+            var fresh = new VeoPreferences { ModelPickerUpgradeApplied = true };
+            await SaveAsync(fresh);
+            return fresh;
+        }
         try
         {
-            var value = JsonSerializer.Deserialize<VeoPreferences>(await File.ReadAllTextAsync(path)) ?? new();
+            using var settings = JsonDocument.Parse(await File.ReadAllTextAsync(path));
+            var root = settings.RootElement;
+            var value = root.Deserialize<VeoPreferences>() ?? throw new JsonException("Expected a settings object.");
+            if (!value.ModelPickerUpgradeApplied)
+            {
+                var alreadyUsesSlider = root.TryGetProperty(nameof(VeoPreferences.ModelPicker), out var previous)
+                    && previous.ValueKind == JsonValueKind.String
+                    && previous.GetString() == VeoPreferences.SliderPicker;
+                value.ModelPicker = VeoPreferences.SliderPicker;
+                value.ModelPickerUpgradeApplied = true;
+                value.ModelPickerUpgradeNoticePending = !alreadyUsesSlider;
+                await SaveAsync(value);
+            }
             value.WindowWidth = double.IsFinite(value.WindowWidth) ? Math.Clamp(value.WindowWidth, 640, 10000) : 1380;
             value.WindowHeight = double.IsFinite(value.WindowHeight) ? Math.Clamp(value.WindowHeight, 480, 10000) : 900;
             value.UtilityWidth = double.IsFinite(value.UtilityWidth) ? Math.Clamp(value.UtilityWidth, 280, 800) : 360;
-            value.UtilityTab = value.UtilityTab is "Review" or "Browser" or "Files" ? value.UtilityTab : "Review";
+            value.UtilityTab = value.UtilityTab is "Review" or "Browser" or "Files" or "Side chat" ? value.UtilityTab : "Review";
             value.BrowserTabs ??= [];
             return value;
         }

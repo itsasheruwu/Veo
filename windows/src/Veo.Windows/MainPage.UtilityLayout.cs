@@ -49,7 +49,7 @@ public sealed partial class MainPage
         restoringUtilityTab = true;
         try
         {
-            UtilityTabs.SelectedIndex = preferences.UtilityTab switch { "Browser" => 1, "Files" => 2, _ => 0 };
+            UtilityTabs.SelectedIndex = preferences.UtilityTab switch { "Browser" => 1, "Files" => 2, "Side chat" => 3, _ => 0 };
         }
         finally { restoringUtilityTab = false; }
         utilityLayoutReady = true;
@@ -94,7 +94,7 @@ public sealed partial class MainPage
         workspace.Preferences.UtilityVisible = true;
         if (selectedTab is { } index)
         {
-            index = Math.Clamp(index, 0, 2);
+            index = Math.Clamp(index, 0, 3);
             restoringUtilityTab = true;
             try { UtilityTabs.SelectedIndex = index; }
             finally { restoringUtilityTab = false; }
@@ -113,7 +113,7 @@ public sealed partial class MainPage
         if (workspace.Preferences.UtilityVisible) await ShowUtilityAsync();
     }
 
-    static string UtilityTabName(int index) => index switch { 1 => "Browser", 2 => "Files", _ => "Review" };
+    static string UtilityTabName(int index) => index switch { 1 => "Browser", 2 => "Files", 3 => "Side chat", _ => "Review" };
 
     async void Utility_Changed(object sender, SelectionChangedEventArgs e)
     {

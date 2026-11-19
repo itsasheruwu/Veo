@@ -161,9 +161,12 @@ public sealed class QueueCoordinator : IDisposable
             await workspace.Threads.SaveStateAsync(session.Record.VeoId, "queue-steer", JsonSerializer.Serialize(new { state = "pending", payload = payload.Freeze(), expectedTurnId = turnId }), token);
             try
             {
+                var sentAt = DateTimeOffset.UtcNow;
                 await rpc.RequestAsync("turn/steer", new { threadId = session.Record.CodexThreadId, expectedTurnId = turnId, clientUserMessageId = payload.ClientId, input = ComposerProtocol.Input(payload) }, token);
+                session.Timeline.RecordSteer(turnId, payload.ClientId, sentAt);
                 session.RemoveQueued(payload.ClientId); await SaveLocalAsync(session, token);
                 await workspace.Threads.SaveStateAsync(session.Record.VeoId, "queue-steer", "{\"state\":\"complete\"}", token);
+                await workspace.PersistTimelineAsync(session);
                 workspace.NotifyChanged();
             }
             catch (CodexRpcException) { await workspace.Threads.SaveStateAsync(session.Record.VeoId, "queue-steer", "{\"state\":\"rejected\"}", CancellationToken.None); throw; }

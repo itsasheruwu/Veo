@@ -14,13 +14,14 @@ public sealed record TimelineItemPresentation(string Title, string Body, Convers
 public static class TimelinePresentation
 {
     static readonly HashSet<string> ActivityKinds = new(["reasoning", "commandExecution", "fileChange", "mcpToolCall", "dynamicToolCall", "collabAgentToolCall", "subAgentActivity", "webSearch", "sleep", "enteredReviewMode", "contextCompaction", "planUpdate"], StringComparer.Ordinal);
+    public static bool IsActivity(string kind) => ActivityKinds.Contains(kind);
     public static IReadOnlyList<TimelineDisplayEntry> Entries(IEnumerable<TimelineItem> source, bool groupActivity)
     {
         var result = new List<TimelineDisplayEntry>(); var group = new List<TimelineItem>();
         void Flush() { if (group.Count == 0) return; result.Add(new("activity:" + group[0].Id, "activity", group.ToArray())); group.Clear(); }
         foreach (var item in source.OrderBy(x => x.Order))
         {
-            if (groupActivity && ActivityKinds.Contains(item.Kind)) { if (group.Count > 0 && group[^1].TurnId != item.TurnId) Flush(); group.Add(item); }
+            if (groupActivity && IsActivity(item.Kind)) { if (group.Count > 0 && group[^1].TurnId != item.TurnId) Flush(); group.Add(item); }
             else { Flush(); result.Add(new(item.Id, item.Kind, [item])); }
         }
         Flush(); return result;
@@ -71,7 +72,7 @@ public static class TimelinePresentation
             else if (string.IsNullOrWhiteSpace(body)) body = artifacts.Count > 0 ? "" : "No textual result was supplied. Runtime status: " + item.Status;
         }
         var textInBody = item.Kind is "userMessage" or "mcpToolCall" or "dynamicToolCall";
-        return new(title, body, artifacts.Where(x => x.Kind != "text" || !textInBody && body != x.Source).ToArray(), sources.ToArray(), agents.ToArray(), ActivityKinds.Contains(item.Kind));
+        return new(title, body, artifacts.Where(x => x.Kind != "text" || !textInBody && body != x.Source).ToArray(), sources.ToArray(), agents.ToArray(), IsActivity(item.Kind));
     }
     static void AddContent(JsonElement[] content, string parent, List<ConversationArtifact> artifacts)
     {

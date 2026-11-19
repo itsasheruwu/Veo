@@ -38,7 +38,7 @@ try {
     New-Item -ItemType Directory -Path $assets -Force | Out-Null
     Copy-Item -LiteralPath (Join-Path $windowsRoot 'src\Veo.Windows\Assets\AppIcon.ico') -Destination $assets
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'LICENSE') -Destination $payload
-    foreach ($required in 'Veo.Windows.exe', 'Veo.Windows.pri', 'Microsoft.UI.Xaml.dll', 'coreclr.dll', 'Assets\AppIcon.ico') {
+    foreach ($required in 'Veo.Windows.exe', 'Veo.Windows.pri', 'Microsoft.UI.Xaml.dll', 'coreclr.dll', 'Assets\AppIcon.ico', 'Assets\TitleBarIcon.png') {
         if (!(Test-Path -LiteralPath (Join-Path $payload $required) -PathType Leaf)) {
             throw "Portable build is missing $required."
         }

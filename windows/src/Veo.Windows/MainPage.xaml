@@ -121,7 +121,7 @@
       <TextBlock Text="Search" FontSize="13.5" FontWeight="SemiBold" VerticalAlignment="Center"/>
      </StackPanel>
     </Button>
-    <TextBox x:Name="SearchBox" PlaceholderText="Search every project" IsTextPredictionEnabled="False" Margin="4,2,4,1" Visibility="Collapsed" TextChanged="Search_Changed" KeyDown="SidebarSearch_KeyDown" AutomationProperties.Name="Search every project" AutomationProperties.AutomationId="SearchChats"/>
+    <TextBox x:Name="SearchBox" PlaceholderText="Search every project" Margin="4,2,4,1" Visibility="Collapsed" TextChanged="Search_Changed" KeyDown="SidebarSearch_KeyDown" AutomationProperties.Name="Search every project" AutomationProperties.AutomationId="SearchChats"/>
    </StackPanel>
    <Grid Grid.Row="1" Margin="13,0,9,1">
     <TextBlock x:Name="SidebarCatalogLabel" Text="Chats" FontSize="11.5" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center"/>
@@ -222,26 +222,33 @@
    <TextBlock x:Name="WelcomeHeading" Grid.Row="1" Text="What should we work on?" FontSize="26" FontWeight="SemiBold" TextWrapping="Wrap" TextAlignment="Center" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="12,0,12,14" Visibility="Collapsed"/>
    <ContentControl x:Name="TerminalHost" Grid.Row="2" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"/>
    <StackPanel Grid.Row="3" Spacing="8" MaxWidth="{StaticResource ConversationMaxWidth}"><ContentControl x:Name="ApprovalReviewHost"/><StackPanel x:Name="PendingPanel" Spacing="8"/></StackPanel>
-   <StackPanel x:Name="QueuePanel" Grid.Row="4" Spacing="4" MaxWidth="{StaticResource ConversationMaxWidth}"/>
    <Border x:Name="ComposerPanel" Grid.Row="5" MaxWidth="{StaticResource ConversationMaxWidth}" Margin="4,0,4,8" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="16" SizeChanged="ComposerPanel_SizeChanged">
     <StackPanel>
+     <Border x:Name="QueueShelf" Visibility="Collapsed" CornerRadius="15,15,0,0"
+             Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+             BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}" BorderThickness="0,0,0,1">
+      <StackPanel x:Name="QueuePanel" Padding="13,8,13,9" Spacing="4"
+                  AutomationProperties.Name="Queued follow-ups"/>
+     </Border>
      <StackPanel Padding="12" Spacing="8">
       <StackPanel x:Name="ComposerInputs" Spacing="6" Visibility="Collapsed"/>
-      <TextBox x:Name="Composer" PlaceholderText="Send follow-up" AcceptsReturn="True" TextWrapping="Wrap" IsSpellCheckEnabled="False" IsTextPredictionEnabled="False" MinHeight="34" MaxHeight="110" FontSize="14" BorderThickness="0" Background="Transparent" Padding="5,8,5,0" TextChanged="Composer_Changed" KeyDown="Composer_KeyDown" AllowDrop="True" DragOver="Composer_DragOver" Drop="Composer_Drop" AutomationProperties.Name="Message Codex" AutomationProperties.AutomationId="Composer">
-       <TextBox.Resources>
+      <local:ChatComposerBox x:Name="Composer" PlaceholderText="Send follow-up" AcceptsReturn="True" TextWrapping="Wrap" IsSpellCheckEnabled="False" IsTextPredictionEnabled="False" MinHeight="34" MaxHeight="110" FontSize="14" BorderThickness="0" Background="Transparent" Padding="5,8,5,0" TextChanged="Composer_Changed" AllowDrop="True" DragOver="Composer_DragOver" Drop="Composer_Drop" AutomationProperties.Name="Message Codex" AutomationProperties.AutomationId="Composer">
+       <local:ChatComposerBox.Resources>
         <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="Transparent"/>
         <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="Transparent"/>
         <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="Transparent"/>
         <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="Transparent"/>
-       </TextBox.Resources>
-      </TextBox>
+       </local:ChatComposerBox.Resources>
+      </local:ChatComposerBox>
       <Grid x:Name="ComposerToolbar" ColumnSpacing="8">
        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
        <Button x:Name="ComposerOptionsButton" Style="{StaticResource ComposerChromeButton}" Width="27" Height="27" CornerRadius="14" Background="{ThemeResource SubtleFillColorSecondaryBrush}" Click="ComposerOptions_Click" ToolTipService.ToolTip="Composer options" AutomationProperties.Name="Composer options" AutomationProperties.AutomationId="ComposerOptions">
         <FontIcon Glyph="&#xE710;" FontSize="12"/>
        </Button>
-       <Button x:Name="ModelTrigger" Grid.Column="1" Height="26" Style="{StaticResource ComposerChromeButton}" HorizontalContentAlignment="Stretch" PointerEntered="ModelTrigger_PointerEntered" PointerExited="ModelTrigger_PointerExited" Click="Model_Click" AutomationProperties.Name="Select model" AutomationProperties.AutomationId="ModelPicker">
+       <Grid x:Name="ModelPickerSlot" Grid.Column="1" ColumnSpacing="5">
+        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+       <Button x:Name="ModelTrigger" Height="26" Style="{StaticResource ComposerChromeButton}" HorizontalContentAlignment="Stretch" PointerEntered="ModelTrigger_PointerEntered" PointerExited="ModelTrigger_PointerExited" Click="Model_Click" AutomationProperties.Name="Select model" AutomationProperties.AutomationId="ModelPicker">
         <Button.Resources>
          <SolidColorBrush x:Key="SubtleFillColorSecondaryBrush" Color="Transparent"/>
         </Button.Resources>
@@ -265,6 +272,12 @@
          <FontIcon x:Name="SliderChevron" Glyph="&#xE70D;" FontSize="8" Foreground="{ThemeResource TextFillColorTertiaryBrush}" HorizontalAlignment="Right" Margin="0,0,9,0" Visibility="Collapsed" IsHitTestVisible="False" AutomationProperties.AccessibilityView="Raw"/>
         </Grid>
        </Button>
+        <Button x:Name="ComposerContextIndicator" Grid.Column="1" Height="25" MinWidth="28" Padding="2,0"
+                Style="{StaticResource ComposerChromeButton}" Visibility="Collapsed" Click="ContextIndicator_Click"
+                AutomationProperties.Name="Context window usage" AutomationProperties.AutomationId="ComposerContextUsage">
+         <TextBlock x:Name="ComposerContextPercent" FontSize="11" FontWeight="Medium" VerticalAlignment="Center"/>
+        </Button>
+       </Grid>
        <Button x:Name="AccessButton" Grid.Column="2" Height="26" Style="{StaticResource ComposerChromeButton}" HorizontalAlignment="Left" Padding="4,0" Click="ComposerAccess_Click" AutomationProperties.Name="Access mode" AutomationProperties.AutomationId="ComposerAccess">
         <StackPanel Orientation="Horizontal" Spacing="5">
          <FontIcon x:Name="AccessIcon" Glyph="&#xE8B7;" FontSize="12"/>
@@ -318,6 +331,7 @@
      <TabViewItem Header="Review" IsClosable="False"><TabViewItem.IconSource><SymbolIconSource Symbol="Document"/></TabViewItem.IconSource></TabViewItem>
      <TabViewItem Header="Browser" IsClosable="False"><TabViewItem.IconSource><SymbolIconSource Symbol="World"/></TabViewItem.IconSource></TabViewItem>
      <TabViewItem Header="Files" IsClosable="False"><TabViewItem.IconSource><SymbolIconSource Symbol="Folder"/></TabViewItem.IconSource></TabViewItem>
+     <TabViewItem Header="Side chat" IsClosable="False"><TabViewItem.IconSource><SymbolIconSource Symbol="Message"/></TabViewItem.IconSource></TabViewItem>
     </TabView.TabItems>
    </TabView>
    <ContentControl x:Name="UtilityHost" Grid.Row="1" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"/>

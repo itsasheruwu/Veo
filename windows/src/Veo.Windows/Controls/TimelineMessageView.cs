@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Data;
 using Microsoft.UI.Xaml.Media;
 using Veo.Core;
+using Veo.Protocol;
 using Veo_Windows.ViewModels;
 using Windows.ApplicationModel.DataTransfer;
 
@@ -31,11 +32,12 @@ public sealed class TimelineMessageView : UserControl
     string? artifactSignature;
     string? presentationKey;
     bool renderPending;
+    DispatcherTimer? workTimer;
     public TimelineMessageView()
     {
         HorizontalContentAlignment = HorizontalAlignment.Stretch;
         Loaded += (_, _) => { Subscribe(Row); Render(); };
-        Unloaded += (_, _) => Subscribe(null);
+        Unloaded += (_, _) => { Subscribe(null); workTimer?.Stop(); };
     }
     static void RowChanged(DependencyObject sender, DependencyPropertyChangedEventArgs args)
     { var view = (TimelineMessageView)sender; view.Subscribe(args.NewValue as MessageRow); view.Render(); }
@@ -54,6 +56,12 @@ public sealed class TimelineMessageView : UserControl
     void Render()
     {
         if (Row is not { } row) { Content = null; presentationKey = null; return; }
+        if (row.Item.Kind is "veoTurnWork" or "veoTurnContinuation" or "veoTurnProgress" or "veoTurnDiff")
+        {
+            RenderConversationStatus(row);
+            return;
+        }
+        workTimer?.Stop();
         var key = row.Session.Record.VeoId + "|" + row.Id + "|" + row.Item.Kind;
         var shown = TimelinePresentation.Item(row.Item);
         if (presentationKey != key)
@@ -110,6 +118,89 @@ public sealed class TimelineMessageView : UserControl
             updateActivityName?.Invoke();
         }
         RenderArtifacts(row, shown);
+    }
+
+    void RenderConversationStatus(MessageRow row)
+    {
+        workTimer?.Stop();
+        workTimer = null;
+        presentationKey = null;
+        if (row.Item.Kind == "veoTurnDiff")
+        {
+            var patches = ConversationPatch.Files(row.Item.Text);
+            var additions = row.Item.Text.Split('\n').Count(line => line.StartsWith('+') && !line.StartsWith("+++", StringComparison.Ordinal));
+            var deletions = row.Item.Text.Split('\n').Count(line => line.StartsWith('-') && !line.StartsWith("---", StringComparison.Ordinal));
+            var button = new Button { Content = $"{patches.Count} {(patches.Count == 1 ? "file" : "files")} changed · +{additions} −{deletions} · Review" };
+            button.Click += async (_, _) => { if (row.ReviewTurn is { } reviewTurn) await reviewTurn(row.Item); };
+            Content = button;
+            return;
+        }
+        var label = new TextBlock { FontSize = 12, Opacity = .72, FontFamily = new("Segoe UI"), VerticalAlignment = VerticalAlignment.Center };
+        var divider = new Grid { ColumnSpacing = 10 };
+        divider.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        divider.ColumnDefinitions.Add(new());
+        FrameworkElement prefix = label;
+        var turn = row.Session.Timeline.Turns.FirstOrDefault(candidate => candidate.Id == row.Item.TurnId);
+        if (row.Item.Kind == "veoTurnProgress")
+        {
+            void Update()
+            {
+                var elapsed = Elapsed(row.Session.Timeline.LiveTurnStartedAt, DateTimeOffset.UtcNow);
+                label.Text = row.Item.Text.Length > 0 ? row.Item.Text : elapsed is null ? "Working…" : "Working for " + elapsed;
+            }
+            Update();
+            if (row.Item.Text.Length == 0 && IsLoaded)
+            {
+                workTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+                workTimer.Tick += (_, _) => Update();
+                workTimer.Start();
+            }
+        }
+        else
+        {
+            var continuation = row.Item.Kind == "veoTurnContinuation";
+            var began = turn?.StartedAt;
+            var ended = turn?.CompletedAt;
+            if (continuation)
+            {
+                var clientId = row.Item.Raw.Str("clientId") ?? row.Item.Raw.Str("clientUserMessageId");
+                began = clientId is null ? null : turn?.Steers?.GetValueOrDefault(clientId);
+                if (began is { } start && turn?.Steers is { } steers)
+                    ended = steers.Values.Where(time => time > start).Select(time => (DateTimeOffset?)time).Min() ?? ended;
+            }
+            var elapsed = Elapsed(began, ended);
+            var labelText = continuation ? elapsed is null ? "Continued" : "Continued for " + elapsed : turn?.Status switch
+            {
+                "interrupted" or "aborted" or "cancelled" or "canceled" => elapsed is null ? "Stopped" : "Stopped after " + elapsed,
+                "failed" or "error" => elapsed is null ? "Turn failed" : "Failed after " + elapsed,
+                _ when turn?.ErrorJson is not null => elapsed is null ? "Turn failed" : "Failed after " + elapsed,
+                _ => elapsed is null ? "Worked" : "Worked for " + elapsed
+            };
+            if (row.Item.Text.Length > 0) labelText += " · " + row.Item.Text;
+            label.Text = labelText;
+            if (row.Item.Status is "expanded" or "collapsed" && row.Item.Raw.Str("id") is { } promptId)
+            {
+                var button = new Button { Content = new TextBlock
+                    { Text = (row.Item.Status == "expanded" ? "⌄ " : "› ") + labelText, TextTrimming = TextTrimming.CharacterEllipsis, FontSize = 12 },
+                    Padding = new(3, 2, 3, 2), Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent), BorderThickness = new(0) };
+                AutomationProperties.SetName(button, labelText + (row.Item.Status == "expanded" ? ", hide turn activity" : ", show turn activity"));
+                button.Click += (_, _) => row.ToggleWork?.Invoke(promptId);
+                prefix = button;
+            }
+        }
+        divider.Children.Add(prefix);
+        var line = new Border { Height = 1, Background = SecondaryForeground, Opacity = .24, VerticalAlignment = VerticalAlignment.Center };
+        Grid.SetColumn(line, 1);
+        divider.Children.Add(line);
+        Content = divider;
+    }
+
+    static string? Elapsed(DateTimeOffset? began, DateTimeOffset? ended)
+    {
+        if (began is not { } start || ended is not { } end || end < start) return null;
+        var interval = end - start;
+        if (interval.TotalHours >= 1) return $"{(int)interval.TotalHours}h {interval.Minutes}m";
+        return interval.TotalMinutes >= 1 ? $"{interval.Minutes}m {interval.Seconds}s" : $"{interval.Seconds}s";
     }
 
     Border PromptBubble(StackPanel content)

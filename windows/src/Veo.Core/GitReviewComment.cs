@@ -21,7 +21,8 @@ public sealed class GitReviewComment(string path, bool staged, bool ignoreWhites
         var oldRanges = LineRanges(lines.Select(line => line.OldLine));
         var newRanges = LineRanges(lines.Select(line => line.NewLine));
         var excerpt = string.Join("\n", lines.Select(line => "> " + LineLabel(line)));
-        return $"Review comment on {Location}\nOld lines: {oldRanges}\nNew lines: {newRanges}\n\n"
+        var target = InlineChatContext.Link("Review · " + path + (newRanges == "–" ? "" : ":" + newRanges), "review", path, lines[0].NewLine);
+        return $"Review comment on {target} ({(staged ? "staged" : "unstaged")})\nOld lines: {oldRanges}\nNew lines: {newRanges}\n\n"
             + comment.Trim() + "\n\nSelected patch lines:\n" + excerpt;
     }
 

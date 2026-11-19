@@ -38,6 +38,8 @@ public sealed class ChatGroup(string key, string project, CatalogOrigin origin, 
 public sealed class MessageRow(ThreadSession session, TimelineItem item) : ObservableObject
 {
     public ThreadSession Session { get; } = session;
+    public Action<string>? ToggleWork { get; init; }
+    public Func<TimelineItem, Task>? ReviewTurn { get; init; }
     TimelineItem itemValue = item;
     public TimelineItem Item { get => itemValue; set => SetProperty(ref itemValue, value); }
     public string Id { get; } = item.Id;

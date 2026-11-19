@@ -25,7 +25,7 @@ public sealed partial class TimelineReducer
 
     public long BeginPending()
     {
-        lock (sync) { running = true; activeTurn = null; return ++lifecycle; }
+        lock (sync) { running = true; activeTurn = null; liveTurnStartedAt = DateTimeOffset.UtcNow; return ++lifecycle; }
     }
     public void AcknowledgeStart(long dispatch, string? turnId)
     {
@@ -44,6 +44,7 @@ public sealed partial class TimelineReducer
             turnId = NullIfBlank(turnId);
             if (turnId is not null && completedTurns.Contains(turnId)) return;
             lifecycle++;
+            if (!running) liveTurnStartedAt = DateTimeOffset.UtcNow;
             running = true; activeTurn = turnId ?? activeTurn;
         }
     }
@@ -55,7 +56,7 @@ public sealed partial class TimelineReducer
             if (turnId is not null) completedTurns.Add(turnId);
             if (activeTurn is { } active && turnId is { } received && active != received) return;
             if (activeTurn is not null) completedTurns.Add(activeTurn);
-            running = false; activeTurn = null;
+            running = false; activeTurn = null; liveTurnStartedAt = null;
             lifecycle++;
         }
     }
@@ -107,10 +108,21 @@ public sealed partial class TimelineReducer
         lock (sync)
         {
             var turn = payload.Str("turnId") ?? (payload.TryObjectProperty("turn", out var t) ? t.Str("id") : null);
-            if (method == "turn/started") { ObserveTurnMetadata(payload.TryObjectProperty("turn", out var started) ? started : default, payload.Str("turnId")); Begin(turn); return true; }
+            if (method == "turn/started")
+            {
+                Begin(turn);
+                ObserveTurnMetadata(payload.TryObjectProperty("turn", out var started) ? started : default, payload.Str("turnId"), liveNotification: true);
+                return true;
+            }
+            if (method == "turn/diff/updated" && (turn ?? activeTurn) is { } diffTurn && payload.Str("diff") is { } diff)
+            {
+                if (turnMetadata.TryGetValue(diffTurn, out var existingTurn)) turnMetadata[diffTurn] = existingTurn with { Diff = diff };
+                else ObserveTurns([new(diffTurn, null, liveTurnStartedAt, null, 0, false, Diff: diff)]);
+                return true;
+            }
             if (method is "turn/completed" or "turn/aborted")
             {
-                ObserveTurnMetadata(payload.TryObjectProperty("turn", out var ended) ? ended : default, payload.Str("turnId"), terminalNotification: true);
+                ObserveTurnMetadata(payload.TryObjectProperty("turn", out var ended) ? ended : default, turn ?? activeTurn, terminalNotification: true, liveNotification: true);
                 if (payload.TryObjectProperty("turn", out var snapshot) && snapshot.TryGetProperty("items", out var completed) && completed.ValueKind == JsonValueKind.Array)
                     foreach (var item in completed.EnumerateArray()) UpsertCore(item, turn);
                 End(turn); return true;

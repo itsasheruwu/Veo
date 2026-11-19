@@ -86,6 +86,7 @@ public sealed partial class MainPage : Page
                 else if (catalog.Count > 0) await SelectAsync(await workspace.LoadAsync(catalog[0]));
                 else await NewChatAsync();
                 ready.TrySetResult();
+                await ShowModelPickerUpgradeAsync();
                 if (App.Main is { PendingActivation.Length: > 0 } main) await HandleActivationAsync(main.PendingActivation);
                 if (App.PendingNotificationThread is { } notificationThread) await NavigateThreadIdAsync(notificationThread);
             });
@@ -209,34 +210,14 @@ public sealed partial class MainPage : Page
         if (current is null) return;
         ChatTitle.Text = current.Record.Title; CwdLabel.Text = current.Record.Cwd;
         StopButton.Visibility = current.Timeline.IsRunning ? Visibility.Visible : Visibility.Collapsed;
-        var sendLabel = current.Timeline.IsRunning ? "Queue" : "Send";
-        SendGlyph.Glyph = current.Timeline.IsRunning ? "\uE710" : "\uE74A";
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(SendButton, sendLabel);
-        ToolTipService.SetToolTip(SendButton, sendLabel);
+        RenderFollowUpSend(current);
+        RenderContextIndicator(current);
         UpdateSendAvailability();
         RenderComposerControls();
-        var items = current.Timeline.Items;
-        var signature = current.Record.VeoId + ":" + current.Timeline.IsRunning + ":" + workspace.Preferences.Streaming;
-        var refreshPresentation = presentationSignature != signature; presentationSignature = signature;
-        if (messages.Count > items.Count || messages.Where((x, i) => i < items.Count && x.Id != items[i].Id).Any()) messages.Clear();
-        for (var i = 0; i < items.Count; i++)
-            if (i >= messages.Count) messages.Add(new(current, items[i])); else if (messages[i].Item != items[i]) messages[i].Update(items[i]); else if (refreshPresentation) messages[i].RefreshPresentation();
+        UpdateConversationRows(current);
         if (current.DispatchWarning is { } warning) { Notice.Message = warning; Notice.IsOpen = true; }
         else if (App.Routing.Notice(current) is { } routingNotice) { Notice.Severity = InfoBarSeverity.Informational; Notice.Message = routingNotice; Notice.IsOpen = true; }
         RenderPending(); RenderQueue(); UpdateConversationChrome();
-    }
-    void RenderQueue()
-    {
-        if (current is null) return;
-        var signature = string.Join("|", current.Queue.Select(x => x.ClientId)); if (signature == queueSignature) return; queueSignature = signature;
-        QueuePanel.Children.Clear();
-        foreach (var queued in current.Queue)
-        {
-            var row = new Grid(); row.ColumnDefinitions.Add(new()); row.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-            row.Children.Add(new TextBlock { Text = "Queued · " + queued.Text, MaxLines = 2, TextWrapping = TextWrapping.Wrap });
-            var remove = new Button { Content = "Remove" }; Grid.SetColumn(remove, 1); row.Children.Add(remove); var session = current;
-            remove.Click += async (_, _) => await Run(() => App.Queue.RemoveAsync(session, queued.ClientId)); QueuePanel.Children.Add(row);
-        }
     }
     void RenderPending()
     {
@@ -314,7 +295,11 @@ public sealed partial class MainPage : Page
             case "runtime": case "status": await ShowSettingsAsync("Runtime"); return true;
             case "usage": await ShowSettingsAsync("Account"); return true;
             case "skills": case "apps": case "mcp": case "plugins": await ShowSettingsAsync("Integrations"); return true;
-            case "diff": case "review": await OpenUtilityPanelAsync(0); return true;
+            case "btw" when current is { } sideThread:
+                await OpenUtilityPanelAsync(3);
+                if (argument.Length > 0 && ReferenceEquals(current, sideThread)) _ = SideChat().SubmitAsync(argument);
+                return true;
+            case "diff": case "review": inspectedTurn = null; await OpenUtilityPanelAsync(0); return true;
             case "stop" when current is not null: await workspace.StopAsync(current); return true;
             case "reconnect": await workspace.ReconnectAsync(); return true;
             case "refresh": await RefreshCatalogAsync(); return true;
@@ -325,6 +310,17 @@ public sealed partial class MainPage : Page
             default: return false;
         }
     }
+    SideChatPanel? sideChat;
+    SideChatPanel SideChat() => sideChat ??= new SideChatPanel(
+        (session, question, previous) => App.Routing.AnswerSideQuestionAsync(session, routerPolicy, modelCatalogId, question, previous),
+        async (session, text) =>
+        {
+            if (current?.Record.VeoId != session.Record.VeoId) return;
+            InsertAtComposerCaret(text);
+            await SaveTypedComposerAsync();
+            Composer.Focus(FocusState.Programmatic);
+        });
+
     async Task ShowUtilityAsync()
     {
         if (current is null || UtilityHost is null) return;
@@ -332,7 +328,10 @@ public sealed partial class MainPage : Page
         {
             case 1: browser ??= new(workspace); UtilityHost.Content = browser; await browser.LoadAsync(current); break;
             case 2: files ??= new(workspace); UtilityHost.Content = files; await files.LoadAsync(current); break;
-            default: review ??= CreateReviewPanel(); UtilityHost.Content = review; await review.LoadAsync(current); break;
+            case 3: var side = SideChat(); UtilityHost.Content = side; side.Show(current); break;
+            default:
+                if (inspectedTurn is { } turn) { UtilityHost.Content = HistoricalDiffPanel(turn); break; }
+                review ??= CreateReviewPanel(); UtilityHost.Content = review; await review.LoadAsync(current); break;
         }
     }
     async Task ToggleTerminalAsync()
@@ -342,6 +341,7 @@ public sealed partial class MainPage : Page
         if (terminalPanel is null)
         {
             terminalPanel = new(workspace);
+            terminalPanel.AddSelectionToChat += text => _ = Run(() => AddTerminalSelectionToComposerAsync(text));
             terminalPanel.ExpandedChanged += ApplyTerminalExpansion;
         }
         TerminalHost.Content = terminalPanel; TerminalHeight.Height = new GridLength(250); UpdateConversationChrome(); await terminalPanel.OpenAsync(current);
@@ -350,7 +350,7 @@ public sealed partial class MainPage : Page
     {
         TimelineHeight.Height = expanded ? new GridLength(0) : new GridLength(1, GridUnitType.Star);
         TerminalHeight.Height = expanded ? new GridLength(1, GridUnitType.Star) : new GridLength(250);
-        foreach (var surface in new FrameworkElement[] { ChatHeader, Timeline, ApprovalReviewHost, PendingPanel, QueuePanel, ComposerPanel }) surface.Visibility = expanded ? Visibility.Collapsed : Visibility.Visible;
+        foreach (var surface in new FrameworkElement[] { ChatHeader, Timeline, ApprovalReviewHost, PendingPanel, ComposerPanel }) surface.Visibility = expanded ? Visibility.Collapsed : Visibility.Visible;
         UpdateConversationChrome();
     }
     void UpdateConversationChrome()
@@ -374,7 +374,7 @@ public sealed partial class MainPage : Page
     public void ToggleInspector() => _ = Run(ToggleUtilityPanelAsync);
     public async Task DisposeSurfacesAsync()
     {
-        CloseCompletions(); Composer.Paste -= ComposerPaste;
+        CloseCompletions(); Composer.Paste -= ComposerPaste; Composer.EditorKeyDown -= Composer_KeyDown;
         ShowWorkspace(restoreFocus: false);
         shortcutBindings?.Dispose();
         systemUi.AdvancedEffectsEnabledChanged -= SystemEffectsChanged;
@@ -397,15 +397,14 @@ public sealed partial class MainPage : Page
     public async Task QuoteIntoComposerAsync(QuoteReference reference, string text)
     {
         ShowWorkspace(restoreFocus: false);
-        Composer.Text += (Composer.Text.Length > 0 ? "\n\n" : "") + reference.Markdown(text);
+        InsertAtComposerCaret(reference.Markdown(text));
         await SaveDraftNowAsync(); Composer.Focus(FocusState.Programmatic);
     }
     private async Task AppendReviewCommentToDraftAsync(ThreadSession session, string text)
     {
         if (current?.Record.VeoId != session.Record.VeoId || loading)
             throw new InvalidOperationException("Return to the chat whose patch you reviewed before adding a comment.");
-        Composer.Text = CaptureComposerDraft(session).Append(text, []).Text;
-        Composer.SelectionStart = Composer.Text.Length;
+        InsertAtComposerCaret(text);
         await SaveDraftNowAsync();
         if (current?.Record.VeoId == session.Record.VeoId) Composer.Focus(FocusState.Programmatic);
     }
@@ -483,7 +482,19 @@ public sealed partial class MainPage : Page
     {
         XamlRoot = XamlRoot, Title = title, Content = new ScrollViewer { Content = content, MaxHeight = 600, MinWidth = 500, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled }, CloseButtonText = "Done"
     }.ShowAsync().AsTask();
-    void FocusTimelineItem(string id) { Render(); if (messages.FirstOrDefault(x => x.Id == id) is { } row) Timeline.ScrollIntoView(row, ScrollIntoViewAlignment.Leading); }
+    void FocusTimelineItem(string id)
+    {
+        if (current is { } session && messages.All(row => row.Id != id))
+        {
+            var items = session.Timeline.Items;
+            if (items.FirstOrDefault(item => item.Id == id) is { TurnId: not null } target
+                && items.LastOrDefault(item => item.TurnId == target.TurnId && item.Kind == "userMessage" && item.Order < target.Order) is { } prompt)
+                expandedWorkTurns.Add(prompt.Id);
+        }
+        Render();
+        if (messages.FirstOrDefault(row => row.Id == id) is { } match)
+            Timeline.ScrollIntoView(match, ScrollIntoViewAlignment.Leading);
+    }
     async Task RenameAsync(string argument)
     {
         if (current is null) return; var title = argument;
@@ -564,7 +575,7 @@ public sealed partial class MainPage : Page
             SidebarSearchToggle.Focus(FocusState.Programmatic);
         }
     }
-    async void Composer_Changed(object sender, TextChangedEventArgs e)
+    async void Composer_Changed(object sender, RoutedEventArgs e)
     {
         if (loading || !initialized) return; UpdateSendAvailability(); composerRevision++; _ = RefreshCompletionsAsync(); draftDelay?.Cancel(); var cts = draftDelay = new();
         try { await Task.Delay(180, cts.Token); await Run(SaveDraftNowAsync); } catch (OperationCanceledException) { }
@@ -572,6 +583,7 @@ public sealed partial class MainPage : Page
     async void Composer_KeyDown(object sender, KeyRoutedEventArgs e)
     {
         if (!imeComposing && composerSuggestions.Visibility == Visibility.Visible && e.Key is VirtualKey.Escape or VirtualKey.Up or VirtualKey.Down or VirtualKey.Enter or VirtualKey.Tab) { e.Handled = true; await Run(async () => await HandleCompletionKeyAsync(e.Key)); return; }
+        if (!imeComposing && (e.Key is VirtualKey.Up or VirtualKey.Down) && RecallPrompt(e.Key == VirtualKey.Up ? -1 : 1)) { e.Handled = true; return; }
         if (!imeComposing && e.Key == VirtualKey.Enter && !Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Shift).HasFlag(CoreVirtualKeyStates.Down)) { e.Handled = true; await Run(SubmitAsync); }
     }
     void Composer_DragOver(object sender, DragEventArgs e) => e.AcceptedOperation = e.DataView.Contains(StandardDataFormats.StorageItems) ? DataPackageOperation.Copy : DataPackageOperation.None;

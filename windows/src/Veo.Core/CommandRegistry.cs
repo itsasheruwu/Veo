@@ -27,6 +27,7 @@ public sealed class CommandRegistry(ThreadRepository repository)
         new("delete", "Delete chat", "Delete the selected chat after confirmation", "delete"), new("fork", "Fork chat", "Choose a history turn boundary", "fork"),
         new("init", "Create AGENTS.md", "Ask Codex to inspect and preserve project guidance", "init"), new("compact", "Compact history", "Summarize history to free context", "compact"),
         new("agentic", "Agentic mode", "Switch to Agentic mode", "agentic"), new("plan", "Plan mode", "Switch to Plan mode", "plan", true),
+        new("btw", "Side chat", "Ask a side question", "btw", true),
         new("debug", "Debug mode", "Switch to evidence-first Debug mode", "debug", true), new("goal", "Long-running goal", "Set or inspect a goal", "goal", true),
         new("copy", "Copy response", "Copy the last assistant response as Markdown", "copy"), new("diff", "Changes", "Open native changed files", "diff"),
         new("mention", "Mention a file", "Choose a project file mention", "mention"), new("status", "Runtime status", "Open local runtime settings", "status"),

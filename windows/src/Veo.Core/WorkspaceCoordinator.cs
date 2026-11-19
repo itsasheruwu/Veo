@@ -27,6 +27,8 @@ public sealed class ThreadSession(PersistedThread record)
     internal int QueueDispatchScheduled;
     public PersistedThread Record { get; internal set; } = record;
     public TimelineReducer Timeline { get; } = new();
+    public ComposerContextUsage? ContextUsage { get; internal set; }
+    public bool IsCompactingContext { get; internal set; }
     public PersistedDraft Draft { get; internal set; } = new("");
     public IReadOnlyList<ComposerSnapshot> Queue { get { lock (queueSync) return queue.Select(x => x.Freeze()).ToArray(); } }
     internal void Enqueue(ComposerSnapshot snapshot) { lock (queueSync) if (queue.All(x => x.ClientId != snapshot.ClientId)) queue.Add(snapshot.Freeze()); }
@@ -218,7 +220,7 @@ public sealed class WorkspaceCoordinator : IAsyncDisposable
         session.Draft = await Threads.ReadDraftAsync(record.VeoId) ?? new("");
         var cached = await Threads.ReadItemsAsync(record.VeoId, limit: 10000);
         var cachedTurns = await Threads.ReadTurnsAsync(record.VeoId, lifetime.Token);
-        session.Timeline.ObserveTurns(cachedTurns.Select(t => new TimelineTurn(t.TurnId, t.Status, t.StartedAt, t.ErrorJson, t.SortIndex, t.TerminalObserved)));
+        session.Timeline.ObserveTurns(cachedTurns.Select(t => new TimelineTurn(t.TurnId, t.Status, t.StartedAt, t.ErrorJson, t.SortIndex, t.TerminalObserved, t.CompletedAt, t.Diff, t.Steers)));
         session.Timeline.Reconcile(cached.Select(i => new TimelineItem(i.ItemId, i.TurnId, i.Type ?? "unknown", TextFromRaw(i.RawJson), i.Status ?? "completed", JsonSerializer.Deserialize<JsonElement>(i.RawJson), i.SortIndex)), false, null);
         var queue = await Threads.ReadStateAsync(record.VeoId, "queue");
         if (queue is not null) session.RestoreQueue(JsonSerializer.Deserialize<List<ComposerSnapshot>>(queue) ?? []);
@@ -499,6 +501,30 @@ public sealed class WorkspaceCoordinator : IAsyncDisposable
                 if (message.Method == "serverRequest/resolved" && p.ValueKind == JsonValueKind.Object && p.TryGetProperty("requestId", out var resolved))
                 { requests.TryRemove(resolved.GetRawText(), out _); ScheduleChanged(); continue; }
                 var session = id is null ? null : sessions.Values.FirstOrDefault(x => x.Record.CodexThreadId == id);
+                if (session is not null)
+                {
+                    if (message.Method == "thread/tokenUsage/updated"
+                        && p.TryObjectProperty("tokenUsage", out var tokenUsage)
+                        && ComposerContextUsage.Parse(tokenUsage) is { } usage)
+                    {
+                        session.ContextUsage = usage;
+                        ScheduleChanged();
+                    }
+                    if ((message.Method is "item/started" or "item/completed")
+                        && p.TryObjectProperty("item", out var activity) && activity.Str("type") == "contextCompaction")
+                    {
+                        session.IsCompactingContext = message.Method == "item/started";
+                        ScheduleChanged();
+                    }
+                    else if (message.Method is "turn/completed" or "turn/aborted" or "thread/compacted")
+                    {
+                        if (session.IsCompactingContext)
+                        {
+                            session.IsCompactingContext = false;
+                            ScheduleChanged();
+                        }
+                    }
+                }
                 if (session is not null && session.Timeline.Apply(message.Method ?? "", p))
                 {
                     RuntimeEventApplied?.Invoke(session, message);
@@ -507,7 +533,7 @@ public sealed class WorkspaceCoordinator : IAsyncDisposable
                         session.Record = session.Record with { Status = session.Timeline.IsRunning ? "running" : "idle" };
                         await Threads.UpsertThreadAsync(session.Record);
                     }
-                    if (message.Method is "item/completed" or "turn/started" or "turn/completed" or "turn/aborted") await PersistTimelineAsync(session);
+                    if (message.Method is "item/completed" or "turn/started" or "turn/completed" or "turn/aborted" or "turn/diff/updated") await PersistTimelineAsync(session);
                     ScheduleChanged();
                     if (message.Method == "turn/completed" && session.Queue.Count > 0)
                     {
@@ -600,7 +626,7 @@ public sealed class WorkspaceCoordinator : IAsyncDisposable
             var node = System.Text.Json.Nodes.JsonNode.Parse(raw)!.AsObject(); node["veoRenderedText"] = item.Text;
             persisted.Add(new(item.Id, item.TurnId, item.Kind, item.Raw.Str("clientId"), item.Status, node.ToJsonString(), item.Order, DateTimeOffset.UtcNow));
         }
-        var turns = snapshot.Turns.Select(t => new PersistedTurn(t.Id, t.Status, t.StartedAt, t.ErrorJson, t.Order, t.TerminalObserved)).ToArray();
+        var turns = snapshot.Turns.Select(t => new PersistedTurn(t.Id, t.Status, t.StartedAt, t.ErrorJson, t.Order, t.TerminalObserved, t.CompletedAt, t.Diff, t.Steers)).ToArray();
         await Threads.SaveTimelineAsync(session.Record.VeoId, turns, persisted);
         var removed = session.Timeline.RemovedItemIds;
         if (removed.Count > 0)

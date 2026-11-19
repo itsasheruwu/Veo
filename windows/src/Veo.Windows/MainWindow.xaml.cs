@@ -49,7 +49,7 @@ public sealed partial class MainWindow : Window
     }
     void UpdateSidebarToggle(double width, bool visible)
     {
-        SidebarToggleSlot.Width = Math.Max(48, width);
+        SidebarToggleSlot.Width = Math.Max(102, width);
         var label = visible ? "Hide sidebar" : "Show sidebar";
         ToolTipService.SetToolTip(SidebarToggle, label);
         AutomationProperties.SetName(SidebarToggle, label);

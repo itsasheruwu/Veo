@@ -23,6 +23,7 @@ namespace Veo_Windows.Controls;
 /// <summary>Native ConPTY tabs. Each shell retains its original cwd when chats change.</summary>
 public sealed class TerminalPanel : Grid, IAsyncDisposable
 {
+    public event Action<string>? AddSelectionToChat;
     private readonly WorkspaceCoordinator workspace;
     private readonly TabView tabs = new() { TabWidthMode = TabViewWidthMode.SizeToContent, IsAddTabButtonVisible = true, CanDragTabs = true, CanReorderTabs = true, AllowDropTabs = true };
     private readonly System.Collections.ObjectModel.ObservableCollection<TerminalSessionDescriptor> sessions = [];
@@ -177,6 +178,7 @@ public sealed class TerminalPanel : Grid, IAsyncDisposable
             var surface = new NativeTerminalSurface(workspace);
             surface.GotFocus += (_, _) => FocusSession(descriptor.Id);
             try { await surface.StartAsync(descriptor.Cwd); } catch (Exception error) { surface.ShowFailure(error.Message); }
+            surface.AddSelectionToChat = text => AddSelectionToChat?.Invoke(text);
             return new TerminalHandle(surface);
         });
         handles[descriptor.Id] = handle; return handle;
@@ -349,6 +351,7 @@ public sealed class TerminalPanel : Grid, IAsyncDisposable
 
 internal sealed class NativeTerminalSurface : UserControl, IAsyncDisposable
 {
+    public Action<string>? AddSelectionToChat { get; set; }
     private readonly WorkspaceCoordinator workspace;
     private readonly ConPtySession terminal = new();
     private readonly TerminalBuffer buffer = new();
@@ -402,6 +405,10 @@ internal sealed class NativeTerminalSurface : UserControl, IAsyncDisposable
         var copy = new MenuFlyoutItem { Text = "Copy selection" }; copy.Click += (_, _) => CopySelection();
         var copyAll = new MenuFlyoutItem { Text = "Copy terminal text" }; copyAll.Click += (_, _) => SetClipboard(buffer.CopyText(true));
         var paste = new MenuFlyoutItem { Text = "Paste" }; paste.Click += async (_, _) => await PasteAsync();
+        var addContext = new MenuFlyoutItem { Text = "Add selection to chat" };
+        menu.Opening += (_, _) => addContext.IsEnabled = ReadSelection().Length > 0;
+        addContext.Click += (_, _) => { var text = ReadSelection(); if (text.Length > 0) AddSelectionToChat?.Invoke(text); };
+        menu.Items.Add(addContext);
         menu.Items.Add(copy); menu.Items.Add(copyAll); menu.Items.Add(paste); ContextFlyout = menu;
     }
 
@@ -610,9 +617,11 @@ internal sealed class NativeTerminalSurface : UserControl, IAsyncDisposable
         var index = y * buffer.Columns + x; var first = (int)(start.Y * buffer.Columns + start.X); var last = (int)(end.Y * buffer.Columns + end.X);
         return index >= Math.Min(first, last) && index <= Math.Max(first, last);
     }
-    private void CopySelection()
+    private void CopySelection() { var text = ReadSelection(); if (text.Length > 0) SetClipboard(text); }
+
+    private string ReadSelection()
     {
-        if (lastSnapshot is null || selectionStart is null || selectionEnd is null) return;
+        if (lastSnapshot is null || selectionStart is null || selectionEnd is null) return "";
         var text = new StringBuilder();
         for (var y = 0; y < lastSnapshot.Rows.Length; y++)
         {
@@ -621,7 +630,7 @@ internal sealed class NativeTerminalSurface : UserControl, IAsyncDisposable
             if (text.Length > 0) text.AppendLine();
             text.Append(lineText.TrimEnd());
         }
-        SetClipboard(text.ToString());
+        return text.ToString();
     }
     private static void SetClipboard(string text) { var data = new DataPackage(); data.SetText(text); Clipboard.SetContent(data); }
     public async ValueTask DisposeAsync()

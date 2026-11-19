@@ -124,6 +124,12 @@ public sealed class MarkdownView : StackPanel
         {
             if (OpenLinkAsync is not null) { await OpenLinkAsync(target); return; }
             if (Uri.TryCreate(target, UriKind.Absolute, out var uri) && QuoteReference.Parse(uri) is { } quote) { if (App.Main is { } window) await window.NavigateQuoteAsync(quote); return; }
+            if (Session is { } contextSession && Uri.TryCreate(target, UriKind.Absolute, out var reference)
+                && InlineChatContext.Value(reference) is { } value)
+            {
+                await InlineContextPreview.ShowAsync(contextSession, reference.Host, value, XamlRoot, InlineChatContext.Line(reference));
+                return;
+            }
             if (IntegrationCoordinator.SecureUri(target) is { } secure) { if (App.Main is { } window) await window.NavigateBrowserAsync(secure); return; }
             if (Session is { } session && !target.Contains("://", StringComparison.Ordinal)) { await new ContentDialog { Title = "Source", Content = new ConversationSourceView(session, new("markdown", target, target)), CloseButtonText = "Done", XamlRoot = XamlRoot }.ShowAsync(); return; }
             throw new InvalidOperationException("This link has no supported secure target.");

@@ -46,6 +46,8 @@ public sealed partial class MainPage
         AutomationProperties.SetAutomationId(composerSuggestions, "ComposerSuggestions"); AutomationProperties.SetName(composerSuggestions, "Composer suggestions");
         Composer.SelectionChanged += (_, _) => { if (!loading) _ = RefreshCompletionsAsync(); };
         Composer.Paste += ComposerPaste;
+        Composer.EditorKeyDown += Composer_KeyDown;
+        Composer.OpenContext += uri => _ = Run(() => OpenComposerContextAsync(uri));
     }
     /// <summary>Selection owns model/access resolution; this only restores text and typed inputs.</summary>
     void RestoreComposerDraft(ThreadSession session)
@@ -80,6 +82,29 @@ public sealed partial class MainPage
         if (current?.Record.VeoId != session.Record.VeoId) return;
         var wasLoading = loading; loading = true; try { RestoreComposerDraft(session); } finally { loading = wasLoading; } Render();
     }
+    int? recalledPrompt;
+    string? recalledPromptThread;
+    bool RecallPrompt(int direction)
+    {
+        if (current is not { } session || typedComposerAttachments.Count != 0 || Composer.SelectionLength != 0) return false;
+        if (recalledPromptThread != session.Record.VeoId) { recalledPrompt = null; recalledPromptThread = session.Record.VeoId; }
+        var prompts = session.Timeline.Items.Where(item => item.Kind == "userMessage" && item.Text.Length > 0).Reverse().Select(item => item.Text).ToArray();
+        if (recalledPrompt is { } index && index < prompts.Length && Composer.Text == prompts[index])
+        {
+            var next = index - direction;
+            if (next < 0) { recalledPrompt = null; Composer.Text = ""; }
+            else if (next < prompts.Length) { recalledPrompt = next; Composer.Text = prompts[next]; }
+        }
+        else
+        {
+            if (direction != -1 || Composer.Text.Length > 0 || prompts.Length == 0) return false;
+            recalledPrompt = 0;
+            Composer.Text = prompts[0];
+        }
+        Composer.SelectionStart = Composer.Text.Length;
+        return true;
+    }
+
     async Task SubmitTypedComposerAsync()
     {
         if (!await composerSubmits.WaitAsync(0)) return;
@@ -100,13 +125,15 @@ public sealed partial class MainPage
                 captured = CaptureComposerDraft(session); revision = composerRevision;
             }
             // UI owns conditional clearing, so edits made while routing/sending cannot be erased by the runtime coordinator.
-            var snapshot = captured.Snapshot(defaults: ComposerDefaults()) with
+            var outgoing = captured with { Attachments = captured.Attachments.Concat(InlineFileReferences(session, captured.Text)).DistinctBy(item => (item.Kind, item.Source)).ToArray() };
+            var snapshot = outgoing.Snapshot(defaults: ComposerDefaults()) with
             {
                 PreserveDraft = true,
                 StartGoal = session.ComposerGoalArmed && App.ThreadSettings.ActiveGoal(session) is null
             };
             await SaveCompleteDraftAsync(session, captured);
-            await workspace.SubmitAsync(session, snapshot);
+            if (SendsSteer(session) && snapshot.Daybreak is null && !snapshot.StartGoal) await App.Queue.SteerAsync(session, snapshot);
+            else await workspace.SubmitAsync(session, snapshot);
             if (current?.Record.VeoId == session.Record.VeoId)
             {
                 if (revision == composerRevision && Composer.Text == captured.Text && typedComposerAttachments.SequenceEqual(captured.Attachments))
@@ -226,9 +253,11 @@ public sealed partial class MainPage
         if (!typedComposerAttachments.Any(x => x.Kind == attachment.Kind && x.Source == attachment.Source))
         {
             if (typedComposerAttachments.Count >= 32) throw new InvalidOperationException("A draft supports up to 32 attachments and references.");
-            typedComposerAttachments.Add(attachment);
+            if (attachment.Kind != ComposerAttachmentKind.FileMention) typedComposerAttachments.Add(attachment);
         }
-        Composer.Text = text; Composer.SelectionStart = text.Length; composerRevision++; SyncLegacyAttachments(); CloseCompletions(); RefreshAttachmentRows();
+        Composer.Text = text; Composer.SelectionStart = Math.Min(token.Start, text.Length);
+        if (attachment.Kind == ComposerAttachmentKind.FileMention)
+            InsertAtComposerCaret(InlineChatContext.Link(attachment.Name, "file", attachment.Name)); composerRevision++; SyncLegacyAttachments(); CloseCompletions(); RefreshAttachmentRows();
         Composer.Focus(FocusState.Programmatic);
         await SaveTypedComposerAsync();
     }
@@ -270,7 +299,9 @@ public sealed partial class MainPage
             }
             mentions.Add(ComposerAttachment.FileMention(session.Record.Cwd, source));
         }
-        await AddAttachmentsAsync(session, mentions);
+        if (current?.Record.VeoId != session.Record.VeoId) return;
+        foreach (var mention in mentions) InsertAtComposerCaret(InlineChatContext.Link(mention.Name, "file", mention.Name));
+        await SaveTypedComposerAsync();
     }
 
     async Task PickComposerAttachmentsAsync()

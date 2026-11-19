@@ -208,13 +208,14 @@ public sealed partial class MainPage
     void UpdateComposerSendRow()
     {
         var compact = false;
-        if (ComposerModePills.Visibility == Visibility.Visible && ComposerToolbar.ActualWidth > 0)
+        if ((ComposerModePills.Visibility == Visibility.Visible || ComposerContextIndicator.Visibility == Visibility.Visible)
+            && ComposerToolbar.ActualWidth > 0)
         {
             var unconstrained = new Size(double.PositiveInfinity, double.PositiveInfinity);
-            ModelTrigger.Measure(unconstrained);
+            ModelPickerSlot.Measure(unconstrained);
             AccessButton.Measure(unconstrained);
             ComposerSendControls.Measure(unconstrained);
-            var requiredWidth = ComposerOptionsButton.Width + ModelTrigger.DesiredSize.Width
+            var requiredWidth = ComposerOptionsButton.Width + ModelPickerSlot.DesiredSize.Width
                 + AccessButton.DesiredSize.Width + ComposerSendControls.DesiredSize.Width
                 + 3 * ComposerToolbar.ColumnSpacing;
             compact = requiredWidth > ComposerToolbar.ActualWidth;

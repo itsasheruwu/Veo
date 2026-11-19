@@ -6,7 +6,7 @@ namespace Veo.Infrastructure.Storage;
 /// <summary>Application-owned catalog. All access uses one coordinated connection and writer.</summary>
 public sealed partial class ThreadRepository : IAsyncDisposable
 {
-    private const int SchemaVersion = 3;
+    private const int SchemaVersion = 5;
     private readonly SemaphoreSlim gate = new(1, 1);
     private SqliteConnection? connection;
     private bool disposed;
@@ -98,6 +98,15 @@ public sealed partial class ThreadRepository : IAsyncDisposable
                         await ExecuteAsync(db, "ALTER TABLE turns ADD COLUMN terminal_observed INTEGER NOT NULL DEFAULT 0;", cancellationToken, tx);
                     await ExecuteAsync(db, "UPDATE turns SET terminal_observed=1 WHERE status IN ('completed','interrupted','failed','aborted','cancelled','canceled');", cancellationToken, tx);
                 }
+                if (version < 4)
+                {
+                    if (!await HasColumnAsync(db, tx, "turns", "completed_at", cancellationToken))
+                        await ExecuteAsync(db, "ALTER TABLE turns ADD COLUMN completed_at REAL;", cancellationToken, tx);
+                    if (!await HasColumnAsync(db, tx, "turns", "unified_diff", cancellationToken))
+                        await ExecuteAsync(db, "ALTER TABLE turns ADD COLUMN unified_diff TEXT;", cancellationToken, tx);
+                }
+                if (version < 5 && !await HasColumnAsync(db, tx, "turns", "steer_times", cancellationToken))
+                    await ExecuteAsync(db, "ALTER TABLE turns ADD COLUMN steer_times TEXT;", cancellationToken, tx);
                 await ExecuteAsync(db, $"PRAGMA user_version={SchemaVersion};", cancellationToken, tx);
                 tx.Commit();
             }

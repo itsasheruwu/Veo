@@ -7,7 +7,7 @@ public sealed record PersistedThread(
     string MetaJson = "{}", string WorkspaceKind = "project");
 
 public sealed record PersistedTurn(string TurnId, string? Status, DateTimeOffset? StartedAt,
-    string? ErrorJson, long SortIndex, bool TerminalObserved = false);
+    string? ErrorJson, long SortIndex, bool TerminalObserved = false, DateTimeOffset? CompletedAt = null, string? Diff = null, IReadOnlyDictionary<string, DateTimeOffset>? Steers = null);
 
 public sealed record PersistedItem(string ItemId, string? TurnId, string? Type,
     string? ClientId, string? Status, string RawJson, long SortIndex, DateTimeOffset UpdatedAt);

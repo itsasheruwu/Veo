@@ -132,6 +132,27 @@ public sealed class AutoRoutingCoordinator : IAsyncDisposable
         if (policy.Provider != "Utility") throw new InvalidOperationException("Unknown Auto router provider.");
         return new UtilityFirstPromptRouter(inference, UtilityModel(policy), cwd);
     }
+    public async Task<string> AnswerSideQuestionAsync(ThreadSession session, AutoRouterPolicy? policy, string? modelId,
+        string question, string previous, CancellationToken token = default)
+    {
+        if (models.Catalog.Count == 0) await models.RefreshAsync(token);
+        var eligible = models.Visible.Where(model => !model.IsExternal && model.Efforts.Any(effort => effort.Id == "low")).ToArray();
+        var selected = eligible.FirstOrDefault(model => model.Id == policy?.UtilityModelId)
+            ?? eligible.FirstOrDefault(model => model.Id == modelId)
+            ?? eligible.FirstOrDefault(model => model.IsDefault)
+            ?? eligible.FirstOrDefault()
+            ?? throw new InvalidOperationException("A model with Light reasoning is needed for a side question.");
+        var context = string.Join("\n\n", session.Timeline.Items.Where(item => item.Kind is "userMessage" or "agentMessage").TakeLast(16)
+            .Select(item => (item.Kind == "userMessage" ? "User: " : "Codex: ") + InlineChatContext.DisplayText(item.Text[..Math.Min(2500, item.Text.Length)])));
+        var prompt = $"Answer the side question using the quoted main chat below. Do not modify files.\n<main_chat>\n{context}\n</main_chat>\n<side_chat>\n{previous}\n</side_chat>\nQuestion: {question}";
+        var input = JsonSerializer.SerializeToElement(new[] { new { type = "text", text = prompt } });
+        var schema = JsonSerializer.SerializeToElement(new { type = "object", properties = new { answer = new { type = "string" } }, required = new[] { "answer" }, additionalProperties = false });
+        var output = await inference.InferAsync(new(input, schema, selected, session.Record.Cwd, OptedIn: true), token);
+        using var parsed = JsonDocument.Parse(output);
+        return parsed.RootElement.Str("answer") is { } answer && !string.IsNullOrWhiteSpace(answer)
+            ? answer : throw new InvalidDataException("The side chat did not return an answer.");
+    }
+
     NativeModelDescriptor UtilityModel(AutoRouterPolicy policy)
     {
         var eligible = models.Visible.Where(x => x.Efforts.Any(e => e.Id.Equals("low", StringComparison.OrdinalIgnoreCase))).ToArray();

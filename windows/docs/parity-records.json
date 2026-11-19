@@ -1,0 +1,1368 @@
+{
+  "schemaVersion": 1,
+  "baselineCommit": "0e9b18dd345488613198ca6050b34e960e27f8b3",
+  "records": [
+    {
+      "id": "W01",
+      "behavior": "Project-backed and immediately usable projectless chats",
+      "source": [
+        "Veo/Services/DesktopTemporaryWorkspaceService.swift",
+        "Veo/Services/VeoThreadStore.swift",
+        "Veo/Views/DesktopWorkspaceView.swift"
+      ],
+      "acceptance": "New Chat creates an isolated managed workspace; Open Project selects an actual local directory. Both can send a real turn.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "W02",
+      "behavior": "Explicit temporary-chat choice before the first turn",
+      "source": [
+        "Veo/Services/DesktopTemporaryWorkspaceService.swift",
+        "Veo/Stores/DesktopCodexStore.swift"
+      ],
+      "acceptance": "Match eligibility rules and lifecycle from the source; normal projectless scratch files survive relaunch until their specified deletion path.",
+      "implementation": [
+        "windows/src/Veo.Windows/MainPage.Toolbar.cs",
+        "windows/src/Veo.Core/WorkspaceCoordinator.cs"
+      ],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": [
+        "Partial: Temporary toggle persists the workspace kind and dispatches an ephemeral runtime thread. The automatic cleanup lifecycle is still open. See windows/docs/parity.md for artifact and fixture details."
+      ]
+    },
+    {
+      "id": "W03",
+      "behavior": "All-project sidebar and automatic context switching",
+      "source": [
+        "Veo/Models/DesktopNavigationState.swift",
+        "Veo/Stores/DesktopCodexStore.swift",
+        "Veo/Views/DesktopWorkspaceView.swift"
+      ],
+      "acceptance": "Open chats in two repositories and a scratch workspace; selecting each changes the effective cwd while all remain visible.",
+      "implementation": [
+        "windows/src/Veo.Windows/MainPage.xaml.cs",
+        "windows/src/Veo.Core/ThreadCatalogCoordinator.cs",
+        "windows/src/Veo.Windows/MainPage.xaml",
+        "windows/src/Veo.Windows/MainPage.Settings.cs"
+      ],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch and compare the selected row and visible cwd with Settings.SelectedThread and the thread's SQLite cwd. Inspect actual runtime cwd on each thread's turn.",
+      "evidence": [
+        "Headed x64 Debug rebuild restored the selected Beta row and matching cwd. Physical clicks selected Alpha, projectless, and Beta with matching cwd and all three rows still visible. Runtime cwd proof exists for Beta; additional per-thread dispatch checks remain pending.",
+        "Partial: Headed checks confirmed selected row and cwd restore across projects. Native worktree creation also persisted its distinct cwd. See windows/docs/parity.md for artifact and fixture details.",
+        "Partial: The workspace rail keeps the selected chat across Settings and Back. Workspace and Settings use the same rounded accent highlight. See windows/docs/parity.md for artifact details."
+      ]
+    },
+    {
+      "id": "W04",
+      "behavior": "Project grouping, one-list mode, project labels, pinning, manual order, priority and updated sorting",
+      "source": [
+        "Veo/Models/DesktopSidebarPreferences.swift",
+        "Veo/Services/DesktopSidebarPreferenceCache.swift",
+        "Veo/Views/DesktopWorkspaceView.swift"
+      ],
+      "acceptance": "Every option persists and affects both Veo and optional Codex history consistently.",
+      "implementation": [
+        "windows/src/Veo.Windows/MainPage.xaml",
+        "windows/src/Veo.Windows/MainPage.xaml.cs"
+      ],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": [
+        "Partial: The compact workspace rail uses inset chat rows, project icons, timestamps, and inline search. Existing project grouping and selection remain available. See windows/docs/parity.md for artifact details."
+      ]
+    },
+    {
+      "id": "W05",
+      "behavior": "Search by catalog data and optional message content",
+      "source": [
+        "Veo/Services/VeoThreadStore.swift",
+        "Veo/Stores/DesktopCodexStore.swift"
+      ],
+      "acceptance": "Show snippets, navigate to the selected occurrence, cancel stale searches, and paginate without duplicate rows.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "W06",
+      "behavior": "Rename, archive, unarchive, delete and fork at a boundary",
+      "source": [
+        "Veo/Services/VeoThreadStore.swift",
+        "Veo/Stores/DesktopCodexStore.swift"
+      ],
+      "acceptance": "Runtime and local identities remain consistent; destructive deletion follows the existing explicit confirmation behavior.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "W07",
+      "behavior": "Optional Codex CLI history, off by default",
+      "source": [
+        "Veo/Stores/DesktopCodexStore.swift",
+        "Veo/Views/DesktopWorkspaceView.swift"
+      ],
+      "acceptance": "Enabling it adds the separate history source; project grouping matches Veo chats, and loading uses a progress bar without an extra loading label.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "W08",
+      "behavior": "Reconnect-aware running indicators and source navigation",
+      "source": [
+        "Veo/Stores/DesktopCodexStore.swift",
+        "Veo/Models/DesktopQuoteReference.swift"
+      ],
+      "acceptance": "Active titles and Stop recover after relaunch; quotes, plan links, subagent links, and search results select the right thread and item.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "W09",
+      "behavior": "Window state and native command/menu workflows",
+      "source": [
+        "Veo/App/VeoApp.swift",
+        "Veo/Models/DesktopNavigationState.swift",
+        "Veo/Services/DesktopMenuBarController.swift"
+      ],
+      "acceptance": "Restore valid bounds and panels across monitors; tray activation and a second window share one runtime owner.",
+      "implementation": [
+        "windows/src/Veo.Windows/MainPage.UtilityLayout.cs",
+        "windows/src/Veo.Core/Preferences.cs",
+        "windows/src/Veo.Windows/MainWindow.xaml",
+        "windows/src/Veo.Windows/MainPage.Settings.cs"
+      ],
+      "status": "Pending",
+      "persistedStateCheck": "Compare the visible utility width and selected tab with UtilityWidth, UtilityVisible and UtilityTab in Settings/settings.json after relaunch.",
+      "evidence": [
+        "Headed x64 Debug process restored physical drag width 480 and selected Files tab from settings. Original width 360 and Review restored after the check. Multi-monitor, tray and second-window scenarios remain pending.",
+        "Partial: Headed tests covered utility sash, layout persistence, and the native title-bar surface. Monitor, tray and second-window coverage remains open. See windows/docs/parity.md for artifact and fixture details.",
+        "Partial: The app commands and native caption controls share a 32-pixel title bar at 96 DPI. Settings opens inside the same workspace window. See windows/docs/parity.md for artifact details."
+      ]
+    },
+    {
+      "id": "C01",
+      "behavior": "Item-scoped streaming messages, reasoning, commands, plans, tools, file changes and grouped activity",
+      "source": [
+        "Veo/Stores/DesktopCodexStore.swift",
+        "Veo/Views/DesktopActivityGroupView.swift",
+        "Veo/Models/DesktopCodexModels.swift"
+      ],
+      "acceptance": "Interleaved events retain exact order live, after history reload, and after relaunch.",
+      "implementation": [
+        "windows/src/Veo.Core/TimelinePresentation.cs",
+        "windows/src/Veo.Windows/Controls/TimelineMessageView.cs"
+      ],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": [
+        "Partial: The 17-check Core suite covers item and outline identity, activity reload and stale events. Full headed grouping and streaming checks remain open. See windows/docs/parity.md for artifact and fixture details."
+      ]
+    },
+    {
+      "id": "C02",
+      "behavior": "Native Markdown, selectable text, code, tables, links and copy as Markdown",
+      "source": [
+        "Veo/Views/MarkdownMessageView.swift",
+        "Veo/Services/DesktopMarkdownRenderCache.swift"
+      ],
+      "acceptance": "Render long and partially streamed content safely; preserve code bytes and link targets when copied or opened.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "C03",
+      "behavior": "Viewed images and supported tool artifacts",
+      "source": [
+        "Veo/Views/DesktopViewedImagesView.swift",
+        "Veo/Views/MarkdownMessageView.swift",
+        "Veo/Models/DesktopCodexModels.swift"
+      ],
+      "acceptance": "Match expanded/collapsed defaults, thumbnails, image viewing, supported audio/resource presentation, citations and memory-source references.",
+      "implementation": [
+        "windows/src/Veo.Core/ConversationArtifactAccess.cs",
+        "windows/src/Veo.Windows/Controls/TimelineMessageView.cs"
+      ],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": [
+        "Partial: Core regressions prove mixed tool artifacts, readback of local bytes and per-preview approval. Expanded, collapsed and live media states remain open. See windows/docs/parity.md for artifact and fixture details."
+      ]
+    },
+    {
+      "id": "C04",
+      "behavior": "Per-thread drafts and attachments",
+      "source": [
+        "Veo/Views/ComposerTextView.swift",
+        "Veo/Stores/DesktopCodexStore.swift",
+        "Veo/Views/DesktopAttachmentStrip.swift"
+      ],
+      "acceptance": "Drafts and media survive switching, queuing, failure and relaunch; removing an attachment does not delete an unrelated source file.",
+      "implementation": [
+        "windows/src/Veo.Core/ComposerDraft.cs",
+        "windows/src/Veo.Windows/MainPage.Composer.cs"
+      ],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": [
+        "Partial: Beta's selected file mention persisted in SQLite. Removing the chip left empty text and an empty attachment array. See windows/docs/parity.md for artifact and fixture details."
+      ]
+    },
+    {
+      "id": "C05",
+      "behavior": "File and skill mentions plus slash-command autocomplete",
+      "source": [
+        "Veo/Models/DesktopComposerCommands.swift",
+        "Veo/Views/DesktopComposerCommandPalette.swift",
+        "Veo/Views/ComposerTextView.swift"
+      ],
+      "acceptance": "Keyboard navigation, inline arguments, dismissal and acceptance work without hijacking ordinary text entry.",
+      "implementation": [
+        "windows/src/Veo.Core/ComposerSuggestionService.cs",
+        "windows/src/Veo.Windows/MainPage.Composer.cs"
+      ],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": [
+        "Partial: A physical click on the Beta file suggestion replaced the token with a persisted chip. Full keyboard, IME and skill workflows remain open. See windows/docs/parity.md for artifact and fixture details."
+      ]
+    },
+    {
+      "id": "C06",
+      "behavior": "Agentic, Plan and Debug modes; goals and personality where exposed",
+      "source": [
+        "Veo/Models/DesktopInteractionMode.swift",
+        "Veo/Views/DesktopComposerOptionsView.swift",
+        "Veo/Stores/DesktopCodexStore.swift"
+      ],
+      "acceptance": "Persist the selected mode and send the correct protocol settings; expose only supported runtime actions.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "C07",
+      "behavior": "Model, reasoning effort, speed/service tier and context window",
+      "source": [
+        "Veo/Models/DesktopContextWindowChoice.swift",
+        "Veo/Views/DesktopModelDetailsView.swift",
+        "Veo/Views/DesktopModelMenu.swift"
+      ],
+      "acceptance": "Live catalog, custom context token limits, suggested Auto limits, model details, enabled-model filtering and project overrides all agree with requests.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "C08",
+      "behavior": "Native and Slider/Advanced pickers",
+      "source": [
+        "Veo/Views/DesktopModelMenu.swift",
+        "Veo/Models/DesktopAppearancePreferences.swift"
+      ],
+      "acceptance": "Click every choice and drag the effort control in the running app; shortest and longest labels do not shift anchors or neighbors.",
+      "implementation": [
+        "windows/src/Veo.Windows/Controls/ModelPickerPanel.cs",
+        "windows/src/Veo.Windows/MainPage.xaml"
+      ],
+      "status": "Pending",
+      "persistedStateCheck": "Compare composer trigger and slider bounds and reread the selected thread's drafts.options_json after choosing effort. Relaunch and check every model, effort, speed and context choice.",
+      "evidence": [
+        "November 17 headed development package: Native physical click Low to High saved high; Slider / Advanced physical thumb drag Low to Maximum saved max. Trigger and slider bounds stayed fixed. See parity.md for artifact hash and scope.",
+        "Partial: The Native picker accepted a physical High/Low choice. The compact Slider/Advanced picker accepted a 224-pixel slider drag to Ultra and a click back to Low. SQLite and the fixed 200-pixel trigger confirmed both. See windows/docs/parity.md for artifact details."
+      ]
+    },
+    {
+      "id": "C09",
+      "behavior": "Queue and steer behavior",
+      "source": [
+        "Veo/Stores/DesktopCodexStore.swift",
+        "Veo/Services/DesktopAppServer0153Coordinator.swift"
+      ],
+      "acceptance": "Add, edit, reorder, remove and immediately steer queued work; reconcile server queue IDs and client IDs after reconnect.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "C10",
+      "behavior": "Stop, retry and structured error recovery",
+      "source": [
+        "Veo/Stores/DesktopCodexStore.swift",
+        "Veo/Models/DesktopErrorRecovery.swift"
+      ],
+      "acceptance": "Interrupt the intended active turn, handle absent turn IDs, preserve drafts on errors, and avoid duplicate sends on reconnect.",
+      "implementation": [
+        "windows/src/Veo.Core/WorkspaceCoordinator.cs",
+        "windows/src/Veo.Core/TimelineReducer.cs",
+        "windows/src/Veo.Infrastructure/Storage/ThreadRepository.Turns.cs",
+        "windows/src/Veo.Core/TurnLifecycle.cs",
+        "windows/src/Veo.Windows/MainPage.xaml.cs"
+      ],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": [
+        "Development profile after semantic Stop and relaunch: SQLite retained the sleep prompt and command items with the same turn ID, and no assistant completion marker. No saved turn lifecycle row was present; the terminal status and additional recovery paths need evidence.",
+        "Partial: A physical Stop interrupted a live disposable turn. Schema v3 stored interrupted with terminal_observed=1. The 18-check lifecycle suite covers migration and late events. See windows/docs/parity.md for artifact and fixture details."
+      ]
+    },
+    {
+      "id": "C11",
+      "behavior": "Async questions while work continues",
+      "source": [
+        "Veo/Services/DesktopAsyncQuestionStore.swift",
+        "Veo/Views/DesktopAsyncQuestionsView.swift"
+      ],
+      "acceptance": "Suggestions, free text, Send answers and Dismiss work; pending questions and answer drafts persist, and deliveries use the normal retryable queue.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "C12",
+      "behavior": "Blocking user-input requests and countdown behavior",
+      "source": [
+        "Veo/Views/DesktopAskQuestionsComposerView.swift",
+        "Veo/Models/DesktopCodexModels.swift"
+      ],
+      "acceptance": "Required and optional answers, keep-open, skip and existing countdown semantics match the source without treating dismissal as an answer.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "C13",
+      "behavior": "Durable plan documents",
+      "source": [
+        "Veo/Views/DesktopPlanDocumentView.swift",
+        "Veo/Services/VeoThreadStore.swift",
+        "Veo/Stores/DesktopCodexStore.swift"
+      ],
+      "acceptance": "Edit, cancel, save, revert, copy, export, navigate, approve/implement, and implement in a new task; preserve ready, superseded, implementing and implemented lifecycle.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "C14",
+      "behavior": "Quotes with trimmed passage, comments and source links",
+      "source": [
+        "Veo/Models/DesktopQuoteReference.swift",
+        "Veo/Views/DesktopWorkspaceView.swift"
+      ],
+      "acceptance": "Captured text remains exact; source navigation remains usable after scrolling and reopening history.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "C15",
+      "behavior": "Turn status, current plan, changed files, route stages and subagent summaries",
+      "source": [
+        "Veo/Views/DesktopTurnStatusView.swift",
+        "Veo/Views/DesktopSubagentsPanelView.swift"
+      ],
+      "acceptance": "Live status reflects the correct thread; subagent transcript and review state open without flattening parent history.",
+      "implementation": [
+        "windows/src/Veo.Core/ConversationActivityCoordinator.cs",
+        "windows/tests/Veo.Core.Tests/ConversationPresentationChecks.cs"
+      ],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": [
+        "Partial: Fixture reload retained interrupted status, token threshold, plan, diff and changed-file identity. Full native status and subagent workflows remain open. See windows/docs/parity.md for artifact and fixture details."
+      ]
+    },
+    {
+      "id": "C16",
+      "behavior": "Minimap and context usage",
+      "source": [
+        "Veo/Views/DesktopThreadMinimapView.swift",
+        "Veo/Views/DesktopContextWindowUsageView.swift"
+      ],
+      "acceptance": "Topic navigation works in long threads; optional visibility, material, percent/token presentation and circle/bar styles persist as applicable.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "C17",
+      "behavior": "Compaction, history paging, revert and Edit from here",
+      "source": [
+        "Veo/Stores/DesktopCodexStore.swift",
+        "Veo/Views/DesktopCheckpointsView.swift",
+        "Veo/Services/DesktopAppServer0153Coordinator.swift"
+      ],
+      "acceptance": "Respect turn boundaries and optional checkpoint restoration; server history and local presentation do not diverge after revert.",
+      "implementation": [
+        "windows/src/Veo.Core/HistoryCoordinator.cs",
+        "windows/src/Veo.Core/CheckpointCoordinator.cs"
+      ],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": [
+        "Partial: The checkpoint-backed history resolver and exact turn binding passed disposable Git and history checks. Full headed history revert remains open. See windows/docs/parity.md for artifact and fixture details."
+      ]
+    },
+    {
+      "id": "C18",
+      "behavior": "Streaming preferences and transitions",
+      "source": [
+        "Veo/Models/DesktopParagraphStreaming.swift",
+        "Veo/Views/DesktopShimmerText.swift",
+        "Veo/Views/DesktopMessageSendTransition.swift"
+      ],
+      "acceptance": "None/paragraph/token modes, Thinking/title shimmer and message/attachment transitions behave correctly with animations enabled and disabled.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "M01",
+      "behavior": "Native catalog and enabled models",
+      "source": [
+        "Veo/Models/DesktopModelCatalogPreferences.swift",
+        "Veo/Views/DesktopEnabledModelsMenu.swift",
+        "Veo/Views/DesktopModelDetailsView.swift"
+      ],
+      "acceptance": "Preserve runtime IDs and supported effort/tier choices; prevent a catalog configuration with no usable model where the source prevents it.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "M02",
+      "behavior": "Global defaults and per-project overrides",
+      "source": [
+        "Veo/Models/DesktopProjectPreferences.swift",
+        "Veo/Stores/DesktopCodexStore.swift"
+      ],
+      "acceptance": "A project override does not change another project; new and existing thread behavior matches the baseline.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "M03",
+      "behavior": "GPT-5.6 Auto and 6 Auto family workflows",
+      "source": [
+        "Veo/Models/DesktopAutoRoutingModels.swift",
+        "Veo/Stores/DesktopCodexStore.swift"
+      ],
+      "acceptance": "Preserve implementation/review stage selection, review escalation, fallback notices and route persistence without inventing unavailable variants.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "M04",
+      "behavior": "First-prompt Auto selection through Jev or Utility",
+      "source": [
+        "Veo/Services/DesktopJevRouter.swift",
+        "Veo/Models/DesktopUtilityModelPreferences.swift",
+        "Veo/Stores/DesktopCodexStore.swift"
+      ],
+      "acceptance": "Preserve first-turn-only routing, prompt truncation rules, speed policy, Ultra policy, “Auto chose” status and failure fallback.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "M05",
+      "behavior": "Utility inference and vision fallback",
+      "source": [
+        "Veo/Services/DesktopUtilityInferenceCoordinator.swift",
+        "Veo/Models/DesktopUtilityModelPreferences.swift"
+      ],
+      "acceptance": "Use the selected utility model for supported analysis and image fallback; cancel stale work and preserve referenced image identity.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "M06",
+      "behavior": "Optional external provider catalog and credentials",
+      "source": [
+        "Veo/Models/DesktopExternalProvider.swift",
+        "Veo/Services/DesktopExternalModelCatalog.swift",
+        "Veo/Views/DesktopExternalProviderSheet.swift"
+      ],
+      "acceptance": "Match Anthropic, DeepSeek, xAI, Grok OAuth, Kimi, Kimi OAuth, OpenRouter and custom-provider configuration where supported by the current integrations.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "M07",
+      "behavior": "External request/response adaptation",
+      "source": [
+        "Veo/Services/DesktopExternalRequestAdapter.swift",
+        "Veo/Services/DesktopOAuthForwarder.swift"
+      ],
+      "acceptance": "Preserve Chat/Responses format conversion, tool identity restoration, reasoning mapping, streaming event rewrites and provider errors with redacted fixtures.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "M08",
+      "behavior": "API-key and provider OAuth lifecycle",
+      "source": [
+        "Veo/Services/DesktopProviderCredentialStore.swift",
+        "Veo/Services/DesktopProviderOAuth.swift"
+      ],
+      "acceptance": "Save, refresh, reconnect, cancel, revoke/remove locally and retry correctly; failed refresh must show disconnected state rather than a false connected badge.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "G01",
+      "behavior": "Resizable right panel with Review, Browser and Files utility tabs",
+      "source": [
+        "Veo/Views/DesktopUtilityPanelView.swift",
+        "Veo/Models/DesktopUtilityPanelModels.swift"
+      ],
+      "acceptance": "Switching tabs preserves relevant state and does not lose an unsaved file edit.",
+      "implementation": ["windows/src/Veo.Windows/MainPage.UtilityLayout.cs", "windows/src/Veo.Windows/Controls/FilesPanel.cs", "windows/src/Veo.Windows/Controls/BrowserPanel.cs"],
+      "status": "Pending",
+      "persistedStateCheck": "Compare panel dimensions and selected tab with settings; compare editor text and disk bytes before and after switching utility tabs.",
+      "evidence": ["Headed x64 Debug physical sash widened 360 to 480; Files tab and width survived relaunch. A native keyboard edit stayed in the buffer across Files/Browser/Files with disposable file bytes unchanged. Browser address draft initially reset across tabs; fix needs exact-artifact readback."]
+    },
+    {
+      "id": "G02",
+      "behavior": "Workspace tree, search, previews, native file editing, undo and find",
+      "source": [
+        "Veo/Models/DesktopFilesModel.swift",
+        "Veo/Services/DesktopWorkspaceFileService.swift",
+        "Veo/Views/DesktopFilesPanelView.swift"
+      ],
+      "acceptance": "Handle lazy expansion and large trees; save exact supported encoding/newlines and detect an external modification before overwrite.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "G03",
+      "behavior": "Unified/split diffs and whitespace filtering",
+      "source": [
+        "Veo/Views/DesktopReviewPanelView.swift",
+        "Veo/Models/DesktopGitModels.swift",
+        "Veo/Services/LocalGitService.swift"
+      ],
+      "acceptance": "Correct staged/unstaged sides, old/new line numbers, added/deleted/renamed/binary files and no-final-newline markers.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "G04",
+      "behavior": "Stage/unstage files and safe hunks",
+      "source": [
+        "Veo/Services/LocalGitService.swift",
+        "Veo/Views/DesktopReviewPanelView.swift"
+      ],
+      "acceptance": "Read back the index and working tree; preserve unrelated changes and the staged/unstaged split.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "G05",
+      "behavior": "Discard with recovery and repository validation",
+      "source": [
+        "Veo/Services/LocalGitService.swift",
+        "Veo/Services/GitRecoveryStore.swift"
+      ],
+      "acceptance": "Capture recovery before mutation; refuse stale snapshots, path escapes and changed repository context. Prove recovery restores exact bytes.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "G06",
+      "behavior": "Commit staged selection and create/switch branch",
+      "source": [
+        "Veo/Services/LocalGitService.swift",
+        "Veo/Views/DesktopReviewPanelView.swift"
+      ],
+      "acceptance": "Match existing selected-file semantics without including unrelated staged changes; errors retain user input and recovery data.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "G07",
+      "behavior": "AI review targets and delivery",
+      "source": [
+        "Veo/Stores/DesktopCodexStore.swift",
+        "Veo/Views/DesktopReviewPanelView.swift"
+      ],
+      "acceptance": "Uncommitted, base branch, commit and custom targets work with inline and detached delivery as supported.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "G08",
+      "behavior": "Worktree creation and selection",
+      "source": [
+        "Veo/Views/DesktopWorktreePicker.swift",
+        "Veo/Models/DesktopWorktree.swift",
+        "Veo/Services/LocalGitService.swift"
+      ],
+      "acceptance": "Choose base branch, destination and branch name; start a chat in new or existing worktree and preserve common repository identity.",
+      "implementation": [
+        "windows/src/Veo.Windows/Controls/WorktreesPanel.cs",
+        "windows/src/Veo.Core/WorktreeCoordinator.cs"
+      ],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": [
+        "Partial: Physical worktree creation from the toolbar wrote the new branch and a chat with the worktree cwd. Core fixtures cover reuse and identity inheritance. See windows/docs/parity.md for artifact and fixture details."
+      ]
+    },
+    {
+      "id": "G09",
+      "behavior": "Named project shell actions and optional worktree setup",
+      "source": [
+        "Veo/Models/DesktopProjectPreferences.swift",
+        "Veo/Views/DesktopProjectSettingsView.swift",
+        "Veo/Services/DesktopLocalTerminalSession.swift"
+      ],
+      "acceptance": "Each action opens its own real terminal in the correct directory; explicit CLI consent and yolo preferences still apply.",
+      "implementation": [
+        "windows/src/Veo.Windows/MainPage.Toolbar.cs",
+        "windows/src/Veo.Windows/MainPage.Git.cs",
+        "windows/src/Veo.Windows/Controls/WorktreesPanel.cs"
+      ],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": [
+        "Partial: Project Actions and optional worktree setup use the existing terminal and inherited checkout configuration. Physical action execution remains open. See windows/docs/parity.md for artifact and fixture details."
+      ]
+    },
+    {
+      "id": "G10",
+      "behavior": "Inline diff comments into composer",
+      "source": [
+        "Veo/Views/DesktopDiffCommentEditor.swift",
+        "Veo/Models/DesktopGitModels.swift"
+      ],
+      "acceptance": "Include exact file, side, line range and captured selection without silently changing the patch being discussed.",
+      "implementation": [
+        "windows/src/Veo.Windows/Controls/GitReviewPanel.cs",
+        "windows/src/Veo.Windows/MainPage.xaml.cs"
+      ],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": [
+        "Partial: A physical review comment saved the exact unstaged excerpt and new line number in SQLite without starting a turn. See windows/docs/parity.md for artifact and fixture details."
+      ]
+    },
+    {
+      "id": "G11",
+      "behavior": "Linked pull request details and draft PR creation",
+      "source": [
+        "Veo/Services/DesktopGitHubService.swift",
+        "Veo/Views/DesktopPullRequestsView.swift"
+      ],
+      "acceptance": "Load status/checks/comments through `gh`; push only after the explicit action and verify the resulting PR URL and branch.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "G12",
+      "behavior": "Workspace checkpoints and file-only restore",
+      "source": [
+        "Veo/Models/DesktopWorkspaceCheckpoint.swift",
+        "Veo/Views/DesktopCheckpointsView.swift",
+        "Veo/Services/LocalGitService.swift"
+      ],
+      "acceptance": "Preserve tracked/nonignored files, index split, local checkpoint refs, eligibility and conflict refusals. Unsupported submodules remain refused as in the source.",
+      "implementation": [
+        "windows/src/Veo.Windows/Controls/CheckpointsPanel.cs",
+        "windows/src/Veo.Core/CheckpointCoordinator.cs"
+      ],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": [
+        "Partial: A physical Save checkpoint created Git file and index refs. Fixtures exercised exact restore, retained recovery and stale/active context refusals. See windows/docs/parity.md for artifact and fixture details."
+      ]
+    },
+    {
+      "id": "G13",
+      "behavior": "Saved prompt library with media",
+      "source": [
+        "Veo/Services/DesktopPromptLibrary.swift",
+        "Veo/Views/DesktopPromptLibraryView.swift"
+      ],
+      "acceptance": "Save, browse, restore and delete; copy restored media to the designated Attachments location while retaining original mention paths.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "G14",
+      "behavior": "Project defaults and configurable action shortcuts",
+      "source": [
+        "Veo/Models/DesktopProjectPreferences.swift",
+        "Veo/Models/DesktopKeyboardPreferences.swift"
+      ],
+      "acceptance": "Inheritance, worktree-project mapping and canonical path comparison remain correct through relaunch and junction-based paths.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "T01",
+      "behavior": "Real docked interactive shell",
+      "source": [
+        "Veo/Services/DesktopLocalTerminalSession.swift",
+        "Veo/Views/DesktopInteractiveTerminalView.swift"
+      ],
+      "acceptance": "PowerShell editing, history, Ctrl+C, interactive prompts, terminal resize and shell process cleanup work through ConPTY.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "T02",
+      "behavior": "Tabs and expanded workspace",
+      "source": [
+        "Veo/Models/DesktopTerminalWorkspaceLayout.swift",
+        "Veo/Views/DesktopTerminalWorkspaceView.swift",
+        "Veo/Views/DesktopTerminalSessionSidebar.swift"
+      ],
+      "acceptance": "Up to six adjustable panes, grid presets, drag rearrangement, active-pane focus and a session sidebar work and persist layout.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "T03",
+      "behavior": "Full-screen TUI support",
+      "source": [
+        "Veo/Services/DesktopLocalTerminalSession.swift",
+        "Veo/Views/DesktopInteractiveTerminalView.swift"
+      ],
+      "acceptance": "Codex, Claude when installed, and a representative editor render correctly through resize, alternate screen, color, mouse and keyboard input.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "T04",
+      "behavior": "Correct viewport and text behavior",
+      "source": [
+        "Veo/Views/DesktopInteractiveTerminalView.swift",
+        "Veo/Services/DesktopLocalTerminalSession.swift"
+      ],
+      "acceptance": "Synchronize rows/columns at every pane and DPI change; support selection/copy, paste, scrollback, IME, Unicode width and cursor state.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "T05",
+      "behavior": "Agent CLI consent and per-CLI bypass settings",
+      "source": [
+        "Veo/Models/DesktopTerminalPreferences.swift",
+        "Veo/Services/DesktopLocalTerminalSession.swift"
+      ],
+      "acceptance": "With Agent CLIs disabled, Veo-managed launches and ordinary intercepted CLI commands require the source-equivalent allow step. Full-access flags remain explicit and off by default.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "T06",
+      "behavior": "Workspace and project actions",
+      "source": [
+        "Veo/Models/DesktopProjectPreferences.swift",
+        "Veo/Views/DesktopTerminalWorkspaceView.swift"
+      ],
+      "acceptance": "New sessions start in the intended thread/project directory; switching chats must not silently move an already running shell.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "T07",
+      "behavior": "Background agent terminals",
+      "source": [
+        "Veo/Services/DesktopAppServer0153Coordinator.swift",
+        "Veo/Views/DesktopAppServer0153Views.swift"
+      ],
+      "acceptance": "Display, terminate and clean app-server-reported background terminals separately from the user’s own docked terminal sessions.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "B01",
+      "behavior": "Native start page and separate address/search drafts",
+      "source": [
+        "Veo/Views/DesktopBrowserPanelView.swift",
+        "Veo/Models/DesktopBrowserModel.swift"
+      ],
+      "acceptance": "Start page uses the right-panel material; typing in one field does not overwrite the other.",
+      "implementation": [
+        "windows/src/Veo.Windows/Controls/BrowserPanel.cs",
+        "windows/src/Veo.Windows/MainPage.UtilityLayout.cs"
+      ],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": [
+        "Partial: Independent address and start-page drafts physically survived utility and browser-tab switches. A second tab started with empty drafts. See windows/docs/parity.md for artifact and fixture details."
+      ]
+    },
+    {
+      "id": "B02",
+      "behavior": "Tabs, navigation, restore and desktop layout",
+      "source": [
+        "Veo/Models/DesktopBrowserModel.swift",
+        "Veo/Views/DesktopBrowserPanelView.swift"
+      ],
+      "acceptance": "Back/forward/reload/stop, tab reordering, popups as tabs, per-workspace tab selection/restoration and actual loading state work in a shared Veo profile.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "B03",
+      "behavior": "All search providers",
+      "source": [
+        "Veo/Models/DesktopBrowserModel.swift"
+      ],
+      "acceptance": "Google default; ChatGPT, DuckDuckGo, Bing, Kagi, Brave and Ecosia URLs retain correct query encoding. ChatGPT search preserves temporary-chat and search hints.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "B04",
+      "behavior": "Browser preferences",
+      "source": [
+        "Veo/Models/DesktopBrowserModel.swift",
+        "Veo/Views/DesktopSettingsPage.swift"
+      ],
+      "acceptance": "Restore-tabs behavior, desktop site, JavaScript, fraudulent-site warnings, AutoFill and website-data clearing have real effects and survive relaunch.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "B05",
+      "behavior": "Downloads",
+      "source": [
+        "Veo/Models/DesktopBrowserModel.swift",
+        "Veo/Views/DesktopBrowserPanelView.swift"
+      ],
+      "acceptance": "Native progress, safe filename/destination handling, cancel/failure/success, open and reveal; verify the completed file exists and can be read. Resolve Downloads through the Windows Known Folder API.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "B06",
+      "behavior": "Password and HTTP authentication",
+      "source": [
+        "Veo/Services/DesktopBrowserKeychain.swift",
+        "Veo/Models/DesktopBrowserModel.swift"
+      ],
+      "acceptance": "Offer explicit password save, origin-correct fill, credential choice and HTTP-auth handling without exposing secrets to an unrelated page.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "B07",
+      "behavior": "Client certificates and passkey behavior",
+      "source": [
+        "Veo/Services/DesktopBrowserKeychain.swift",
+        "Veo/Models/DesktopBrowserModel.swift"
+      ],
+      "acceptance": "Use platform certificate choice and OS/WebAuthn mechanisms where available; validate actual registration/sign-in on the supported Windows/WebView2 combination.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "B08",
+      "behavior": "ChatGPT and Codex account login in Veo",
+      "source": [
+        "Veo/Models/DesktopBrowserModel.swift",
+        "Veo/Stores/DesktopCodexStore.swift"
+      ],
+      "acceptance": "Start within the embedded browser, retain shared cookies, handle required redirects and loopback callback, and read actual CLI account state afterward.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "B09",
+      "behavior": "Developer tools and viewport presets",
+      "source": [
+        "Veo/Models/DesktopBrowserModel.swift",
+        "Veo/Views/DesktopBrowserPanelView.swift"
+      ],
+      "acceptance": "Responsive/desktop/tablet/mobile viewport widths, JavaScript console/evaluation, clear console, native DevTools and open-in-default-browser behavior work.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "B10",
+      "behavior": "Browser lifecycle and permissions",
+      "source": [
+        "Veo/Models/DesktopBrowserModel.swift",
+        "Veo/Services/DesktopBrowserKeychain.swift"
+      ],
+      "acceptance": "Request website microphone/camera access deliberately, recover from renderer failure, dispose tabs, and keep page navigation isolated from host APIs.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "B11",
+      "behavior": "Local workspace page previews",
+      "source": [
+        "Veo/Models/DesktopBrowserModel.swift",
+        "Veo/Services/DesktopWorkspaceFileService.swift"
+      ],
+      "acceptance": "Open an HTML file inside the selected workspace with only the approved local read boundary; reject outside-root navigation and junction escapes without granting a page native host access.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "R01",
+      "behavior": "Runtime readiness, reconnect, diagnostics and capability display",
+      "source": [
+        "Veo/Services/CodexAppServerClient.swift",
+        "Veo/Models/CodexAppServerCapabilities.swift",
+        "Veo/Views/DesktopSettingsPage.swift"
+      ],
+      "acceptance": "Clearly distinguish missing executable, authentication failure, unsupported method, startup failure and a working initialized runtime.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "R02",
+      "behavior": "Read only, Workspace and Full access plus managed requirements",
+      "source": [
+        "Veo/Models/DesktopCodexModels.swift",
+        "Veo/Services/DesktopPermissionsPanel.swift",
+        "Veo/Stores/DesktopCodexStore.swift"
+      ],
+      "acceptance": "Requests enforce the chosen profile, forbidden options remain unavailable, and Windows sandbox setup does not broaden permissions on failure.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "R03",
+      "behavior": "Approvals and permission requests",
+      "source": [
+        "Veo/Views/DesktopPermissionsView.swift",
+        "Veo/Services/CodexAppServerClient.swift",
+        "Veo/Stores/DesktopCodexStore.swift"
+      ],
+      "acceptance": "Render command/file-change decisions, session-scoped approval, denial, requested permissions and managed restrictions with actual server responses.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "R04",
+      "behavior": "Automatic approval review and guardian denial",
+      "source": [
+        "Veo/Services/DesktopAppServer0153Coordinator.swift",
+        "Veo/Views/DesktopAppServer0153Views.swift"
+      ],
+      "acceptance": "Preserve reviewing/completed/strict-review-required states and the explicit supported override action; an automatic denial cannot be hidden.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "R05",
+      "behavior": "Live turn settings and fallback",
+      "source": [
+        "Veo/Services/DesktopAppServer0153Coordinator.swift",
+        "Veo/Models/DesktopAppServer0153Models.swift"
+      ],
+      "acceptance": "Apply supported changes to the current turn; if unavailable, show next-turn-only behavior rather than pretending the active turn changed.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "R06",
+      "behavior": "Runtime config, experimental features, hooks and subscriptions",
+      "source": [
+        "Veo/Models/DesktopProtocolManagementModels.swift",
+        "Veo/Stores/DesktopCodexStore.swift"
+      ],
+      "acceptance": "Read/write supported configuration, show errors, unload inactive subscriptions and retain managed requirements.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "R07",
+      "behavior": "Skills, plugins, apps and MCP",
+      "source": [
+        "Veo/Models/DesktopIntegrationModels.swift",
+        "Veo/Views/DesktopSettingsPage.swift",
+        "Veo/Stores/DesktopCodexStore.swift"
+      ],
+      "acceptance": "Inventory, details, enable/disable/install/uninstall, connection state, OAuth, reload, forms, resource reads and supported tool actions remain functional.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "R08",
+      "behavior": "Marketplaces, plugin search and external-agent import",
+      "source": [
+        "Veo/Services/DesktopAppServer0153Coordinator.swift",
+        "Veo/Views/DesktopAppServer0153Views.swift"
+      ],
+      "acceptance": "Add/remove/upgrade, search and detect/import with visible progress and real completion readback.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "R09",
+      "behavior": "Dynamic tools",
+      "source": [
+        "Veo/Services/DesktopAppServer0153Coordinator.swift"
+      ],
+      "acceptance": "Preserve `veo_workspace_context` and `veo_background_terminals`, their read-only empty-object schemas, originating-thread isolation, access-boundary metadata and protocol-correct success/failure artifacts. Reject unknown namespaces, threads, tools and arguments.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "R10",
+      "behavior": "Account sign-in methods, cancellation and logout",
+      "source": [
+        "Veo/Services/CodexAppServerClient.swift",
+        "Veo/Stores/DesktopCodexStore.swift",
+        "Veo/Views/DesktopSettingsPage.swift"
+      ],
+      "acceptance": "Preserve runtime-supported API key, ChatGPT, device code and other reported login modes; reflect real local CLI account state. Warn when sign-out affects other local CLI clients.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "R11",
+      "behavior": "Usage, rate limits, workspace notices and account extras",
+      "source": [
+        "Veo/Models/DesktopProtocolManagementModels.swift",
+        "Veo/Stores/DesktopCodexStore.swift",
+        "Veo/Views/DesktopSettingsPage.swift"
+      ],
+      "acceptance": "Show provider data without invented balances; credit/reset and email-nudge actions retain explicit user initiation and server readback.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "R12",
+      "behavior": "Thread memory mode and paginated item history",
+      "source": [
+        "Veo/Services/DesktopAppServer0153Coordinator.swift",
+        "Veo/Services/VeoThreadStore.swift"
+      ],
+      "acceptance": "Persist actual accepted memory state and load supported item/timeline pages without duplicates or losing local plan artifacts.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "R13",
+      "behavior": "Realtime voice",
+      "source": [
+        "Veo/Services/RealtimeAudioCoordinator.swift",
+        "Veo/Stores/DesktopCodexStore.swift"
+      ],
+      "acceptance": "Permission handling, voice selection, start/stop, capture, playback, transcript, output modality and errors work with the negotiated realtime protocol.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "R14",
+      "behavior": "Voice history protocol choices",
+      "source": [
+        "Veo/Models/DesktopAppServer0153Models.swift",
+        "Veo/Services/DesktopAppServer0153Coordinator.swift",
+        "Veo/Stores/DesktopCodexStore.swift"
+      ],
+      "acceptance": "Automatic, timeline v3 and legacy v2 modes retain their source meaning; schema and runtime support control availability.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "S01",
+      "behavior": "General settings",
+      "source": [
+        "Veo/Views/DesktopSettingsPage.swift",
+        "Veo/Models/DesktopUtilityModelPreferences.swift",
+        "Veo/Models/DesktopModelCatalogPreferences.swift"
+      ],
+      "acceptance": "Router controls, default access, optional Codex history, current-chat memory, model enablement, external providers and utility model retain their effects.",
+      "implementation": [
+        "windows/src/Veo.Windows/Controls/SettingsPanel.xaml",
+        "windows/src/Veo.Windows/Controls/SettingsPanel.cs"
+      ],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": [
+        "Partial: Settings uses the in-window Mac-style category rail, centered content, and grouped rows for the supported General preferences. See windows/docs/parity.md for artifact details."
+      ]
+    },
+    {
+      "id": "S02",
+      "behavior": "Appearance settings",
+      "source": [
+        "Veo/Models/DesktopAppearancePreferences.swift",
+        "Veo/Models/DesktopComposerPreferences.swift",
+        "Veo/Views/DesktopSettingsPage.swift"
+      ],
+      "acceptance": "All region materials, System/Light/Dark, accent, both pickers, streaming modes, viewed-image expansion, status, usage and minimap settings persist.",
+      "implementation": [
+        "windows/src/Veo.Windows/Controls/SettingsPanel.cs",
+        "windows/src/Veo.Core/Preferences.cs",
+        "windows/src/Veo.Windows/Controls/SettingsPanel.xaml",
+        "windows/src/Veo.Windows/Controls/SettingsPanel.Appearance.cs"
+      ],
+      "status": "Pending",
+      "persistedStateCheck": "Compare appearance and selected controls with Settings/settings.json before and after relaunch; restore original values.",
+      "evidence": [
+        "November 17 headed development package: physical selection switched to Light and Slider / Advanced; screenshot and settings JSON agreed. Restored System and Native and reread both. Other appearance preferences and relaunch with changed settings remain pending.",
+        "Partial: Light and Sync theme cards applied through pointer input and persisted to settings.json. Both appearance variants and the rounded category highlight were inspected. See windows/docs/parity.md for artifact details."
+      ]
+    },
+    {
+      "id": "S03",
+      "behavior": "Terminal and Browser settings",
+      "source": [
+        "Veo/Models/DesktopTerminalPreferences.swift",
+        "Veo/Models/DesktopBrowserModel.swift",
+        "Veo/Views/DesktopSettingsPage.swift"
+      ],
+      "acceptance": "All source switches have working Windows equivalents; defaults and explicit bypass choices remain correct.",
+      "implementation": [
+        "windows/src/Veo.Windows/Controls/SettingsPanel.cs"
+      ],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": [
+        "Partial: The browser restore-tabs switch saved and restored through native Settings. Agent CLI access choices use the existing Windows terminal preferences. See windows/docs/parity.md for artifact details."
+      ]
+    },
+    {
+      "id": "S04",
+      "behavior": "Projects and Keyboard Shortcuts",
+      "source": [
+        "Veo/Models/DesktopProjectPreferences.swift",
+        "Veo/Models/DesktopKeyboardPreferences.swift",
+        "Veo/Views/DesktopKeyboardSettingsView.swift"
+      ],
+      "acceptance": "Project configuration, actions, shortcut editing, conflict detection, clear/reset and reserved typing/terminal keys work.",
+      "implementation": [
+        "windows/src/Veo.Windows/Controls/ShortcutSettingsPanel.cs",
+        "windows/src/Veo.Windows/Controls/ProjectsPanel.cs",
+        "windows/src/Veo.Windows/MainPage.Settings.cs"
+      ],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": [
+        "Partial: A physical key chord was captured and saved in Keyboard Shortcuts, opened its Settings destination, and was reset. The 41-check project and shortcut suite passed. See windows/docs/parity.md for artifact details."
+      ]
+    },
+    {
+      "id": "S05",
+      "behavior": "Notifications and sounds",
+      "source": [
+        "Veo/Models/DesktopNotificationPreferences.swift",
+        "Veo/Services/DesktopNotificationService.swift"
+      ],
+      "acceptance": "Turn alerts, in-app warnings, tray presence, opt-in completion sound, custom sound import and fallback all work after relaunch.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "S06",
+      "behavior": "Quiet notification rules and activation",
+      "source": [
+        "Veo/Services/DesktopNotificationService.swift",
+        "Veo/Stores/DesktopCodexStore.swift"
+      ],
+      "acceptance": "Suppress duplicate alerts for the watched chat; clicking an alert restores the correct thread and window.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "S07",
+      "behavior": "Tray menu and permission management",
+      "source": [
+        "Veo/Services/DesktopMenuBarController.swift",
+        "Veo/Services/DesktopPermissionsPanel.swift"
+      ],
+      "acceptance": "Native menu commands work with window hidden/closed according to the chosen lifetime policy; notification and microphone settings open correctly.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "S08",
+      "behavior": "Usage-limit automatic continuation",
+      "source": [
+        "Veo/Models/DesktopAutoContinuationModels.swift",
+        "Veo/Services/DesktopAutoContinuationCoordinator.swift"
+      ],
+      "acceptance": "Preserve interrupted thread/turn, reset time, payload choices, opt-in status and next-launch behavior.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "S09",
+      "behavior": "Optional quiet wake",
+      "source": [
+        "Veo/Services/DesktopAutoContinuationCoordinator.swift",
+        "BuildSupport/VeoAutoContinueAgent.swift"
+      ],
+      "acceptance": "Explicitly register a per-user task; launch the installed artifact, hand off to one app instance, cancel stale jobs and remove scheduling when disabled.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "S10",
+      "behavior": "Updates",
+      "source": [
+        "Veo/Models/DesktopUpdatePreferences.swift",
+        "Veo/Services/DesktopUpdateService.swift"
+      ],
+      "acceptance": "Manual check, automatic checks, automatic installation preference, skipped version, progress, errors, release notes and restart behavior have verified Windows equivalents.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    },
+    {
+      "id": "S11",
+      "behavior": "Install, upgrade and uninstall",
+      "source": [
+        "Veo/App/VeoApp.swift",
+        "Veo/Services/DesktopUpdateService.swift"
+      ],
+      "acceptance": "Signed package installs for a standard user, finds the CLI, updates safely, preserves intended local data and removes app-owned background registrations.",
+      "implementation": ["windows/scripts/package-unsigned.ps1", "windows/scripts/verify-unsigned-msix.ps1", "windows/src/Veo.Windows/Package.appxmanifest"],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": ["A captured x64 Release snapshot produced an unsigned 536-file MSIX. Structural checks and Windows SDK semantic unpack passed. See parity.md for hash. Signed installation, update, uninstall, and ARM64 are unverified."]
+    },
+    {
+      "id": "S12",
+      "behavior": "Public documentation and legal copy",
+      "source": [
+        "Legal/PRIVACY_POLICY.md",
+        "Legal/TERMS_OF_USE.md"
+      ],
+      "acceptance": "Explain Windows dependencies, native sandbox/access modes, data locations, optional provider requests and actual update channel. Preserve independent open-source identity and licenses.",
+      "implementation": [],
+      "status": "Pending",
+      "persistedStateCheck": "Relaunch exact artifact and reread relevant database/settings/files/runtime state; use a disposable workspace for mutations.",
+      "evidence": []
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "Veo.Windows (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "Veo.Windows (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}

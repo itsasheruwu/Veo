@@ -58,6 +58,7 @@ In onboarding or Settings → Providers, you can also connect an independently i
 
 ### A composer that knows the workspace
 
+- Dictate into the draft with the mic next to Send. Choose Apple Speech, local Whisper, or OpenAI with your API key in **Settings → Voice**.
 - Choose Agentic, Plan, or Debug interaction, plus the model, reasoning effort, service tier, and access mode reported by the connected Codex runtime.
 - Select GPT-5.6 Auto or 6 Auto to route implementation and review across available family variants with explicit fallbacks when a lane is unavailable.
 - Optionally let Auto choose a model, reasoning level, and speed from the first prompt using Jev or your Utility model, then keep that route for the chat. Jev routing sends the first prompt to TypeSafe AI.
@@ -128,7 +129,7 @@ If discovery fails, set `CODEX_EXECUTABLE` to the absolute path of the `codex` b
 
 ## Windows beta
 
-The [Windows x64 beta](https://github.com/itsasheruwu/Veo/releases/tag/v2.5.0-windows-beta.1) is a portable ZIP for Windows 11 24H2 or later. Extract it and run `Veo.Windows.exe` inside the `Veo` folder. Install and authenticate Codex locally. The [Windows beta branch](https://github.com/itsasheruwu/Veo/tree/codex/windows-beta/windows) contains the source and build instructions.
+The [Windows x64 beta](https://github.com/itsasheruwu/Veo/releases/tag/v2.6.0-windows-beta.1) is a portable ZIP for Windows 11 24H2 or later. Extract it and run `Veo.Windows.exe` inside the `Veo` folder. Install and authenticate Codex locally. The [Windows beta branch](https://github.com/itsasheruwu/Veo/tree/codex/windows-beta/windows) contains the source and build instructions.
 
 ## Build and run
 

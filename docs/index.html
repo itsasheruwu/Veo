@@ -31,7 +31,7 @@
 
 <section class="hero">
   <div class="wrap">
-    <span class="eyebrow"><span class="tag">2.5.0</span> <b>A new default picker and clearer chat activity</b></span>
+    <span class="eyebrow"><span class="tag">2.6.0</span> <b>Voice dictation, a new welcome tour, and local providers</b></span>
     <h1>A native Mac workspace<br>for <span class="grad">Codex</span>.</h1>
     <p class="lede">Veo turns the Codex CLI you already have installed into a focused macOS app — every project in one sidebar, a timeline that keeps its shape, and a real terminal beside the conversation.</p>
     <div class="hero-actions">
@@ -88,7 +88,7 @@
       <div class="card">
         <div class="ico">✎</div>
         <h3>A composer that knows the project</h3>
-        <p>Choose Agentic, Plan, or Debug; edit and approve plan documents; answer Codex questions inline; select a direct model, family Auto route, or first-turn Auto router; attach context; queue follow-ups; and type <code>/</code> for native commands.</p>
+        <p>Dictate into a draft, attach context, queue follow-ups, and answer Codex questions inline. Switch local providers or pick a model, reasoning level, and permissions from the composer.</p>
       </div>
       <div class="card">
         <div class="ico">▮</div>
@@ -124,11 +124,12 @@
       </div>
       <div>
         <table class="table">
-          <thead><tr><th>Mode</th><th>Filesystem access</th></tr></thead>
+          <thead><tr><th scope="col">Mode</th><th scope="col">Access and approvals</th></tr></thead>
           <tbody>
-            <tr><td>Read only</td><td>Inspect files and local state, no workspace writes</td></tr>
-            <tr><td>Workspace</td><td>Write inside the selected project and approved temporary locations</td></tr>
-            <tr><td>Full access</td><td>Operate outside the project without filesystem sandboxing</td></tr>
+            <tr><td>Supervised</td><td>Ask before running commands or writing outside the read-only sandbox</td></tr>
+            <tr><td>Auto-accept edits</td><td>Allow edits in the project and ask you for other approvals</td></tr>
+            <tr><td>Auto</td><td>Allow project edits and use automatic review on supported Codex versions</td></tr>
+            <tr><td>Full access</td><td>Run commands and edit files without sandboxing or approval prompts</td></tr>
           </tbody>
         </table>
         <p class="faint mt-32">Keep work under version control, and read approval requests before accepting them.</p>
@@ -149,6 +150,7 @@
       <div class="key-row"><kbd>⌃`</kbd> Toggle terminal</div>
       <div class="key-row"><kbd>⌥⌘I</kbd> Toggle utility panel</div>
       <div class="key-row"><kbd>⌘,</kbd> Settings</div>
+      <div class="key-row"><kbd>⇧⌘D</kbd> Dictate</div>
       <div class="key-row"><kbd>⇧⌘S</kbd> Save prompt</div>
       <div class="key-row"><kbd>⇧⌥⌘W</kbd> Project worktrees</div>
       <div class="key-row"><kbd>↩</kbd> Send a message</div>
@@ -164,7 +166,7 @@
       <h2>Bring your own Codex.</h2>
       <p>Install the app, point it at a project, and keep working. Veo needs nothing but the CLI you already have.</p>
       <div class="hero-actions" style="margin-bottom:0">
-        <a class="btn btn-primary btn-lg" href="downloads.html">Download Veo 2.5.0</a>
+        <a class="btn btn-primary btn-lg" href="downloads.html">Download Veo 2.6.0</a>
         <a class="btn btn-ghost btn-lg" href="about.html">How it works</a>
       </div>
     </div>

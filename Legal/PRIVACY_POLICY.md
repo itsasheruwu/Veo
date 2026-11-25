@@ -1,6 +1,6 @@
 # Veo Privacy Notice
 
-**Last updated:** September 24, 2026
+**Last updated:** November 25, 2026
 
 This notice explains how Veo, a native macOS application maintained by Ash, handles information. It describes the open-source app in this repository and does not cover services independently operated by Codex providers or tools that you choose to use.
 
@@ -37,7 +37,7 @@ These preferences remain on the Mac until they are changed or removed by you or 
 
 ## 4. Project files, credentials, and chat history
 
-Veo does not bundle or separately store your Codex account credentials; the installed Codex CLI manages that sign-in. If you configure other model providers or Jev routing, Veo stores the API keys or tokens you provide in the macOS Keychain. Optional browser sign-ins use WebKit website data and may also use Keychain AutoFill.
+The installed Codex CLI manages your Codex sign-in. If you configure another model provider, Jev routing, or OpenAI dictation, Veo stores the API keys or tokens you provide in the macOS Keychain. Optional browser sign-ins use WebKit website data and may also use Keychain AutoFill.
 
 Project files remain in folders you control. Veo-owned chats and timeline items are stored locally under Application Support (`com.ash.Veo/Threads`). Saved prompt media is stored under `com.ash.Veo/PromptLibrary`; optional workspace checkpoints use local Git refs. Codex configuration, credentials, and Codex CLI thread history remain in locations managed by you and the Codex CLI. Deleting Veo does not automatically delete project files or Codex CLI data because they are not stored in the app bundle.
 
@@ -48,6 +48,8 @@ Veo has no analytics SDK or Veo-operated backend. The Codex subprocess may send 
 Veo also makes direct network requests for features you choose to use. Configured external model providers receive the requests needed to run their models. If you enable Auto routing with Jev and provide a key, Veo sends up to the first 24,000 characters of a new chat's first prompt, along with descriptions of eligible model/effort/speed routes, to TypeSafe AI (`api.typesafe.ai`) to choose a route. Jev is optional; the Utility router uses your selected utility model instead. The in-app browser loads websites you visit, and update checks, GitHub integration, and public-resource previews contact their respective services.
 
 Third-party processing and retention follow each provider's terms and privacy policy. Review the services you configure, including the [OpenAI Privacy Policy](https://openai.com/policies/privacy-policy/) when using Codex with OpenAI. Veo does not control data held by those services.
+
+Composer dictation uses the microphone when you start a recording. Apple Speech and local Whisper process dictation on the device. If you choose OpenAI in Voice settings, Veo sends the recording directly to OpenAI after you finish, using the API key you supplied. Veo removes its temporary recording after transcription or cancellation. The transcript becomes part of the editable draft and follows the normal chat flow if you send it.
 
 ## 6. Access levels and local actions
 

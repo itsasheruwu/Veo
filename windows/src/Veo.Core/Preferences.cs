@@ -5,6 +5,9 @@ namespace Veo.Core;
 
 public sealed record VeoPreferences
 {
+    public const int TourCompleted = 5;
+    public int WorkspaceTourVersion { get; set; } = 2;
+    public int WorkspaceTourStep { get; set; } = TourCompleted;
     public int Version { get; init; } = 1;
     public string Appearance { get; set; } = "System";
     public const string NativePicker = "Native";
@@ -13,6 +16,13 @@ public sealed record VeoPreferences
     public bool ModelPickerUpgradeApplied { get; set; }
     public bool ModelPickerUpgradeNoticePending { get; set; }
     public string Streaming { get; set; } = "Token";
+    public string DictationModel { get; set; } = "Windows Speech";
+    public string DictationLanguage { get; set; } = "";
+    public bool DictationLive { get; set; } = true;
+    public bool DictationOpenAIStream { get; set; } = true;
+    public string DictationWhisperLanguage { get; set; } = "";
+    public string DictationWhisperExecutable { get; set; } = "";
+    public string DictationWhisperModel { get; set; } = "";
     public string ViewedImages { get; set; } = "Expanded";
     public string Accent { get; set; } = "#2E8CFA";
     public string SidebarMaterial { get; set; } = "Solid";
@@ -66,7 +76,7 @@ public sealed class PreferencesStore(string dataRoot)
     {
         if (!File.Exists(path))
         {
-            var fresh = new VeoPreferences { ModelPickerUpgradeApplied = true };
+            var fresh = new VeoPreferences { ModelPickerUpgradeApplied = true, WorkspaceTourStep = 0 };
             await SaveAsync(fresh);
             return fresh;
         }
@@ -75,6 +85,8 @@ public sealed class PreferencesStore(string dataRoot)
             using var settings = JsonDocument.Parse(await File.ReadAllTextAsync(path));
             var root = settings.RootElement;
             var value = root.Deserialize<VeoPreferences>() ?? throw new JsonException("Expected a settings object.");
+            if (!root.TryGetProperty(nameof(VeoPreferences.WorkspaceTourVersion),out _) && root.TryGetProperty(nameof(VeoPreferences.WorkspaceTourStep),out _) && value.WorkspaceTourStep >= 3)
+                value.WorkspaceTourStep = Math.Min(value.WorkspaceTourStep+1,VeoPreferences.TourCompleted);
             if (!value.ModelPickerUpgradeApplied)
             {
                 var alreadyUsesSlider = root.TryGetProperty(nameof(VeoPreferences.ModelPicker), out var previous)

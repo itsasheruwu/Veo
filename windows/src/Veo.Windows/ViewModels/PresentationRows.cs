@@ -43,7 +43,7 @@ public sealed class MessageRow(ThreadSession session, TimelineItem item) : Obser
     TimelineItem itemValue = item;
     public TimelineItem Item { get => itemValue; set => SetProperty(ref itemValue, value); }
     public string Id { get; } = item.Id;
-    public string Kind { get; } = item.Kind switch { "userMessage" => "You", "agentMessage" => "Codex", "reasoning" => "Reasoning", "commandExecution" => "Terminal", _ => item.Kind };
+    public string Kind { get; } = item.Kind switch { "userMessage" => "You", "agentMessage" => item.Raw.Str("veoProviderName") ?? "Codex", "reasoning" => "Reasoning", "commandExecution" => "Terminal", _ => item.Kind };
     string textValue = item.Text;
     public string Text { get => textValue; set => SetProperty(ref textValue, value); }
     public void Update(TimelineItem value) { Text = value.Text; Item = value; }

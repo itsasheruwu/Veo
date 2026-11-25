@@ -4,6 +4,8 @@ Veo for Windows is a native WinUI beta. See [the acceptance ledger](docs/parity.
 
 The app uses WinUI 3, C#, SQLite and one direct local `codex app-server --stdio` process. WebView2 hosts browser pages only. There is no hosted Veo service or purchase gate. The Mac edition ships independently.
 
+In onboarding or Settings → Providers, you can also connect an independently installed coding agent through the Agent Client Protocol (ACP). Install Node.js and the agent or its ACP adapter, sign in with that agent, then choose Connect. The provider picker to the left of the model picker changes which agent receives your message and conversation context. Each agent uses its own account and reports its available models. Veo launches the local executable inside the selected workspace sandbox.
+
 ## Windows beta
 
 Download the x64 ZIP from [GitHub Releases](https://github.com/itsasheruwu/Veo/releases). Extract the entire archive and run `Veo.Windows.exe` in the `Veo` folder. Use Windows 11 24H2 or later and install and authenticate the Codex CLI locally. The optional browser requires WebView2 Runtime.

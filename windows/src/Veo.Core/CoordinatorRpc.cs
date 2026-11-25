@@ -17,10 +17,10 @@ public sealed class WorkspaceCoordinatorRpc(WorkspaceCoordinator workspace) : IC
 }
 public static class ComposerProtocol
 {
-    public static object SandboxPolicy(string access, string cwd) => access switch
+    public static object SandboxPolicy(string access, string cwd) => ComposerPermission.Get(access).Sandbox switch
     {
-        "Read only" => new { type = "readOnly", networkAccess = false },
-        "Full access" => (object)new { type = "dangerFullAccess" },
+        "read-only" => new { type = "readOnly", networkAccess = false },
+        "danger-full-access" => (object)new { type = "dangerFullAccess" },
         _ => new { type = "workspaceWrite", writableRoots = new[] { cwd }, networkAccess = false }
     };
     public static object[] Input(ComposerSnapshot payload)

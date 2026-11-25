@@ -40,6 +40,8 @@ public sealed partial class MainPage
         if (composerControlsReady) return; composerControlsReady = true;
         suggestionService = new(App.Commands, new WorkspaceCoordinatorRpc(workspace));
         InitializeComposerModePills();
+        InitializeComposerPills();
+        InitializeDictation();
         composerAttachmentStrip.Content = composerAttachmentRows;
         ComposerInputs.Children.Add(composerSuggestions);
         ComposerInputs.Children.Add(composerAttachmentStrip);
@@ -52,6 +54,7 @@ public sealed partial class MainPage
     /// <summary>Selection owns model/access resolution; this only restores text and typed inputs.</summary>
     void RestoreComposerDraft(ThreadSession session)
     {
+        CancelDictation();
         var draft = ComposerDraft.Read(session.Draft); composerThreadId = session.Record.VeoId; composerRevision++;
         typedComposerAttachments.Clear(); typedComposerAttachments.AddRange(draft.Attachments); SyncLegacyAttachments();
         Composer.Text = draft.Text; CloseCompletions(); RefreshAttachmentRows();
@@ -132,22 +135,35 @@ public sealed partial class MainPage
                 StartGoal = session.ComposerGoalArmed && App.ThreadSettings.ActiveGoal(session) is null
             };
             await SaveCompleteDraftAsync(session, captured);
-            if (SendsSteer(session) && snapshot.Daybreak is null && !snapshot.StartGoal) await App.Queue.SteerAsync(session, snapshot);
-            else await workspace.SubmitAsync(session, snapshot);
-            if (current?.Record.VeoId == session.Record.VeoId)
+            async Task ClearAcceptedDraftAsync()
             {
-                if (revision == composerRevision && Composer.Text == captured.Text && typedComposerAttachments.SequenceEqual(captured.Attachments))
+                if (current?.Record.VeoId == session.Record.VeoId)
                 {
-                    var wasLoading = loading; loading = true; try { Composer.Text = ""; typedComposerAttachments.Clear(); SyncLegacyAttachments(); composerRevision++; RefreshAttachmentRows(); } finally { loading = wasLoading; }
-                    await SaveCompleteDraftAsync(session, captured with { Text = "", Attachments = [], UpdatedAt = DateTimeOffset.UtcNow });
+                    if (revision == composerRevision && Composer.Text == captured.Text && typedComposerAttachments.SequenceEqual(captured.Attachments))
+                    {
+                        var wasLoading = loading; loading = true; try { Composer.Text = ""; typedComposerAttachments.Clear(); SyncLegacyAttachments(); composerRevision++; RefreshAttachmentRows(); } finally { loading = wasLoading; }
+                        await SaveCompleteDraftAsync(session, captured with { Text = "", Attachments = [], UpdatedAt = DateTimeOffset.UtcNow });
+                    }
+                    else await SaveTypedComposerAsync();
                 }
-                else await SaveTypedComposerAsync();
+                else
+                {
+                    var latest = ComposerDraft.Read(session.Draft);
+                    if (latest.Text == captured.Text && latest.Attachments.SequenceEqual(captured.Attachments)) await SaveCompleteDraftAsync(session, latest with { Text = "", Attachments = [], UpdatedAt = DateTimeOffset.UtcNow });
+                }
             }
-            else
+            var agentDraftHandled = false;
+            if (ActiveAgent is { } agent)
             {
-                var latest = ComposerDraft.Read(session.Draft);
-                if (latest.Text == captured.Text && latest.Attachments.SequenceEqual(captured.Attachments)) await SaveCompleteDraftAsync(session, latest with { Text = "", Attachments = [], UpdatedAt = DateTimeOffset.UtcNow });
+                if (!snapshot.Mode.Equals("Agentic", StringComparison.OrdinalIgnoreCase) || snapshot.StartGoal) throw new InvalidOperationException("Switch to Agentic and turn off Goal to send to this provider.");
+                if (outgoing.Attachments.Length != 0) throw new InvalidOperationException("Remove attachments to send a text turn to this agent.");
+                if (session.Timeline.IsRunning) throw new InvalidOperationException("Wait for the current turn to finish.");
+                await SendAgentAsync(agent, session, captured.Text, ClearAcceptedDraftAsync);
+                agentDraftHandled = true;
             }
+            else if (SendsSteer(session) && snapshot.Access == session.EffectiveAccess && snapshot.Daybreak is null && !snapshot.StartGoal) await App.Queue.SteerAsync(session, snapshot);
+            else await workspace.SubmitAsync(session, snapshot);
+            if (!agentDraftHandled) await ClearAcceptedDraftAsync();
             CloseCompletions(); Render(); await RefreshCatalogAsync();
         }
         finally { composerSubmits.Release(); }
@@ -194,7 +210,7 @@ public sealed partial class MainPage
         CancelCompletionQuery(); displayedCompletion = null; composerSuggestions.Items.Clear(); composerSuggestions.Visibility = Visibility.Collapsed;
         UpdateComposerInputStrip();
     }
-    void UpdateComposerInputStrip() => ComposerInputs.Visibility =
+    void UpdateComposerInputStrip() => ComposerInputs.Visibility = DictationActive ? Visibility.Collapsed :
         composerSuggestions.Visibility == Visibility.Visible || composerAttachmentStrip.Visibility == Visibility.Visible
             ? Visibility.Visible : Visibility.Collapsed;
     async Task RefreshCompletionsAsync()

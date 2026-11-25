@@ -10,9 +10,9 @@ public sealed record FamilyAutoPlan(string Family, FamilyAutoLane Parent, Family
 {
     public bool UsesMultiAgent => Availability != "single";
 }
-public sealed record ModelReasoning(string Id, string Description)
+public sealed record ModelReasoning(string Id, string Description, string? ProviderTitle = null)
 {
-    public string Title => Id.ToLowerInvariant() switch { "low" => "Light", "xhigh" => "Extra", "max" => "Maximum", _ => CultureInfo.InvariantCulture.TextInfo.ToTitleCase(Id.Replace('_', ' ')) };
+    public string Title => ProviderTitle ?? (Id.ToLowerInvariant() switch { "low" => "Light", "xhigh" => "Extra", "max" => "Maximum", _ => CultureInfo.InvariantCulture.TextInfo.ToTitleCase(Id.Replace('_', ' ')) });
     public override string ToString() => Title;
 }
 public sealed record ModelServiceTier(string Id, string Name, string Description)

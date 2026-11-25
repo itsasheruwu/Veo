@@ -85,6 +85,7 @@ public partial class App : Application
                 await target.NavigateThreadIdAsync(threadId);
         });
         Services.StartupDiagnostics.Record("Constructing MainWindow");
+        await Workspace.LoadPreferencesAsync();
         Main = new MainWindow(); Services.StartupDiagnostics.Record("MainWindow constructed"); Main.Activate();
         Services.StartupDiagnostics.Record("MainWindow activated");
         Main.PendingActivation = args.Arguments;

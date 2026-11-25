@@ -109,7 +109,6 @@ public sealed class CodexRuntimeService : IAsyncDisposable
                 WorkingDirectory = _options.WorkingDirectory ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
             };
             start.ArgumentList.Add("app-server");
-            start.ArgumentList.Add("--stdio");
             foreach (var argument in _options.AdditionalArguments) start.ArgumentList.Add(argument);
             foreach (var entry in _options.EnvironmentOverrides)
             {

@@ -1,0 +1,464 @@
+[
+  {
+    "id": "antigravity-acp",
+    "name": "Antigravity",
+    "command": "agy_acp_server.par",
+    "args": [],
+    "site": "https://antigravity.google/docs/ide/extensions",
+    "featured": true
+  },
+  {
+    "id": "claude-acp",
+    "name": "Claude Code",
+    "command": "claude-agent-acp",
+    "args": [],
+    "site": "https://github.com/agentclientprotocol/claude-agent-acp",
+    "featured": true
+  },
+  {
+    "id": "cursor",
+    "name": "Cursor",
+    "command": "cursor-agent",
+    "args": [
+      "acp"
+    ],
+    "site": "https://cursor.com/docs/cli/acp",
+    "featured": true
+  },
+  {
+    "id": "fx",
+    "name": "fx",
+    "command": "fx",
+    "args": [
+      "acp"
+    ],
+    "site": "https://fx.sh",
+    "featured": true
+  },
+  {
+    "id": "grok-build",
+    "name": "Grok",
+    "command": "grok",
+    "args": [
+      "agent",
+      "stdio"
+    ],
+    "site": "https://x.ai/cli",
+    "featured": true
+  },
+  {
+    "id": "kiro",
+    "name": "Kiro",
+    "command": "kiro-cli",
+    "args": [
+      "acp",
+      "--agent-engine=v3"
+    ],
+    "site": "https://kiro.dev/docs/cli/acp/",
+    "featured": true
+  },
+  {
+    "id": "muse-code",
+    "name": "Muse Code",
+    "command": "muse",
+    "args": [
+      "acp"
+    ],
+    "site": "https://dev.meta.ai/docs/muse-code",
+    "featured": true,
+    "environment": {
+      "MUSE_EXPERIMENTAL_ACP": "on"
+    }
+  },
+  {
+    "id": "opencode-v2",
+    "name": "OpenCode",
+    "command": "opencode",
+    "args": [
+      "acp"
+    ],
+    "site": "https://opencode.ai",
+    "featured": true
+  },
+  {
+    "id": "pi-acp",
+    "name": "Pi",
+    "command": "pi-acp",
+    "args": [],
+    "site": "https://github.com/svkozak/pi-acp",
+    "featured": true
+  },
+  {
+    "id": "agoragentic-acp",
+    "name": "Agoragentic",
+    "command": "agoragentic-mcp",
+    "args": [
+      "--acp"
+    ],
+    "site": "https://agoragentic.com",
+    "featured": false
+  },
+  {
+    "id": "amp-acp",
+    "name": "Amp",
+    "command": "amp-acp",
+    "args": [],
+    "site": "https://github.com/tao12345666333/amp-acp",
+    "featured": false
+  },
+  {
+    "id": "auggie",
+    "name": "Auggie CLI",
+    "command": "auggie",
+    "args": [
+      "--acp"
+    ],
+    "site": "https://www.augmentcode.com/",
+    "featured": false,
+    "environment": {
+      "AUGMENT_DISABLE_AUTO_UPDATE": "1"
+    }
+  },
+  {
+    "id": "autohand",
+    "name": "Autohand Code",
+    "command": "autohand",
+    "args": [
+      "--acp"
+    ],
+    "site": "https://github.com/autohandai/code-cli/blob/main/docs/guides/ACP.md",
+    "featured": false
+  },
+  {
+    "id": "bob",
+    "name": "Bob",
+    "command": "bob",
+    "args": [
+      "acp"
+    ],
+    "site": "https://bob.ibm.com",
+    "featured": false
+  },
+  {
+    "id": "cline",
+    "name": "Cline",
+    "command": "cline",
+    "args": [
+      "--acp"
+    ],
+    "site": "https://cline.bot/cli",
+    "featured": false
+  },
+  {
+    "id": "codebuddy-code",
+    "name": "Codebuddy Code",
+    "command": "codebuddy-code",
+    "args": [
+      "--acp"
+    ],
+    "site": "https://www.codebuddy.cn/cli/",
+    "featured": false
+  },
+  {
+    "id": "cortex-code",
+    "name": "Cortex Code",
+    "command": "cortex",
+    "args": [
+      "acp",
+      "serve"
+    ],
+    "site": "https://docs.snowflake.com/en/user-guide/cortex-code/cortex-code",
+    "featured": false
+  },
+  {
+    "id": "corust-agent",
+    "name": "Corust Agent",
+    "command": "corust-agent-acp",
+    "args": [],
+    "site": "https://corust.ai/",
+    "featured": false
+  },
+  {
+    "id": "crow-cli",
+    "name": "crow-cli",
+    "command": "crow-cli",
+    "args": [
+      "acp"
+    ],
+    "site": "https://crow-ai.dev",
+    "featured": false
+  },
+  {
+    "id": "deepagents",
+    "name": "DeepAgents",
+    "command": "deepagents-acp",
+    "args": [],
+    "site": "https://docs.langchain.com/oss/javascript/deepagents/overview",
+    "featured": false
+  },
+  {
+    "id": "devin",
+    "name": "Devin",
+    "command": "devin",
+    "args": [
+      "acp"
+    ],
+    "site": "https://docs.devin.ai/cli",
+    "featured": false
+  },
+  {
+    "id": "dimcode",
+    "name": "DimCode",
+    "command": "dimcode",
+    "args": [
+      "acp"
+    ],
+    "site": "https://dimagent.cn/",
+    "featured": false
+  },
+  {
+    "id": "dirac",
+    "name": "Dirac",
+    "command": "dirac",
+    "args": [
+      "--acp"
+    ],
+    "site": "https://dirac.run",
+    "featured": false
+  },
+  {
+    "id": "factory-droid",
+    "name": "Factory Droid",
+    "command": "droid",
+    "args": [
+      "exec",
+      "--output-format",
+      "acp-daemon"
+    ],
+    "site": "https://factory.ai/product/cli",
+    "featured": false,
+    "environment": {
+      "DROID_DISABLE_AUTO_UPDATE": "true",
+      "FACTORY_DROID_AUTO_UPDATE_ENABLED": "false"
+    }
+  },
+  {
+    "id": "fast-agent",
+    "name": "fast-agent",
+    "command": "fast-agent-acp",
+    "args": [
+      "-x"
+    ],
+    "site": "https://fast-agent.ai",
+    "featured": false,
+    "environment": {
+      "FAST_AGENT_MODEL": "codexplan"
+    }
+  },
+  {
+    "id": "gemini",
+    "name": "Gemini CLI",
+    "command": "gemini",
+    "args": [
+      "--acp"
+    ],
+    "site": "https://geminicli.com",
+    "featured": false
+  },
+  {
+    "id": "github-copilot-cli",
+    "name": "GitHub Copilot",
+    "command": "copilot",
+    "args": [
+      "--acp"
+    ],
+    "site": "https://github.com/features/copilot/cli/",
+    "featured": false
+  },
+  {
+    "id": "glm-acp-agent",
+    "name": "GLM Agent",
+    "command": "glm-acp-agent",
+    "args": [],
+    "site": "https://github.com/stefandevo/glm-acp-agent",
+    "featured": false
+  },
+  {
+    "id": "goose",
+    "name": "goose",
+    "command": "goose",
+    "args": [
+      "acp"
+    ],
+    "site": "https://block.github.io/goose/",
+    "featured": false
+  },
+  {
+    "id": "harn",
+    "name": "Harn",
+    "command": "harn",
+    "args": [
+      "serve",
+      "acp"
+    ],
+    "site": "https://harnlang.com",
+    "featured": false
+  },
+  {
+    "id": "junie",
+    "name": "Junie",
+    "command": "junie",
+    "args": [
+      "--acp=true"
+    ],
+    "site": "https://junie.jetbrains.com",
+    "featured": false
+  },
+  {
+    "id": "kilo",
+    "name": "Kilo",
+    "command": "kilo",
+    "args": [
+      "acp"
+    ],
+    "site": "https://kilo.ai/",
+    "featured": false
+  },
+  {
+    "id": "kimchi",
+    "name": "Kimchi",
+    "command": "kimchi",
+    "args": [
+      "--mode",
+      "acp"
+    ],
+    "site": "https://kimchi.dev",
+    "featured": false
+  },
+  {
+    "id": "kimi",
+    "name": "Kimi CLI (Legacy)",
+    "command": "kimi",
+    "args": [
+      "acp"
+    ],
+    "site": "https://moonshotai.github.io/kimi-cli/",
+    "featured": false
+  },
+  {
+    "id": "kimi-code",
+    "name": "Kimi Code",
+    "command": "kimi",
+    "args": [
+      "acp"
+    ],
+    "site": "https://moonshotai.github.io/kimi-code/",
+    "featured": false
+  },
+  {
+    "id": "minimax-code",
+    "name": "MiniMax Code",
+    "command": "code-acp",
+    "args": [
+      "acp"
+    ],
+    "site": "https://agent.minimax.io",
+    "featured": false
+  },
+  {
+    "id": "minion-code",
+    "name": "Minion Code",
+    "command": "minion-code",
+    "args": [
+      "acp"
+    ],
+    "site": "https://github.com/femto/minion-code",
+    "featured": false
+  },
+  {
+    "id": "mistral-vibe",
+    "name": "Mistral Vibe",
+    "command": "vibe-acp",
+    "args": [],
+    "site": "https://mistral.ai/products/vibe",
+    "featured": false
+  },
+  {
+    "id": "nova",
+    "name": "Nova",
+    "command": "nova",
+    "args": [
+      "acp"
+    ],
+    "site": "https://www.compassap.ai/portfolio/nova.html",
+    "featured": false
+  },
+  {
+    "id": "poolside",
+    "name": "Poolside",
+    "command": "pool-darwin-arm64",
+    "args": [
+      "acp"
+    ],
+    "site": "https://poolside.ai",
+    "featured": false,
+    "platformCommands": {
+      "darwin-x64": "pool-darwin-amd64",
+      "win32-arm64": "pool-windows-arm64",
+      "win32-x64": "pool-windows-amd64"
+    }
+  },
+  {
+    "id": "qoder",
+    "name": "Qoder CLI",
+    "command": "qodercli",
+    "args": [
+      "--acp"
+    ],
+    "site": "https://qoder.com",
+    "featured": false
+  },
+  {
+    "id": "qwen-code",
+    "name": "Qwen Code",
+    "command": "qwen",
+    "args": [
+      "--acp",
+      "--experimental-skills"
+    ],
+    "site": "https://qwenlm.github.io/qwen-code-docs/en/users/overview",
+    "featured": false
+  },
+  {
+    "id": "sigit",
+    "name": "siGit Code",
+    "command": "sigit",
+    "args": [],
+    "site": "https://github.com/getsigit/sigit",
+    "featured": false
+  },
+  {
+    "id": "stakpak",
+    "name": "Stakpak",
+    "command": "stakpak",
+    "args": [
+      "acp"
+    ],
+    "site": "https://stakpak.dev",
+    "featured": false
+  },
+  {
+    "id": "vtcode",
+    "name": "VT Code",
+    "command": "vtcode",
+    "args": [
+      "acp"
+    ],
+    "site": "https://github.com/vinhnx/VTCode/blob/main/docs/guides/zed-acp.md",
+    "featured": false,
+    "environment": {
+      "VT_ACP_ENABLED": "1",
+      "VT_ACP_ZED_ENABLED": "1"
+    }
+  }
+]

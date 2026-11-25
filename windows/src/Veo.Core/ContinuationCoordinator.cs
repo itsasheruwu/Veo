@@ -226,7 +226,7 @@ public sealed class ContinuationCoordinator
     {
         if (new[] { job.Id, job.VeoThreadId, job.RuntimeThreadId, job.FailedTurnId, job.ClientMessageId, job.AccountIdentity, job.Cwd }.Any(string.IsNullOrWhiteSpace)) throw new InvalidDataException("Continuation identity and workspace are required.");
         if (!Guid.TryParse(job.Id, out _)) throw new InvalidDataException("A continuation job requires a GUID identity for packaged activation.");
-        if (job.Access is not ("ReadOnly" or "Read only" or "Workspace" or "Full" or "Full access")) throw new InvalidDataException("The saved continuation access mode is unsupported.");
+        if (job.Access is not ("ReadOnly" or "Read only" or "Workspace" or "Auto" or "Full" or "Full access")) throw new InvalidDataException("The saved continuation access mode is unsupported.");
         if (!Path.IsPathFullyQualified(job.Cwd)) throw new InvalidDataException("The continuation workspace must be an absolute path.");
         if (job.ResetAt > DateTimeOffset.MaxValue.AddSeconds(-8)) throw new InvalidDataException("The continuation reset time exceeds the supported range.");
     }

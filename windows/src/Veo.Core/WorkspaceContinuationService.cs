@@ -249,7 +249,7 @@ public sealed class WorkspaceContinuationService : IContinuationRuntime, IAsyncD
         var record = await FindRecordAsync(x => x.VeoId == job.VeoThreadId, cancellationToken) ?? throw new InvalidOperationException("The continuation chat was deleted.");
         if (record.IsArchived || new WorkspacePathPolicy(record.Cwd).RootPath != new WorkspacePathPolicy(job.Cwd).RootPath) throw new InvalidOperationException("The continuation workspace changed.");
         var session = await workspace.LoadAsync(record);
-        var access = job.Access switch { "ReadOnly" or "Read only" => "Read only", "Workspace" => "Workspace", "Full" or "Full access" => "Full access", _ => throw new InvalidDataException("The saved continuation access is unavailable.") };
+        var access = job.Access switch { "ReadOnly" or "Read only" => "Read only", "Workspace" => "Workspace", "Auto" => "Auto", "Full" or "Full access" => "Full access", _ => throw new InvalidDataException("The saved continuation access is unavailable.") };
         var snapshot = new ComposerSnapshot(job.ClientMessageId, prompt, job.Model, job.Effort, job.Tier, access, job.InteractionMode, [], PreserveDraft: true);
         if (job.RouteSnapshot is { ValueKind: JsonValueKind.Object } route && route.TryObjectProperty("payload", out var original))
             snapshot = JsonSerializer.Deserialize<ComposerSnapshot>(original.GetRawText())?.Freeze() ?? throw new InvalidDataException("The continuation request snapshot is invalid.");

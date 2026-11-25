@@ -69,6 +69,18 @@ public sealed partial class TimelineReducer
             var incomingIds = materialized.Select(x => x.Id).Where(items.ContainsKey).ToHashSet(StringComparer.Ordinal);
             var ordered = materialized.Select(x => x.Id).Where(items.ContainsKey).Distinct(StringComparer.Ordinal)
                 .Concat(items.Values.Where(x => !incomingIds.Contains(x.Id)).OrderBy(x => x.Order).Select(x => x.Id)).ToArray();
+            var local = items.Values.Where(item => item.Raw.Str("veoAfter") != null).OrderBy(item => item.Order).ToArray();
+            if (local.Length > 0)
+            {
+                var placed = ordered.Where(id => items[id].Raw.Str("veoAfter") == null).ToList();
+                foreach (var item in local)
+                {
+                    var anchor = item.Raw.Str("veoAfter")!;
+                    var index = placed.IndexOf(anchor);
+                    placed.Insert(anchor.Length == 0 ? 0 : index >= 0 ? index + 1 : placed.Count, item.Id);
+                }
+                ordered = placed.ToArray();
+            }
             nextOrder = 0;
             foreach (var id in ordered) items[id] = items[id] with { Order = nextOrder++ };
             if (expectedStateVersion is null || lifecycle == expectedStateVersion)
@@ -207,7 +219,7 @@ public sealed partial class TimelineReducer
             if (raw.ValueKind == JsonValueKind.Object && raw.TryGetProperty(field, out var content) && content.ValueKind == JsonValueKind.Array)
                 foreach (var part in content.EnumerateArray())
                     if (part.ValueKind == JsonValueKind.String) parts.Add(part.GetString()!);
-                    else if (part.Str("text") is { } text) parts.Add(text);
+                    else if (part.Str("text") is { } text && !(text.StartsWith("<veo_provider_history>") && text.EndsWith("</veo_provider_history>"))) parts.Add(text);
         return string.Join("\n", parts);
     }
     static string? NullIfBlank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value;

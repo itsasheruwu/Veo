@@ -19,6 +19,7 @@ public sealed partial class MainPage
         await ready.Task;
         if (settingsPanel is null)
         {
+            CancelDictation();
             workspaceFocusBeforeSettings = FocusManager.GetFocusedElement(XamlRoot) as Control;
             CloseCompletions();
             settingsPanel = new SettingsPanel(workspace, shortcutCommands.IsAvailable, SetIncludeGPT56ModelsAsync);
@@ -69,6 +70,7 @@ public sealed partial class MainPage
         SettingsHost.Visibility = Visibility.Collapsed;
         SettingsHost.Content = null;
         Shell.Visibility = Visibility.Visible;
+        UpdateDictationControl();
         ToolbarContextChanged?.Invoke();
         if (restoreFocus && previous is not null)
             DispatcherQueue.TryEnqueue(() =>

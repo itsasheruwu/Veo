@@ -154,7 +154,12 @@ public sealed class ThreadCatalogCoordinator(WorkspaceCoordinator workspace, ICo
         if (lastTurnId is not null && beforeTurnId is not null) throw new ArgumentException("A fork can use one turn boundary.");
         if (source.Timeline.IsRunning || source.IsSubmitting) throw new InvalidOperationException("Stop the source chat before forking.");
         Require("thread/fork"); var id = source.Record.CodexThreadId ?? throw new InvalidOperationException("This chat has no runtime history yet.");
-        var response = await rpc.RequestAsync("thread/fork", new { threadId = id, lastTurnId, beforeTurnId, cwd = source.Record.Cwd, approvalPolicy = "on-request", sandbox = source.EffectiveAccess == "Read only" ? "read-only" : source.EffectiveAccess == "Full access" ? "danger-full-access" : "workspace-write" }, token);
+        var permission = ComposerPermission.Get(source.EffectiveAccess);
+        var parameters = new Dictionary<string, object?> { ["threadId"] = id, ["lastTurnId"] = lastTurnId,
+            ["beforeTurnId"] = beforeTurnId, ["cwd"] = source.Record.Cwd, ["approvalPolicy"] = permission.Policy,
+            ["sandbox"] = permission.Sandbox };
+        workspace.AddApprovalsReviewer(parameters, permission.Id);
+        var response = await rpc.RequestAsync("thread/fork", parameters, token);
         var runtime = response.GetProperty("thread"); var runtimeId = runtime.Str("id") ?? throw new InvalidDataException("The fork has no runtime identity.");
         var record = source.Record with { VeoId = Guid.NewGuid().ToString("N"), CodexThreadId = runtimeId, Title = source.Record.Title + " (fork)", ParentThreadId = source.Record.VeoId, IsArchived = false, IsPinned = false, UpdatedAt = DateTimeOffset.UtcNow, Status = "idle" };
         await workspace.Threads.UpsertThreadAsync(record, token); var session = await workspace.LoadAsync(record); Changed?.Invoke(); return session;

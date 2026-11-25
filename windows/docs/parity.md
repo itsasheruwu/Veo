@@ -429,3 +429,64 @@ Verified the signed-in plan heading, provider tools, and model title in an isola
 Compared the Windows composer menu with the Mac reference, including the 326-point width, anchor, order, row spacing, icons, and mode selection marks. The native Windows Goal switch remains in the menu. Saved Prompts opens inside the same popover with a Back button.
 
 The isolated Windows build passed 11 interactive checks for menu layout, persistent mode and Goal selection, Saved Prompts navigation, saving and restoring a real test draft, and the Ultrafast label in Advanced model details. The Windows prompt library and composer suites passed. The rebuilt Mac details popover also displayed Ultrafast.
+
+### First-run workspace tour
+
+The native WinUI tour opens for new profiles, saves the current page, changes the workspace appearance, and offers a project folder or a direct entry into Veo. Existing profiles can replay it from More actions → Welcome to Veo.
+
+Exercised the x64 Debug app on DISPLAY2 with an isolated profile. Verified the animated greeting, project preview, Light and Dark choices, Back, skip, replay and resuming after relaunch. Selected the Observatory test folder with the Windows App SDK picker and checked that the saved selected thread had that directory as its working directory. Recorded the running app on Windows 11.
+
+The tour now opens in a compact native window before the workspace appears. On DISPLAY2, verified that the same window expanded from 568 × 552 to its saved 1160 × 800 bounds. The recording shows the tour blurring during the resize and the workspace coming into focus. Relaunching the completed profile opened directly at the saved workspace size.
+
+The upgrade dialog and composer use the same ModelPickerPanel. In the dialog, pointer input moved the live reasoning slider from 3 to 4 and Left Arrow returned it to 3. After choosing Keep Slider / Advanced, the composer slider reported 3 and the notice was marked dismissed. Also verified that Switch back to Native saved the Native style and dismissed the notice.
+
+### Local agent providers
+
+On Windows 11 DISPLAY2, connected OpenCode from the compact tour, read the installed agent’s 14-model catalog, selected it for new chats, and opened Providers → Enabled models from the composer. Sent a prompt from the native composer using OpenCode 1.18.23 and the free Nemotron 3.5 Lightning model. The timeline displayed “OpenCode” and “VEO READY”, and the sidebar displayed the first line of the prompt as the title. A workspace write succeeded and a write outside the allowed roots was denied. OpenCode 2.3.2 encountered a permission error launching its own server inside the Windows sandbox. Other agents require their own installation and credentials.
+
+On Windows 11 DISPLAY2, exercised the redesigned tour in an isolated x64 build. Checked the larger workspace preview in Light and Dark, changed appearance with the segmented control, opened the floating provider directory, and opened and dismissed the OpenCode setup dialog. Verified that the window expanded into the workspace and that Right Arrow moved the live reasoning slider from 2 to 3 before dismissing the notice and opening the composer picker.
+
+On Windows 11 x64, opened the composer’s provider menu, chose Connect a provider, and searched for Codex. Verified the generated monochrome cloud-and-terminal mark in the built-in provider row on its standard light tile.
+
+On Windows 11 x64, the local 0.162.1 runtime returned no 6.2 models in model/list. Launching without the old test executable override exposed both 6.2 Sol and 6.2 Astra in the composer’s Advanced model menu. Both rows were enabled and selecting Astra succeeded.
+
+Verified provider updates in a background Windows process with an isolated profile. Veo downloaded and activated the checksum-verified Antigravity 1.5.0 registry release. A fixture verified the transition to Up to date and preserved the previous active release when the next download failed its checksum.
+
+Verified a fresh Antigravity install on Windows x64 from an isolated profile with no provider executable available. The release was offered as Install, downloaded and checked, then reported Up to date. The Windows Connect command resolved the installed release under both Antigravity executable aliases.
+
+Verified Grok's four models and their per-model reasoning options through the Windows provider bridge in a background interactive session. Grok accepted 4.5 with Medium reasoning in a separate empty ACP session. No prompt was submitted. The Windows x64 build includes the selected-provider icon and capability-driven native and slider pickers.
+
+The provider model entry point now opens the same ModelPickerPanel as Codex. Agent catalogs supply the model and effort rows while Codex-specific routing and controls stay out of the agent panel. Background verification passed 21 Windows model/routing checks. The ACP bridge fixture verified capability discovery after a model change and applied the model before its effort.
+
+### Live tool activity and Grok speed
+
+On Windows 11 x64, used the isolated Debug app to run three sequential Codex shell calls. The live row showed the current command, and captured frames showed the moving highlight and changing tool label. SQLite recorded all three outputs and the completed turn.
+
+With an isolated Grok profile seeded from the provider catalog, the Advanced picker kept Grok 4.7 and Medium reasoning selected while switching between Standard and Fast. Both upstream slugs were written to the profile in turn. The sandboxed Grok bridge also accepted both model IDs in empty ACP sessions with Codex CLI 0.169.0.
+
+### Composer dictation
+
+Built the self-contained x64 Debug app on Astra-PC. The verified Veo.Windows.dll SHA-256 was `306e12e15107efb2ba5d27648db5a13181b58b28be3546e14a3e44997a2028f5`.
+
+In a disposable dark-mode profile, verified Dictate immediately left of Send, opened Settings → Voice with the pointer, and read back the Live transcription preference after toggling it off and restoring it. The microphone button and Ctrl+Shift+D opened Listening. Escape returned to the composer and kept the test draft intact. All 41 composer checks and 24 realtime voice fixture checks passed. Full spoken-transcript insertion, Whisper on Windows, and pixel-level motion matching remain open.
+
+### Composer layout and permissions follow-up
+
+On Astra-PC, the self-contained x64 Debug build kept the six primary composer controls within the editor width at 680, 780, and 1080 window pixels. The Permissions pill exposed Supervised, Auto-accept edits, Auto, and Full access. Selected Auto with the live Codex runtime and verified that the next chat used its default. Dictation hid the regular toolbar, left Finish and Cancel visible, and preserved the draft after Escape. Ctrl+Shift+D also opened Listening. All 41 composer fixture checks passed. The verified Veo.Windows.dll SHA-256 was `6f96d81b3d0220e91e3d396bd9be243e2f9a3c9f76b4cc500f362205a903c725`.
+
+
+### Composer picker pills and context placement
+
+On Astra-PC, the isolated x64 Debug build held the model label while the reasoning slider changed from Medium to High and refreshed it after Escape. The provider anchor stayed in place through opening and dismissal. The Permissions pill held its width while open and resized from 137 to 123 pixels after selecting Auto. All 41 composer fixture checks passed. The verified Veo.Windows.dll SHA-256 was `954535060154043c56a5697a858d9428f7cb51f5cf3bb22bdca7ce68af25fa19`.
+
+### OpenAI composer dictation
+
+On Astra-PC, selected OpenAI in Settings → Voice, toggled and restored the transcript streaming preference, saved and removed a placeholder key through the masked Credential Manager dialog, and verified that Dictate reports a missing key before starting a recording. A loopback fixture verified the WAV multipart request, streamed deltas, a complete batch transcript, and rejection of truncated streams and unauthorized responses. No recording or credential was sent to OpenAI during verification. All 41 composer fixture checks passed. The verified Veo.Windows.dll SHA-256 was `35fdec4bc22ddd964b4967ff0220e86ab58dbf684d7075b8db06d8066b136906`.
+
+### Composer picker flip and full blur
+
+On Astra-PC, confirmed that the Provider, Model, and Permissions pills rendered an unreadable blur while their pickers were open. The Permissions pill held its 137-pixel width and resized to 69 pixels after selecting Auto and closing. The Model pill held Medium while the reasoning slider changed and showed High after Escape. The Provider label returned after three rapid open-and-dismiss cycles. The x64 Debug build finished with zero warnings and errors. System-disabled animations and high contrast were not exercised.
+
+### Veo 2.6.0 portable beta
+
+Extracted the Windows x64 ZIP on Astra-PC and launched the packaged executable in a fresh profile. Verified the first-run welcome, project, appearance, and provider steps. Skipping the remaining tour opened the native workspace with the Provider, Model, Permissions, Dictate, and Send controls. The Voice settings showed the transcription picker. The executable reported version 2.6.0-beta.1, and the ZIP checksum matched the generated digest.

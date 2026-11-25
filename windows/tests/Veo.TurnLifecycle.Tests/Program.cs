@@ -42,7 +42,7 @@ try
         await db.SaveTimelineAsync("legacy",[new("unknown","inProgress",null,null,1)],[]);await db.SaveTimelineAsync("legacy",[new("unknown",null,null,null,1,true)],[]);await db.SaveTimelineAsync("legacy",[new("unknown","inProgress",null,null,1)],[]);
         Check((await db.ReadTurnsAsync("legacy")).Single(t=>t.TurnId=="unknown")is{Status:null,TerminalObserved:true},"SQLite persists unknown closure without guessing completed/interrupted");
     }
-    var backup=Directory.GetFiles(Path.GetDirectoryName(database)!,"*.pre-v3-*.bak").Single();
+    var backup=Directory.GetFiles(Path.GetDirectoryName(database)!,Path.GetFileName(database)+".pre-v*-*.bak").Single();
     using(var db=new SqliteConnection("Data Source="+backup+";Mode=ReadOnly;Pooling=False")){db.Open();using var command=db.CreateCommand();command.CommandText="PRAGMA user_version;";Check(Convert.ToInt32(command.ExecuteScalar())==2,"online backup retains pre-migration schema version");command.CommandText="SELECT status||'|'||error_json FROM turns WHERE turn_id='interrupted';";Check((string?)command.ExecuteScalar()=="interrupted|"+error,"online backup preserves committed turn data");}
 
     var executable=Path.Combine(AppContext.BaseDirectory,"Veo.TurnLifecycle.Tests"+(OperatingSystem.IsWindows()?".exe":""));

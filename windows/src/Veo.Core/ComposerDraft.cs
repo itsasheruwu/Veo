@@ -72,7 +72,7 @@ public sealed record ComposerDraft(string Text, ComposerAttachment[] Attachments
         string? String(string name, string? fallback = null) => Value(name) is { } value ? value.GetValue<string>() : fallback;
         string? NullableString(string name, string? fallback = null) => Has(name) ? Value(name)?.GetValue<string>() : fallback;
         T? Record<T>(string name, T? fallback) where T : class => Has(name) ? Value(name)?.Deserialize<T>(Json) : fallback;
-        var access = String("access", defaults?.Access ?? "Workspace")!; if (access is not ("Workspace" or "Read only" or "Full access")) throw new InvalidDataException("The saved access mode is unknown. Choose an explicit access mode before sending.");
+        var access = String("access", defaults?.Access ?? "Workspace")!; if (!ComposerPermission.IsKnown(access)) throw new InvalidDataException("The saved access mode is unknown. Choose an explicit access mode before sending.");
         var context = Value("contextTokens") is { } count ? count.GetValue<long>() : Has("contextTokens") ? null : defaults?.ContextTokens;
         if (context is <= 0) throw new InvalidDataException("Saved context tokens must be positive.");
         var selected = includeInput ? Attachments.ToArray() : [];

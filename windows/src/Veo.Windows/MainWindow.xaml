@@ -13,6 +13,7 @@
     </Window.SystemBackdrop>
 
     <Grid>
+      <Grid x:Name="WorkspaceChrome">
         <Grid.Resources>
             <Style x:Key="CaptionCommand" TargetType="Button" BasedOn="{StaticResource SubtleButtonStyle}">
                 <Setter Property="Width" Value="36" />
@@ -92,6 +93,7 @@
                                 <MenuFlyoutItem Text="Workspace checkpoints" Click="Checkpoints_Click" />
                                 <MenuFlyoutItem Text="Queued prompts" Click="Queue_Click" />
                                 <MenuFlyoutItem Text="Realtime voice" Click="Voice_Click" />
+                                <MenuFlyoutItem Text="Welcome to Veo" Click="Tour_Click" />
                                 <MenuFlyoutItem Text="Saved prompts" Click="Prompts_Click" />
                                 <MenuFlyoutItem Text="Pull requests" Click="PullRequests_Click" />
                             </MenuFlyout>
@@ -107,5 +109,13 @@
             navigation events and the Loaded lifecycle.
         -->
         <Frame x:Name="RootFrame" Grid.Row="1" />
+      </Grid>
+      <Image x:Name="WorkspaceSoft" Visibility="Collapsed" Stretch="Fill" IsHitTestVisible="False" AutomationProperties.AccessibilityView="Raw"/>
+      <Grid x:Name="TourHost" Visibility="Collapsed" Background="#10182B" RequestedTheme="Dark">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+        <Border x:Name="TourContent" Grid.RowSpan="2"/>
+        <TitleBar x:Name="TourTitleBar" Title="Veo" Background="Transparent" Height="32" MinHeight="32"/>
+        <Image x:Name="TourSoft" Grid.RowSpan="2" Visibility="Collapsed" Stretch="Fill" IsHitTestVisible="False" AutomationProperties.AccessibilityView="Raw"/>
+      </Grid>
     </Grid>
 </Window>

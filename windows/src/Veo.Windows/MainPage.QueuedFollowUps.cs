@@ -25,6 +25,12 @@ public sealed partial class MainPage
 
     void RenderQueue()
     {
+        if (DictationActive)
+        {
+            QueueShelf.Visibility = Visibility.Collapsed;
+            queueSignature = "";
+            return;
+        }
         if (current is not { } session) return;
         var queue = session.Queue;
         var signature = session.Record.VeoId + "|" + showEntireQueue + "|" + CanSteer(session) + "|" + session.Timeline.IsRunning

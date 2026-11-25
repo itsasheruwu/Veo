@@ -31,6 +31,9 @@ public sealed partial class MainWindow : Window
         ToolbarCommands.SizeChanged += (_, _) => AppTitleBar.RecomputeDragRegions();
         AppTitleBar.ActualThemeChanged += (_, _) => ApplyCaptionTheme();
         ApplyCaptionTheme();
+        RestorePreferences();
+        if (App.Workspace.Preferences.WorkspaceTourStep < Veo.Core.VeoPreferences.TourCompleted) EnterTour();
+        Closed += (_, _) => closed = true;
         Activated += (_, args) => IsActive = args.WindowActivationState != WindowActivationState.Deactivated;
     }
     void ApplyCaptionTheme()
@@ -41,7 +44,7 @@ public sealed partial class MainWindow : Window
             caption.ButtonForegroundColor = caption.ButtonInactiveForegroundColor = null;
             return;
         }
-        var dark = AppTitleBar.ActualTheme == ElementTheme.Dark;
+        var dark = InTour || AppTitleBar.ActualTheme == ElementTheme.Dark;
         var foreground = dark ? (byte)232 : (byte)32;
         var inactive = dark ? (byte)160 : (byte)104;
         caption.ButtonForegroundColor = Windows.UI.Color.FromArgb(255, foreground, foreground, foreground);
@@ -100,6 +103,7 @@ public sealed partial class MainWindow : Window
         Page?.RunProjectActionAsync(path, action) ?? Task.FromException(new InvalidOperationException("Open the Veo workspace first."));
     public void RefreshAppearance() => Page?.RefreshAppearance();
     async void Voice_Click(object sender, RoutedEventArgs e) { if (Page is { } page) await page.ShowVoiceAsync(); }
+    async void Tour_Click(object sender, RoutedEventArgs e) { if (Page is { } page) await page.ReplayTourAsync(); }
     async void Prompts_Click(object sender, RoutedEventArgs e) { if (Page is { } page) await page.ShowPromptLibraryAsync(); }
     async void PullRequests_Click(object sender, RoutedEventArgs e) { if (Page is { } page) await page.ShowPullRequestsAsync(); }
     async void Catalog_Click(object sender, RoutedEventArgs e) { if (Page is { } page) await page.ShowCatalogAsync(); }

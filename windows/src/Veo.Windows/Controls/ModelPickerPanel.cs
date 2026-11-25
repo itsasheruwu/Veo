@@ -7,6 +7,8 @@ using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Media;
 using Veo.Core;
 using Veo.Protocol;
+using Veo_Windows.Services;
+using System.Text.Json;
 using Windows.Foundation;
 using Windows.System;
 using Windows.UI;
@@ -69,6 +71,23 @@ public sealed partial class ModelPickerPanel : UserControl
     Microsoft.UI.Xaml.Shapes.Path? boltIcon;
     Border? placeholderCapsule;
     Page page;
+    readonly Func<AgentConnection?>? agentConnection;
+    readonly Func<Task>? refreshAgentCatalog;
+    bool UsesAgentCatalog => agentConnection is not null;
+
+    ModelSelectionChoice AgentSelection()
+    {
+        var agent = agentConnection?.Invoke();
+        var model = agent?.PickerModelId ?? "";
+        return new(model, model, agent?.SelectedEffort, agent?.UsesFastSpeed == true ? AgentConnection.GrokFastId : null);
+    }
+
+    static NativeModelDescriptor PickerModel(AgentModel model, bool supportsFast = false) =>
+        new(model.Id, model.Id, model.Name, "", false, model.DefaultEffort ?? "",
+            (model.Efforts ?? []).Select(option => new ModelReasoning(option.Id, "", option.Name)).ToArray(),
+            supportsFast ? [new(AgentConnection.GrokFastId, "Fast", "Use Grok 4.7 Fast")] : [],
+            null, [], null, null, JsonSerializer.SerializeToElement(new { }));
+
     ModelSelectionChoice? choice;
     bool locked;
     bool initialized;
@@ -79,7 +98,9 @@ public sealed partial class ModelPickerPanel : UserControl
     int daybreakRevision;
     string scope = "Global";
 
-    NativeModelDescriptor? Model => selection.Find(choice?.ModelId);
+    NativeModelDescriptor? Model => UsesAgentCatalog
+        ? PickerModels.FirstOrDefault(model => model.Id == choice?.ModelId)
+        : selection.Find(choice?.ModelId);
     AutoRouterPolicy Policy => choice?.RouterPolicy ?? selection.RouterPolicy;
     bool Direct => choice?.RoutingMode == "Direct" && !locked;
     bool Auto => choice?.RoutingMode == "FirstPrompt" || locked;
@@ -119,9 +140,29 @@ public sealed partial class ModelPickerPanel : UserControl
         _ => Model?.DisplayName ?? "No model selected"
     };
 
-    public ModelPickerPanel(ModelSelectionService selection, AutoRoutingCoordinator routing, ThreadSession session,
-        Func<ComposerSnapshot> current, Action<ModelSelectionChoice> apply, bool advanced, double studioHeight, ResourceDictionary resources)
+    IReadOnlyList<NativeModelDescriptor> PickerModels
     {
+        get
+        {
+            if (UsesAgentCatalog)
+            {
+                var agent = agentConnection?.Invoke();
+                return new[] { PickerModel(new("", "Provider default")) }.Concat(
+                    agent?.PickerModels.Where(model => !agent.Hidden.Contains(model.Id))
+                        .Select(model => PickerModel(model, agent.SupportsFastSpeed(model.Id))) ?? []).ToArray();
+            }
+            var choice = current();
+            var selected = selection.Find(choice.CatalogModelId ?? choice.Model);
+            var prefix = selected?.IsExternal == true ? selected.Id.Split('/')[0] + "/" : null;
+            return selection.Selectable.Where(m => prefix == null ? !m.IsExternal : m.Id.StartsWith(prefix,StringComparison.Ordinal)).ToArray();
+        }
+    }
+    public ModelPickerPanel(ModelSelectionService selection, AutoRoutingCoordinator routing, ThreadSession session,
+        Func<ComposerSnapshot> current, Action<ModelSelectionChoice> apply, bool advanced, double studioHeight, ResourceDictionary resources,
+        Func<AgentConnection?>? agentConnection = null, Func<Task>? refreshAgentCatalog = null)
+    {
+        this.agentConnection = agentConnection;
+        this.refreshAgentCatalog = refreshAgentCatalog;
         this.selection = selection;
         this.routing = routing;
         this.session = session;
@@ -185,6 +226,17 @@ public sealed partial class ModelPickerPanel : UserControl
     async Task InitializeAsync()
     {
         if (initialized) return;
+        if (UsesAgentCatalog)
+        {
+            initialized = true;
+            choice = AgentSelection();
+            Refresh();
+            if (page == Page.Compact) FocusCompact();
+            if (refreshAgentCatalog is not null) await refreshAgentCatalog();
+            choice = AgentSelection();
+            Refresh();
+            return;
+        }
         await selection.InitializeAsync();
         if (selection.CatalogNeedsRefresh) await selection.RefreshAsync();
         await routing.ObserveAsync(session);
@@ -371,9 +423,10 @@ public sealed partial class ModelPickerPanel : UserControl
             }
             headerEngaged = engaged;
         }
-        hoverRight.Visibility = Show(!slider.IsPeak);
-        hoverLeft.Text = slider.IsPeak ? "Uses your limits faster" : "Faster";
-        hoverLeft.Foreground = slider.IsPeak ? peak : secondary;
+        var showUsageCaption = !UsesAgentCatalog && slider.IsPeak;
+        hoverRight.Visibility = Show(!showUsageCaption);
+        hoverLeft.Text = showUsageCaption ? "Uses your limits faster" : "Faster";
+        hoverLeft.Foreground = showUsageCaption ? peak : secondary;
     }
 
     StackPanel MakeAdvanced()
@@ -393,13 +446,13 @@ public sealed partial class ModelPickerPanel : UserControl
         var model = Model;
         var effort = model?.Efforts.FirstOrDefault(item => item.Id == choice?.Effort);
         panel.Children.Clear();
-        panel.Children.Add(editingContext ? ContextEditor(false)
+        if (!UsesAgentCatalog) panel.Children.Add(editingContext ? ContextEditor(false)
             : MenuRow("Context", ContextLabel(Context), "ContextChoice", model is not null, ContextMenu));
-        AddContextFeedback(panel, studio: false);
-        panel.Children.Add(MenuRow("Effort", Auto ? Policy.AllowUltra ? "Ultra allowed" : "Ultra disallowed" : Direct ? effort?.Title ?? "Default" : "Auto",
+        if (!UsesAgentCatalog) AddContextFeedback(panel, studio: false);
+        if (!UsesAgentCatalog || model?.Efforts.Length > 0) panel.Children.Add(MenuRow("Effort", Auto ? Policy.AllowUltra ? "Ultra allowed" : "Ultra disallowed" : Direct ? effort?.Title ?? "Default" : "Auto",
             "EffortPicker", AutoEditable || Direct && model?.Efforts.Length > 0, EffortMenu,
             Direct && model?.Efforts.Length > 1 && effort == model.Efforts.Last() ? peak : null));
-        panel.Children.Add(MenuRow("Speed", SpeedTitle(), "SpeedPicker", AutoEditable || Direct && SpeedChoices.Count > 0,
+        if (!UsesAgentCatalog || SpeedChoices.Count > 0) panel.Children.Add(MenuRow("Speed", SpeedTitle(), "SpeedPicker", AutoEditable || Direct && SpeedChoices.Count > 0,
             () => SpeedMenu(advanced: true), UltrafastSelected ? ultrafastColor : FastSelected ? fastColor : null));
         panel.Children.Add(Rule(new(Metrics.RowInset, 6, Metrics.RowInset, 1)));
         var footer = new Grid { Height = Metrics.RowHeight };
@@ -409,7 +462,7 @@ public sealed partial class ModelPickerPanel : UserControl
         var right = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, HorizontalAlignment = HorizontalAlignment.Right };
         if (Direct && model is not null && (choice?.Effort != model.DefaultEffort || choice?.Tier != model.DefaultTier || Context.Kind != "Default"))
             right.Children.Add(ButtonFor(Icon("\uE72C", 11, secondary), "Reset to default", () => Run(ResetAsync), Metrics.HeaderHeight, new(6, 0, 6, 0)));
-        right.Children.Add(DetailsButton(advanced: true));
+        if (!UsesAgentCatalog) right.Children.Add(DetailsButton(advanced: true));
         footer.Children.Add(right);
         panel.Children.Add(footer);
         if (NeedsStandardModel)
@@ -423,6 +476,28 @@ public sealed partial class ModelPickerPanel : UserControl
     StackPanel MakeStudio()
     {
         var panel = new StackPanel { Padding = new(Metrics.StudioInset) };
+        if (UsesAgentCatalog)
+        {
+            panel.Children.Add(Section("Model"));
+            panel.Children.Add(StudioRow(ModelTitle, "", true, () => Navigate(Page.Models)));
+            if (Model?.Efforts is { Length: > 0 } efforts)
+            {
+                panel.Children.Add(StudioRule());
+                panel.Children.Add(Section("Effort"));
+                foreach (var effort in efforts)
+                    panel.Children.Add(StudioRow(effort.Title, effort.Description, effort.Id == choice?.Effort,
+                        () => Run(() => SetEffortAsync(effort)), id: "Effort_" + effort.Id));
+            }
+            if (SpeedChoices.Count > 0)
+            {
+                panel.Children.Add(StudioRule());
+                panel.Children.Add(Section("Speed"));
+                foreach (var speed in SpeedChoices)
+                    panel.Children.Add(StudioRow(speed.Title, speed.Description, speed.Speed == SelectedSpeed,
+                        () => Run(() => SetTierAsync(speed.TierId)), id: "Speed_" + speed.Speed, icon: SpeedIcon(speed.Speed)));
+            }
+            return panel;
+        }
         var autoRow = ToggleRow("Auto", Auto, allowed => Run(() => SetAutoAsync(allowed)), "ModelRouting", !locked && !ProtectDaybreak,
             IconLabel("Auto", AutoMark()));
         if (ProtectDaybreak) ToolTipService.SetToolTip(autoRow, "Turn off Daybreak before enabling Auto.");
@@ -536,7 +611,14 @@ public sealed partial class ModelPickerPanel : UserControl
     {
         var panel = new StackPanel { Padding = new(Metrics.StudioInset) };
         panel.Children.Add(PageButton("Models", "\uE76B", () => Navigate(Page.Studio), "BackToModelStudio"));
-        var groups = ModelPickerCatalog.Groups(selection.Selectable);
+        if (UsesAgentCatalog)
+        {
+            foreach (var model in PickerModels)
+                panel.Children.Add(StudioRow(model.DisplayName, "", model.Id == choice?.ModelId,
+                    () => Run(async () => { await SetModelAsync(model); Navigate(Page.Studio); })));
+            return panel;
+        }
+        var groups = ModelPickerCatalog.Groups(PickerModels);
         if (groups.Count == 0) panel.Children.Add(Muted("No selectable models", Metrics.StudioDetail));
         foreach (var group in groups)
         {
@@ -690,11 +772,14 @@ public sealed partial class ModelPickerPanel : UserControl
         var auto = ModelMenuSwitch("Auto", "ModelMenuAuto");
         var daybreak = ModelMenuSwitch("Daybreak", "ModelMenuDaybreak");
         var choices = new StackPanel();
-        var content = new StackPanel
+        var content = new StackPanel { Children = { title } };
+        if (!UsesAgentCatalog)
         {
-            Children = { title, ModelSwitchRow("Auto", AutoMark(), auto), ModelSwitchRow("Daybreak", DaybreakMark(), daybreak),
-                ModelMenuDivider(), choices }
-        };
+            content.Children.Add(ModelSwitchRow("Auto", AutoMark(), auto));
+            content.Children.Add(ModelSwitchRow("Daybreak", DaybreakMark(), daybreak));
+            content.Children.Add(ModelMenuDivider());
+        }
+        content.Children.Add(choices);
         var flyout = new Flyout
         {
             FlyoutPresenterStyle = modelOptionsPresenter,
@@ -739,13 +824,19 @@ public sealed partial class ModelPickerPanel : UserControl
             AutomationProperties.SetHelpText(auto, ProtectDaybreak ? DaybreakRequired : "");
 
             choices.Children.Clear();
-            if (Auto)
+            if (UsesAgentCatalog)
+            {
+                foreach (var model in PickerModels)
+                    choices.Children.Add(ModelOption(model.DisplayName, "", model.Id == choice?.ModelId, true,
+                        () => SetModelAsync(model), "ModelMenu_" + Uri.EscapeDataString(model.Id)));
+            }
+            else if (Auto)
             {
                 choices.Children.Add(ModelOption("Auto mode is on", "Chooses once for this thread.", false, false, null));
             }
             else
             {
-                var groups = ModelPickerCatalog.Groups(selection.Selectable);
+                var groups = ModelPickerCatalog.Groups(PickerModels);
                 if (groups.Count == 0) choices.Children.Add(ModelOption("No selectable models", "", false, false, null));
                 for (var index = 0; index < groups.Count; index++)
                 {
@@ -890,7 +981,7 @@ public sealed partial class ModelPickerPanel : UserControl
         _ => null
     };
 
-    static string EffortDescription(ModelReasoning effort) => effort.Id.Equals("ultra", StringComparison.OrdinalIgnoreCase)
+    static string EffortDescription(ModelReasoning effort) => effort.ProviderTitle is null && effort.Id.Equals("ultra", StringComparison.OrdinalIgnoreCase)
         ? effort.Description.Length > 0 ? effort.Description : "Maximum reasoning with automatic task delegation." : "";
 
     MenuFlyout Dropdown(string? header)
@@ -1080,6 +1171,11 @@ public sealed partial class ModelPickerPanel : UserControl
     async Task SetModelAsync(NativeModelDescriptor model)
     {
         if (locked || !CanChooseModel(model)) return;
+        if (UsesAgentCatalog)
+        {
+            if (model.Id != choice?.ModelId) await ApplyChoiceAsync(new(model.Id, model.Model, null, null));
+            return;
+        }
         EndContextEdit();
         var context = selection.ContextChoice(model.Id);
         bool? program = choice?.Daybreak;
@@ -1143,6 +1239,11 @@ public sealed partial class ModelPickerPanel : UserControl
     async Task ResetAsync()
     {
         if (!Direct || Model is not { } model || choice is null) return;
+        if (UsesAgentCatalog)
+        {
+            await ApplyChoiceAsync(choice with { Effort = model.DefaultEffort, Tier = model.DefaultTier });
+            return;
+        }
         await selection.SetContextAsync(model.Id, new());
         await ApplyChoiceAsync(choice with { Effort = model.DefaultEffort, Tier = model.DefaultTier, ContextTokens = Limits?.Suggested });
     }
@@ -1150,6 +1251,20 @@ public sealed partial class ModelPickerPanel : UserControl
     async Task ApplyChoiceAsync(ModelSelectionChoice next)
     {
         if (locked) return;
+        if (UsesAgentCatalog)
+        {
+            var modelChanged = next.ModelId != choice?.ModelId;
+            apply(next);
+            choice = AgentSelection();
+            Refresh();
+            if (modelChanged && refreshAgentCatalog is not null)
+            {
+                await refreshAgentCatalog();
+                choice = AgentSelection();
+                Refresh();
+            }
+            return;
+        }
         if (next.RoutingMode is "Family56" or "Family6")
         {
             var plan = FamilyAutoRouting.Resolve(selection.Visible, next.RoutingMode == "Family56" ? "5.6" : "6", selection.MultiAgentEnabled);

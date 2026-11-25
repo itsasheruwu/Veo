@@ -67,11 +67,15 @@ public sealed partial class MainPage : Page
             if (initialized) return; initialized = true;
             await Run(async () =>
             {
-                await workspace.InitializeAsync();
+                Task? firstRunTour = null;
+                await workspace.InitializeAsync(() =>
+                {
+                    if (workspace.Preferences.WorkspaceTourStep < VeoPreferences.TourCompleted)
+                        firstRunTour = Run(ShowTourAsync);
+                });
                 await Run(InitializeShortcutsAsync);
                 themeSettings = Microsoft.UI.System.ThemeSettings.CreateForWindowId(XamlRoot.ContentIslandEnvironment.AppWindowId);
                 themeSettings.Changed += ThemeSettingsChanged;
-                App.Main?.RestorePreferences();
                 RestoreUtilityLayout();
                 await App.Catalog.InitializeAsync();
                 if (workspace.Runtime.RuntimeState == CodexRuntimeState.Ready) await App.Models.RefreshAsync();
@@ -86,6 +90,7 @@ public sealed partial class MainPage : Page
                 else if (catalog.Count > 0) await SelectAsync(await workspace.LoadAsync(catalog[0]));
                 else await NewChatAsync();
                 ready.TrySetResult();
+                if (firstRunTour is not null) await firstRunTour;
                 await ShowModelPickerUpgradeAsync();
                 if (App.Main is { PendingActivation.Length: > 0 } main) await HandleActivationAsync(main.PendingActivation);
                 if (App.PendingNotificationThread is { } notificationThread) await NavigateThreadIdAsync(notificationThread);
@@ -117,12 +122,19 @@ public sealed partial class MainPage : Page
     public Task NewChatAsync() => Run(async () => { await SaveDraftNowAsync(); await SelectAsync(await workspace.CreateAsync()); await RefreshCatalogAsync(); });
     async Task OpenProjectAsync()
     {
-        var picker = new Windows.Storage.Pickers.FolderPicker(); WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(App.Main!)); picker.FileTypeFilter.Add("*");
-        if (await picker.PickSingleFolderAsync() is { } folder) await CreateProjectChatAsync(folder.Path);
+        if (await PickProjectFolderAsync() is { } folder) await CreateProjectChatAsync(folder);
+    }
+    async Task<string?> PickProjectFolderAsync()
+    {
+        var picker = new Microsoft.Windows.Storage.Pickers.FolderPicker(App.Main!.AppWindow.Id);
+        return (await picker.PickSingleFolderAsync())?.Path;
     }
     async Task SelectAsync(ThreadSession session)
     {
+        CancelDictation();
+        DictationError.IsOpen = false;
         composerModelFlyout?.Hide();
+        CloseComposerPill();
         ShowWorkspace();
         loading = true;
         try
@@ -137,7 +149,7 @@ public sealed partial class MainPage : Page
             using var options = JsonDocument.Parse(session.Draft.OptionsJson);
             model = options.RootElement.Str("model") ?? model; effort = options.RootElement.Str("effort") ?? effort; tier = options.RootElement.Str("tier");
             modelCatalogId = options.RootElement.Str("modelCatalogId") ?? model;
-            if (options.RootElement.TryGetProperty("contextTokens", out var tokens) && tokens.TryGetInt64(out var count)) contextTokens = count;
+            if (options.RootElement.TryGetProperty("contextTokens", out var tokens) && tokens.ValueKind == JsonValueKind.Number && tokens.TryGetInt64(out var count)) contextTokens = count;
             routingMode = options.RootElement.Str("routingMode") ?? routingMode;
             if (options.RootElement.TryGetProperty("routerPolicy", out var policy) && policy.ValueKind == JsonValueKind.Object) routerPolicy = policy.Deserialize<AutoRouterPolicy>();
             if (options.RootElement.TryGetProperty("familyPlan", out var family) && family.ValueKind == JsonValueKind.Object) familyPlan = family.Deserialize<FamilyAutoPlan>();
@@ -153,7 +165,12 @@ public sealed partial class MainPage : Page
             await ReconcileGPT56OptInAsync(session);
             await ShowUtilityAsync(); Render();
         }
-        finally { loading = false; SyncCatalogSelection(); }
+        finally
+        {
+            loading = false;
+            UpdateDictationControl();
+            SyncCatalogSelection();
+        }
     }
     async Task RefreshCatalogAsync()
     {
@@ -265,7 +282,7 @@ public sealed partial class MainPage : Page
             foreach (var question in asyncQuestions) PendingPanel.Children.Add(new QuestionPanel(App.Questions, current, question, SettingsSnapshot));
     }
     Task SaveDraftNowAsync() => SaveTypedComposerAsync();
-    Task SubmitAsync() => SubmitTypedComposerAsync();
+    Task SubmitAsync() => DictationActive ? Task.CompletedTask : SubmitTypedComposerAsync();
     async Task<bool> ExecuteCommandAsync(string invocation)
     {
         var split = invocation[1..].Split(' ', 2); var command = split[0].ToLowerInvariant(); var argument = split.Length > 1 ? split[1] : "";
@@ -300,7 +317,7 @@ public sealed partial class MainPage : Page
                 if (argument.Length > 0 && ReferenceEquals(current, sideThread)) _ = SideChat().SubmitAsync(argument);
                 return true;
             case "diff": case "review": inspectedTurn = null; await OpenUtilityPanelAsync(0); return true;
-            case "stop" when current is not null: await workspace.StopAsync(current); return true;
+            case "stop" when current is not null: if (!Agents.Stop(current.Record.VeoId)) await workspace.StopAsync(current); return true;
             case "reconnect": await workspace.ReconnectAsync(); return true;
             case "refresh": await RefreshCatalogAsync(); return true;
             case "reveal": RevealProject(); return true;
@@ -365,15 +382,21 @@ public sealed partial class MainPage : Page
         Composer.MinHeight = welcome ? 70 : 34;
         Composer.MaxHeight = welcome ? 130 : 110;
         Composer.FontSize = welcome ? 15 : 14;
-        Composer.PlaceholderText = welcome ? "Message Codex in this workspace…" : "Send follow-up";
-        WelcomeProjectRow.Visibility = welcome ? Visibility.Visible : Visibility.Collapsed;
+        Composer.PlaceholderText = welcome ? $"Message {ComposerProviderName.Text} in this workspace…" : "Send follow-up";
+        WelcomeProjectRow.Visibility = welcome && !DictationActive ? Visibility.Visible : Visibility.Collapsed;
+        if (DictationActive && !CanDictate()) CancelDictation();
+        UpdateDictationControl();
     }
     void UpdateSendAvailability() =>
-        SendButton.IsEnabled = current is { IsSubmitting: false } && (!string.IsNullOrWhiteSpace(Composer.Text) || typedComposerAttachments.Count > 0);
+        SendButton.IsEnabled = !DictationActive && current is { IsSubmitting: false } && (!string.IsNullOrWhiteSpace(Composer.Text) || typedComposerAttachments.Count > 0);
     void ComposerPanel_SizeChanged(object sender, SizeChangedEventArgs e) => UpdateComposerKeyHints();
     public void ToggleInspector() => _ = Run(ToggleUtilityPanelAsync);
     public async Task DisposeSurfacesAsync()
     {
+        CloseComposerPill();
+        App.Voice.Changed -= DictationRealtimeVoiceChanged;
+        CancelDictation();
+        if (dictationCleanup is { } cleanup) await cleanup;
         CloseCompletions(); Composer.Paste -= ComposerPaste; Composer.EditorKeyDown -= Composer_KeyDown;
         ShowWorkspace(restoreFocus: false);
         shortcutBindings?.Dispose();
@@ -528,7 +551,7 @@ public sealed partial class MainPage : Page
     async void New_Click(object sender, RoutedEventArgs e) => await NewChatAsync();
     async void OpenProject_Click(object sender, RoutedEventArgs e) => await Run(OpenProjectAsync);
     async void Send_Click(object sender, RoutedEventArgs e) => await Run(SubmitAsync);
-    async void Stop_Click(object sender, RoutedEventArgs e) => await Run(async () => { if (current is not null) await workspace.StopAsync(current); });
+    async void Stop_Click(object sender, RoutedEventArgs e) => await Run(async () => { if (current is not null) if (!Agents.Stop(current.Record.VeoId)) await workspace.StopAsync(current); });
     async void Settings_Click(object sender, RoutedEventArgs e) => await Run(() => ShowSettingsAsync());
     public Task ShowTerminalAsync() => Run(ToggleTerminalAsync);
     async void SidebarOptions_Click(object sender, RoutedEventArgs e) => await ShowCatalogAsync();
@@ -577,11 +600,20 @@ public sealed partial class MainPage : Page
     }
     async void Composer_Changed(object sender, RoutedEventArgs e)
     {
-        if (loading || !initialized) return; UpdateSendAvailability(); composerRevision++; _ = RefreshCompletionsAsync(); draftDelay?.Cancel(); var cts = draftDelay = new();
+        if (loading || !initialized) return;
+        if (dictationDraft is { } snapshot && Composer.Text != snapshot.Text) CancelDictation();
+        UpdateSendAvailability(); composerRevision++; _ = RefreshCompletionsAsync(); draftDelay?.Cancel(); var cts = draftDelay = new();
         try { await Task.Delay(180, cts.Token); await Run(SaveDraftNowAsync); } catch (OperationCanceledException) { }
     }
     async void Composer_KeyDown(object sender, KeyRoutedEventArgs e)
     {
+        if (DictationActive && e.Key == VirtualKey.Escape)
+        {
+            e.Handled = true;
+            CancelDictation(restoreFocus: true);
+            return;
+        }
+        if (DictationActive && e.Key == VirtualKey.Enter) { e.Handled = true; return; }
         if (!imeComposing && composerSuggestions.Visibility == Visibility.Visible && e.Key is VirtualKey.Escape or VirtualKey.Up or VirtualKey.Down or VirtualKey.Enter or VirtualKey.Tab) { e.Handled = true; await Run(async () => await HandleCompletionKeyAsync(e.Key)); return; }
         if (!imeComposing && (e.Key is VirtualKey.Up or VirtualKey.Down) && RecallPrompt(e.Key == VirtualKey.Up ? -1 : 1)) { e.Handled = true; return; }
         if (!imeComposing && e.Key == VirtualKey.Enter && !Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Shift).HasFlag(CoreVirtualKeyStates.Down)) { e.Handled = true; await Run(SubmitAsync); }

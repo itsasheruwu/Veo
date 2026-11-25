@@ -20,6 +20,7 @@ public static class CodexExecutableDiscovery
         var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         var roaming = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (OperatingSystem.IsWindows() && StandaloneExecutable(home) is { } standalone) return standalone;
         foreach (var path in new[] {
             Path.Combine(local, "Programs", "OpenAI", "Codex", "bin", "codex.exe"),
             Path.Combine(home, ".local", "bin", "codex.exe"),
@@ -29,6 +30,33 @@ public static class CodexExecutableDiscovery
             if (candidate != null) return candidate;
         }
         return null;
+    }
+
+    private static string? StandaloneExecutable(string home)
+    {
+        var root = Path.Combine(home, ".codex", "packages", "standalone");
+        var current = Path.Combine(root, "current", "bin", "codex.exe");
+        if (File.Exists(current)) return current;
+
+        // Windows can deny traversal of the installer's current junction.
+        var releases = Path.Combine(root, "releases");
+        var arch = System.Runtime.InteropServices.RuntimeInformation.OSArchitecture;
+        var suffix = arch switch
+        {
+            System.Runtime.InteropServices.Architecture.X64 => "-x86_64-pc-windows-msvc",
+            System.Runtime.InteropServices.Architecture.Arm64 => "-aarch64-pc-windows-msvc",
+            _ => null
+        };
+        if (suffix is null || !Directory.Exists(releases)) return null;
+        try
+        {
+            return Directory.EnumerateDirectories(releases, "*" + suffix)
+                .Select(dir => new { Path = Path.Combine(dir, "bin", "codex.exe"),
+                    Version = Version.TryParse(Path.GetFileName(dir)[..^suffix.Length], out var version) ? version : null })
+                .Where(release => release.Version is not null && File.Exists(release.Path))
+                .OrderByDescending(release => release.Version).Select(release => release.Path).FirstOrDefault();
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { return null; }
     }
 
     private static string? ResolveCandidate(string path)

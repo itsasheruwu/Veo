@@ -9,6 +9,7 @@ public sealed class WindowBoundsCoordinator(Window window, WorkspaceCoordinator 
 {
     readonly Microsoft.UI.Dispatching.DispatcherQueueTimer timer = window.DispatcherQueue.CreateTimer();
     bool attached;
+    public bool Suspended { get; set; }
     public void Restore()
     {
         var p = workspace.Preferences;
@@ -23,6 +24,7 @@ public sealed class WindowBoundsCoordinator(Window window, WorkspaceCoordinator 
     }
     void Changed(AppWindow sender, AppWindowChangedEventArgs args)
     {
+        if (Suspended) return;
         if (!args.DidPositionChange && !args.DidSizeChange && !args.DidPresenterChange) return;
         var p = workspace.Preferences;
         if (sender.Presenter is OverlappedPresenter presenter)

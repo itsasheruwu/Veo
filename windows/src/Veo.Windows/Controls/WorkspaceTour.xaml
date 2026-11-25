@@ -1,0 +1,133 @@
+<UserControl
+    x:Class="Veo_Windows.Controls.WorkspaceTour"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:local="using:Veo_Windows.Controls">
+    <UserControl.Resources>
+        <Style x:Key="TourSegment" TargetType="RadioButton">
+            <Setter Property="MinWidth" Value="68"/><Setter Property="Height" Value="30"/>
+            <Setter Property="UseSystemFocusVisuals" Value="True"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Grid x:Name="Root" Background="Transparent">
+                            <VisualStateManager.VisualStateGroups>
+                                <VisualStateGroup x:Name="CommonStates">
+                                    <VisualState x:Name="Normal"/>
+                                    <VisualState x:Name="PointerOver"><VisualState.Setters><Setter Target="Hover.Opacity" Value=".1"/></VisualState.Setters></VisualState>
+                                    <VisualState x:Name="Pressed"><VisualState.Setters><Setter Target="Hover.Opacity" Value=".2"/></VisualState.Setters></VisualState>
+                                    <VisualState x:Name="Disabled"><VisualState.Setters><Setter Target="Root.Opacity" Value=".4"/></VisualState.Setters></VisualState>
+                                </VisualStateGroup>
+                                <VisualStateGroup x:Name="CheckStates">
+                                    <VisualState x:Name="Unchecked"/>
+                                    <VisualState x:Name="Checked"><VisualState.Setters><Setter Target="Selection.Opacity" Value="1"/></VisualState.Setters></VisualState>
+                                </VisualStateGroup>
+                            </VisualStateManager.VisualStateGroups>
+                            <Border x:Name="Selection" Opacity="0" CornerRadius="7" Background="{ThemeResource ControlFillColorSecondaryBrush}" BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}" BorderThickness="1"/>
+                            <Border x:Name="Hover" Background="{ThemeResource TextFillColorPrimaryBrush}" Opacity="0" CornerRadius="7"/>
+                            <ContentPresenter Content="{TemplateBinding Content}" FontSize="13" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </UserControl.Resources>
+    <Grid x:Name="Card"  Background="#0B1231">
+        <local:PrismBackdrop AutomationProperties.AccessibilityView="Raw"/>
+        <Rectangle IsHitTestVisible="False">
+            <Rectangle.Fill>
+                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                    <GradientStop Offset="0.37" Color="#00081222"/>
+                    <GradientStop Offset="0.70" Color="#64040714"/>
+                    <GradientStop Offset="1" Color="#CF05091C"/>
+                </LinearGradientBrush>
+            </Rectangle.Fill>
+        </Rectangle>
+        <Grid x:Name="Scene" RequestedTheme="Dark">
+            <Grid.RowDefinitions><RowDefinition Height="70"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+            <Grid Margin="20,32,20,0">
+                <Button x:Name="Back" Click="Back_Click" Width="32" Height="30" Padding="0" AutomationProperties.Name="Back" ToolTipService.ToolTip="Back" HorizontalAlignment="Left"><FontIcon Glyph="&#xE72B;" FontSize="13"/></Button>
+                <Button x:Name="Skip" Content="Skip tour" Click="Finish_Click" HorizontalAlignment="Right" FontSize="12"/>
+            </Grid>
+            <Grid Grid.Row="1" x:Name="Stage" Margin="18,0,18,2" HorizontalAlignment="Stretch" VerticalAlignment="Center">
+                <Image x:Name="Brand" Width="126" Height="126" Source="ms-appx:///Assets/TourAppIcon.png" AutomationProperties.AccessibilityView="Raw" IsHitTestVisible="False"/>
+                <Grid x:Name="Preview" MaxWidth="366" Height="157" CornerRadius="15" AutomationProperties.AccessibilityView="Raw" IsHitTestVisible="False">
+                    <local:TourGlassPlate x:Name="PreviewPlate"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="104"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                        <Border Background="{ThemeResource SubtleFillColorSecondaryBrush}" BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}" BorderThickness="0,0,1,0">
+                            <StackPanel Padding="12,16,6,0" Spacing="12">
+                                <StackPanel Orientation="Horizontal" Spacing="6"><Image Source="ms-appx:///Assets/TourAppIcon.png" Width="17" Height="17"/><TextBlock Text="Veo" FontWeight="SemiBold" FontSize="13"/></StackPanel>
+                                <StackPanel Orientation="Horizontal" Spacing="7"><FontIcon Glyph="&#xE710;" FontSize="11"/><TextBlock Text="New chat" FontSize="12"/></StackPanel>
+                                <StackPanel Orientation="Horizontal" Spacing="7"><FontIcon Glyph="&#xE721;" FontSize="11"/><TextBlock Text="Search" FontSize="12"/></StackPanel>
+                            </StackPanel>
+                        </Border>
+                        <StackPanel x:Name="Files" Grid.Column="1" Margin="17,15,15,10" Spacing="9">
+                            <StackPanel Orientation="Horizontal" Spacing="8"><FontIcon Glyph="&#xE8B7;" FontSize="16" Foreground="#91C5FF"/><TextBlock Text="Veo" FontSize="17" FontWeight="SemiBold"/></StackPanel>
+                            <Border Background="#233F8FFA" Padding="9,6" CornerRadius="6"><StackPanel Orientation="Horizontal" Spacing="8"><FontIcon Glyph="&#xE8BD;" FontSize="12"/><TextBlock Text="Map the codebase" FontSize="13"/></StackPanel></Border>
+                            <StackPanel Orientation="Horizontal" Spacing="8" Margin="9,0"><FontIcon Glyph="&#xE8BD;" FontSize="12"/><TextBlock Text="Plan the first change" FontSize="13" Opacity=".82"/></StackPanel>
+                        </StackPanel>
+                        <StackPanel x:Name="Chat" Grid.Column="1" Padding="15,15,15,10" Spacing="15">
+                            <TextBlock Text="New chat" FontSize="20" FontWeight="SemiBold"/>
+                            <Grid Padding="10" MinHeight="65" BorderThickness="1" BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}" CornerRadius="9" Background="{ThemeResource ControlFillColorSecondaryBrush}">
+                                <TextBlock Text="Ask about this project…" FontSize="12"/>
+                                <FontIcon Glyph="&#xE72A;" FontSize="13" HorizontalAlignment="Right" VerticalAlignment="Bottom"/>
+                            </Grid>
+                        </StackPanel>
+                    </Grid>
+                </Grid>
+                <Grid x:Name="ProviderArt" MaxWidth="330" Height="124" CornerRadius="16">
+                    <local:TourGlassPlate/>
+                    <Grid Padding="17,14,17,12">
+                        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                        <TextBlock Text="Provider" FontSize="13" FontWeight="SemiBold" Opacity=".78"/>
+                        <Grid Grid.Row="1" VerticalAlignment="Center" ColumnSpacing="12">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <Border Width="39" Height="39" CornerRadius="10" Background="WhiteSmoke"><Image x:Name="ProviderLogo" Source="ms-appx:///Assets/AgentMark-codex.png" Margin="7"/></Border>
+                            <StackPanel Grid.Column="1" Spacing="1"><TextBlock x:Name="ProviderName" FontSize="18" FontWeight="SemiBold"/><TextBlock x:Name="ProviderDetail" FontSize="12" Opacity=".72"/></StackPanel>
+                            <Button x:Name="ProviderSetup" Grid.Column="2" VerticalAlignment="Center" Content="Change" AutomationProperties.Name="Choose providers…" Click="Providers_Click"/>
+                        </Grid>
+                    </Grid>
+                </Grid>
+                <Grid x:Name="Folder" Width="126" Height="100" IsHitTestVisible="False" AutomationProperties.AccessibilityView="Raw">
+                    <Path Fill="#4A8FEA" Data="M8,23 Q8,15 17,15 L46,15 Q50,15 53,19 L60,25 L109,25 Q117,25 117,33 L117,76 Q117,85 108,85 L17,85 Q8,85 8,76 Z"/>
+                    <Rectangle Width="89" Height="48" RadiusX="4" RadiusY="4" Fill="#B2CCE7" VerticalAlignment="Center"/>
+                    <Path Stroke="#99D0E9FF" StrokeThickness="1" Data="M8,40 Q7,34 14,34 L114,34 Q122,34 120,42 L112,81 Q111,88 103,88 L24,88 Q16,88 15,81 Z">
+                        <Path.Fill><LinearGradientBrush StartPoint="0,0" EndPoint=".8,1"><GradientStop Offset="0" Color="#A6DFFF"/><GradientStop Offset=".5" Color="#5FB3FC"/><GradientStop Offset="1" Color="#4289D6"/></LinearGradientBrush></Path.Fill>
+                    </Path>
+                </Grid>
+            </Grid>
+            <Grid Grid.Row="2" Margin="18,8,18,16" CornerRadius="18">
+                <local:TourGlassPlate/>
+                <StackPanel Spacing="8" Padding="14,16,14,16" HorizontalAlignment="Stretch">
+                    <StackPanel x:Name="ProgressDots" Orientation="Horizontal" Spacing="5" HorizontalAlignment="Center"/>
+                    <TextBlock x:Name="Heading" TextAlignment="Center" FontFamily="Segoe UI Variable Display" FontSize="29" FontWeight="SemiBold" CharacterSpacing="-22" Foreground="White" AutomationProperties.HeadingLevel="Level1" AutomationProperties.LiveSetting="Polite"/>
+                    <TextBlock x:Name="Detail" MaxWidth="390" TextAlignment="Center" TextWrapping="Wrap" HorizontalAlignment="Center" FontSize="13" Foreground="#DFECF1FC"/>
+                    <Border x:Name="AppearanceSurface" Background="#35040A13" CornerRadius="9" BorderThickness="1" Padding="3" HorizontalAlignment="Center">
+                        <StackPanel x:Name="Modes" Orientation="Horizontal" Spacing="2" AutomationProperties.Name="Workspace appearance">
+                            <RadioButton Content="System" Style="{StaticResource TourSegment}" GroupName="TourAppearance" Checked="Appearance_Checked"/>
+                            <RadioButton Content="Light" Style="{StaticResource TourSegment}" GroupName="TourAppearance" Checked="Appearance_Checked"/>
+                            <RadioButton Content="Dark" Style="{StaticResource TourSegment}" GroupName="TourAppearance" Checked="Appearance_Checked"/>
+                        </StackPanel>
+                    </Border>
+                    <StackPanel HorizontalAlignment="Center" Spacing="2" Margin="0,3,0,0">
+                        <Grid HorizontalAlignment="Center"><Button x:Name="Next" Click="Next_Click" Width="166" Height="34" FontSize="13" FontWeight="SemiBold" AutomationProperties.AutomationId="TourNext"/><Border x:Name="PrimarySheen" CornerRadius="10" IsHitTestVisible="False" AutomationProperties.AccessibilityView="Raw"/></Grid>
+                        <Button x:Name="Later" Click="Finish_Click" Content="Open Veo without a folder" HorizontalAlignment="Center" FontSize="12"/>
+                    </StackPanel>
+                </StackPanel>
+            </Grid>
+        </Grid>
+        <Grid x:Name="DirectoryHost" Visibility="Collapsed" Margin="24,48,24,24" MaxWidth="410" Height="380" HorizontalAlignment="Stretch" VerticalAlignment="Center" CornerRadius="17" RequestedTheme="Dark">
+            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+            <local:TourGlassPlate Grid.RowSpan="2"/>
+            <Grid Margin="20,15,15,10"><TextBlock Text="Providers" FontSize="22" FontWeight="SemiBold"/><Button x:Name="DirectoryDone" HorizontalAlignment="Right" Content="Done" Click="CloseProviders_Click"/></Grid>
+            <ScrollViewer x:Name="DirectoryScroll" Grid.Row="1" Margin="16,0,16,14" VerticalScrollBarVisibility="Auto"/>
+        </Grid>
+        <Grid x:Name="Greeting" Background="#08112D" IsHitTestVisible="False" Visibility="Collapsed" AutomationProperties.Name="Hello">
+            <Image Source="ms-appx:///Assets/VeoPrism.jpg" Stretch="UniformToFill" Opacity=".82"/>
+            <Canvas Width="210" Height="85" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <Path x:Name="Ink" Stroke="White" StrokeThickness="4" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
+                    StrokeDashArray="190,190" Data="M4,67 C20,68 47,29 46,13 C61,-9 34,45 23,69 C31,54 48,32 49,46 C45,61 43,82 67,57 C89,43 85,32 77,45 C64,66 78,81 101,53 C113,35 132,8 118,15 C108,14 81,93 123,58 C137,39 164,0 149,12 C135,16 107,98 157,55 C166,39 176,39 179,44 C194,53 168,80 158,64 C151,53 168,34 183,52 C189,59 199,50 206,44"/>
+            </Canvas>
+        </Grid>
+    </Grid>
+</UserControl>

@@ -1,3 +1,4 @@
+using Veo_Windows.Services;
 using Microsoft.UI;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
@@ -17,8 +18,6 @@ public sealed partial class MainPage
 {
     readonly PathGeometry composerBolt = ModelPickerVisuals.BoltGeometry();
     readonly PathGeometry composerBoltPair = ModelPickerVisuals.BoltGeometry(pair: true);
-    readonly SolidColorBrush modelTriggerFill = new();
-    bool modelTriggerHovered;
     string composerAccess = "Workspace";
     string composerMode = "Agentic";
     Flyout? composerModelFlyout;
@@ -28,6 +27,7 @@ public sealed partial class MainPage
 
     void RenderComposerControls()
     {
+        if (composerPillFlyout is not null) return;
         var catalogModel = App.Models.Find(modelCatalogId ?? model);
         var title = catalogModel?.DisplayName ?? ModelPickerCatalog.FormatName(
             workspace.Models.FirstOrDefault(candidate => candidate.Id == model)?.Name ?? model ?? "Select model");
@@ -49,20 +49,7 @@ public sealed partial class MainPage
         ModelEffortLabel.Foreground = isPeak && slider && !highContrast
             ? new SolidColorBrush(ModelPickerVisuals.PeakText(dark, ModelPickerVisuals.UsesBluePalette(modelKey)))
             : ComposerKeyHints.Foreground;
-        ModelSpeedMark.Visibility = speed == ModelSpeed.Standard ? Visibility.Collapsed : Visibility.Visible;
-        ModelSpeedMark.Data = speed == ModelSpeed.Ultrafast ? composerBoltPair : composerBolt;
-        ModelSpeedMark.Fill = highContrast ? ModelLabel.Foreground
-            : new SolidColorBrush(speed == ModelSpeed.Ultrafast
-                ? ModelPickerVisuals.PeakText(dark, blue: false) : ModelPickerVisuals.FastText(dark));
-        ModelSpeedMark.Width = speed == ModelSpeed.Ultrafast ? 14 : 10;
-        ModelTrigger.Width = slider ? ModelPickerVisuals.TriggerWidth : double.NaN;
-        ModelTrigger.Height = ModelPickerVisuals.TriggerHeight;
-        ModelTrigger.CornerRadius = new CornerRadius(slider ? ModelPickerVisuals.TriggerHeight / 2 : 7);
-        ModelTriggerLabel.Spacing = slider ? 5 : 6;
-        ModelTriggerLabel.HorizontalAlignment = slider ? HorizontalAlignment.Center : HorizontalAlignment.Left;
-        ModelTriggerLabel.Margin = slider ? new Thickness(12, 0, 26, 0) : new Thickness(0);
-        StudioChevron.Visibility = slider ? Visibility.Collapsed : Visibility.Visible;
-        SliderChevron.Visibility = slider ? Visibility.Visible : Visibility.Collapsed;
+        RenderComposerSpeedMark(speed);
         var mark = !direct ? "\uE1CE" : ModelPickerVisuals.ModelGlyph(modelKey);
         if (direct && mark.Length == 0 && catalogModel?.IsExternal != true)
             mark = ModelPickerVisuals.ModelGlyph(NativeModelDescriptor.Normalize(title));
@@ -70,7 +57,6 @@ public sealed partial class MainPage
         ModelMark.Visibility = mark.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         ModelCube.Visibility = mark.Length == 0 && !slider ? Visibility.Visible : Visibility.Collapsed;
         ModelMarkHost.Visibility = mark.Length > 0 || !slider ? Visibility.Visible : Visibility.Collapsed;
-        UpdateModelTriggerFill();
         UpdateComposerModelLayout();
         var speedTitle = speed switch { ModelSpeed.Fast => ", Fast Mode on", ModelSpeed.Ultrafast => ", Ultrafast on", _ => "" };
         AutomationProperties.SetName(ModelTrigger, $"Model settings, {title}" + (effortTitle.Length > 0 ? $", {effortTitle} reasoning" : "") + speedTitle);
@@ -78,19 +64,16 @@ public sealed partial class MainPage
         SendGlyph.Foreground = highContrast ? new SolidColorBrush(new UISettings().UIElementColor(UIElementType.HighlightText)) : new SolidColorBrush(Colors.Black);
         ToolTipService.SetToolTip(ModelTrigger, direct && catalogModel is { Description.Length: > 0 } ? catalogModel.Description : title);
 
-        AccessLabel.Text = composerAccess;
-        AccessLabel.Foreground = AccessChevron.Foreground = AccessIcon.Foreground = composerAccess == "Full access"
-            && !new Windows.UI.ViewManagement.AccessibilitySettings().HighContrast
+        var permission = ComposerPermission.Get(composerAccess);
+        AccessLabel.Text = permission.Title;
+        AccessLabel.Foreground = AccessChevron.Foreground = AccessIcon.Foreground = permission.Id == "Full access"
+            && !new AccessibilitySettings().HighContrast
             ? new SolidColorBrush(Windows.UI.Color.FromArgb(255, 231, 149, 57))
             : ComposerKeyHints.Foreground;
-        AccessIcon.Glyph = AccessGlyph(composerAccess);
-        AutomationProperties.SetName(AccessButton, $"Access mode, {composerAccess}");
-        ToolTipService.SetToolTip(AccessButton, composerAccess switch
-        {
-            "Read only" => "Inspect files and changes without writing to the workspace.",
-            "Full access" => "Allow the runtime to work outside this project's sandbox.",
-            _ => "Allow writes within the current workspace. Other access requires approval."
-        });
+        AccessIcon.Glyph = AccessGlyph(permission);
+        AccessButton.IsEnabled = ActiveAgent is null;
+        AutomationProperties.SetName(AccessButton, $"Permissions, {permission.Title}");
+        ToolTipService.SetToolTip(AccessButton, ActiveAgent is null ? permission.Detail : "This provider manages its own permissions.");
         if (current?.Record is { } record)
         {
             WelcomeProjectLabel.Text = record.WorkspaceKind switch
@@ -99,48 +82,28 @@ public sealed partial class MainPage
             };
             ToolTipService.SetToolTip(WelcomeProjectButton, record.WorkspaceKind == "project" ? record.Cwd : "Choose the project for this chat");
         }
+        RenderProvider();
         RenderComposerGoalControls();
     }
 
-    void ModelTrigger_PointerEntered(object sender, PointerRoutedEventArgs e)
+    void RenderComposerSpeedMark(ModelSpeed speed)
     {
-        modelTriggerHovered = true;
-        UpdateModelTriggerFill();
-    }
-
-    void ModelTrigger_PointerExited(object sender, PointerRoutedEventArgs e)
-    {
-        modelTriggerHovered = false;
-        UpdateModelTriggerFill();
-    }
-
-    void UpdateModelTriggerFill()
-    {
-        if (!ReferenceEquals(ModelTrigger.Background, modelTriggerFill)) ModelTrigger.Background = modelTriggerFill;
-        if (!UsesSliderPicker) { modelTriggerFill.Color = Colors.Transparent; return; }
-        var opacity = composerModelFlyout is not null || modelTriggerHovered ? (byte)22 : (byte)13;
-        var value = ActualTheme == ElementTheme.Dark ? (byte)255 : (byte)0;
-        modelTriggerFill.Color = Windows.UI.Color.FromArgb(opacity, value, value, value);
+        var highContrast = new AccessibilitySettings().HighContrast;
+        var dark = ActualTheme == ElementTheme.Dark;
+        ModelSpeedMark.Visibility = speed == ModelSpeed.Standard ? Visibility.Collapsed : Visibility.Visible;
+        ModelSpeedMark.Data = speed == ModelSpeed.Ultrafast ? composerBoltPair : composerBolt;
+        ModelSpeedMark.Fill = highContrast ? ModelLabel.Foreground
+            : new SolidColorBrush(speed == ModelSpeed.Ultrafast
+                ? ModelPickerVisuals.PeakText(dark, blue: false) : ModelPickerVisuals.FastText(dark));
+        ModelSpeedMark.Width = speed == ModelSpeed.Ultrafast ? 14 : 10;
     }
 
     void UpdateComposerModelLayout()
     {
-        var slider = UsesSliderPicker;
-        var showsEffort = ModelEffortLabel.Text.Length > 0
-            && (slider || ComposerPanel.ActualWidth <= 0 || ComposerPanel.ActualWidth >= 340);
-        ModelEffortLabel.Visibility = showsEffort ? Visibility.Visible : Visibility.Collapsed;
-        ModelSeparator.Visibility = !slider && showsEffort ? Visibility.Visible : Visibility.Collapsed;
-
-        if (!slider)
-        {
-            ModelLabel.MaxWidth = ComposerPanel.ActualWidth > 0 ? Math.Clamp(ComposerPanel.ActualWidth - 230, 40, 130) : 130;
-            return;
-        }
-        ModelEffortLabel.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-        var effortWidth = showsEffort ? ModelEffortLabel.DesiredSize.Width + ModelTriggerLabel.Spacing : 0;
-        var modelIcon = ModelMarkHost.Visibility == Visibility.Visible ? ModelMarkHost.Width + ModelTriggerLabel.Spacing : 0;
-        var speedIcon = ModelSpeedMark.Visibility == Visibility.Visible ? ModelSpeedMark.Width + ModelTriggerLabel.Spacing : 0;
-        ModelLabel.MaxWidth = Math.Max(32, ModelPickerVisuals.TriggerWidth - 38 - effortWidth - modelIcon - speedIcon);
+        if (composerPillFlyout is not null) return;
+        ModelEffortLabel.Visibility = ModelEffortLabel.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        ModelLabel.MaxWidth = ComposerPanel.ActualWidth > 0
+            ? Math.Clamp(ComposerPanel.ActualWidth - 255, 58, 185) : 185;
     }
 
     void InitializeComposerModePills()
@@ -198,35 +161,37 @@ public sealed partial class MainPage
     void UpdateComposerKeyHints()
     {
         UpdateComposerModelLayout();
-        ComposerKeyHints.Visibility = ComposerPanel.ActualWidth >= 415
-            && ComposerModePills.Visibility == Visibility.Collapsed
-            && current is { Timeline.IsRunning: false }
-            ? Visibility.Visible : Visibility.Collapsed;
         UpdateComposerSendRow();
     }
 
     void UpdateComposerSendRow()
     {
-        var compact = false;
-        if ((ComposerModePills.Visibility == Visibility.Visible || ComposerContextIndicator.Visibility == Visibility.Visible)
-            && ComposerToolbar.ActualWidth > 0)
-        {
-            var unconstrained = new Size(double.PositiveInfinity, double.PositiveInfinity);
-            ModelPickerSlot.Measure(unconstrained);
-            AccessButton.Measure(unconstrained);
-            ComposerSendControls.Measure(unconstrained);
-            var requiredWidth = ComposerOptionsButton.Width + ModelPickerSlot.DesiredSize.Width
-                + AccessButton.DesiredSize.Width + ComposerSendControls.DesiredSize.Width
-                + 3 * ComposerToolbar.ColumnSpacing;
-            compact = requiredWidth > ComposerToolbar.ActualWidth;
-        }
+        var width = ComposerPanel.ActualWidth - 26;
+        if (width <= 0 || DictationActive || composerPillFlyout is not null) return;
+        var unconstrained = new Size(double.PositiveInfinity, double.PositiveInfinity);
+        ComposerKeyHints.Visibility = Visibility.Collapsed;
+        ModelPickerSlot.Measure(unconstrained);
+        ComposerSendControls.Measure(unconstrained);
+        var gap = ComposerToolbar.ColumnSpacing;
+        var modelGroup = ComposerOptionsButton.Width + ModelPickerSlot.DesiredSize.Width + gap;
+        AccessButton.Measure(unconstrained);
+        var permissions = AccessButton.DesiredSize.Width;
+        var send = ComposerSendControls.DesiredSize.Width;
+        var widthNeeded = modelGroup + permissions + send + 2 * gap;
+        if (widthNeeded + 123 <= width && ComposerModePills.Visibility == Visibility.Collapsed &&
+            current is { Timeline.IsRunning: false })
+            ComposerKeyHints.Visibility = Visibility.Visible;
 
-        var row = compact ? 1 : 0;
-        if (Grid.GetRow(ComposerSendControls) == row) return;
-        Grid.SetRow(ComposerSendControls, row);
-        Grid.SetColumn(ComposerSendControls, compact ? 0 : 3);
-        Grid.SetColumnSpan(ComposerSendControls, compact ? 4 : 1);
-        ComposerToolbar.RowSpacing = compact ? ComposerToolbar.ColumnSpacing : 0;
+        var permissionsRow = modelGroup + permissions + gap <= width ? 0 : 1;
+        var sendRow = widthNeeded <= width ? 0
+            : permissionsRow == 0 || permissions + gap + send <= width ? 1 : 2;
+        Grid.SetRow(AccessButton, permissionsRow);
+        Grid.SetColumn(AccessButton, permissionsRow == 0 ? 2 : 0);
+        Grid.SetColumnSpan(AccessButton, permissionsRow == 0 ? 1 : 2);
+        Grid.SetRow(ComposerSendControls, sendRow);
+        Grid.SetColumn(ComposerSendControls, sendRow == 0 ? 3 : 0);
+        Grid.SetColumnSpan(ComposerSendControls, sendRow == 0 ? 1 : 4);
+        ComposerToolbar.RowSpacing = sendRow == 0 ? 0 : gap;
     }
 
     void Model_Click(object sender, RoutedEventArgs e)
@@ -237,14 +202,7 @@ public sealed partial class MainPage
             ? Math.Clamp(ModelTrigger.TransformToVisual(root).TransformPoint(new Point(0, 0)).Y
                 - ModelPickerVisuals.PointerHeight - 12, 100, ModelPickerVisuals.StudioHeight)
             : ModelPickerVisuals.StudioHeight;
-        var content = new ModelPickerPanel(App.Models, App.Routing, session, SettingsSnapshot, choice =>
-        {
-            if (!ReferenceEquals(current, session)) return;
-            ApplyModelChoice(choice);
-            composerRevision++;
-            _ = Run(SaveDraftNowAsync);
-            Render();
-        }, UsesSliderPicker, studioHeight, Resources);
+        var content = CreateModelPicker(session, UsesSliderPicker, studioHeight, ActiveAgent);
         var flyout = new Flyout
         {
             Content = content, Placement = FlyoutPlacementMode.Top,
@@ -252,10 +210,31 @@ public sealed partial class MainPage
             FlyoutPresenterStyle = (Style)Resources["ModelPickerFlyoutPresenter"]
         };
         composerModelFlyout = flyout;
-        flyout.Closed += (_, _) => { composerModelFlyout = null; UpdateModelTriggerFill(); };
-        UpdateModelTriggerFill();
-        flyout.ShowAt(ModelTrigger);
+        flyout.Closed += (_, _) => { if (composerModelFlyout == flyout) composerModelFlyout = null; };
+        ShowComposerPill(flyout, composerModelPill);
     }
+
+    ModelPickerPanel CreateModelPicker(ThreadSession session, bool advanced, double studioHeight, string? agent = null) =>
+        new ModelPickerPanel(App.Models, App.Routing, session, SettingsSnapshot, choice =>
+        {
+            if (!ReferenceEquals(current, session)) return;
+            if (agent is not null)
+            {
+                if (ActiveAgent != agent) return;
+                Agents.SetModelSelection(agent, choice.ModelId, choice.Tier == AgentConnection.GrokFastId, choice.Effort);
+                Render();
+                return;
+            }
+            ApplyModelChoice(choice);
+            composerRevision++;
+            _ = Run(SaveDraftNowAsync);
+            Render();
+        }, advanced, studioHeight, Resources,
+        agent is null ? null : () => Agents.Connections.GetValueOrDefault(agent),
+        agent is null ? null : () => Agents.Connections.TryGetValue(agent, out var connection) &&
+            (connection.Models.Length == 0 || connection.Model.Length > 0 && connection.SelectedModel?.Efforts is null ||
+                agent == "grok-build" && connection.Models.All(model => model.Efforts is null))
+            ? Agents.RefreshModelCatalogAsync(agent) : Task.CompletedTask);
 
     Flyout ComposerFlyout(FrameworkElement content, FlyoutPlacementMode placement = FlyoutPlacementMode.TopEdgeAlignedLeft) => new()
     {
@@ -263,32 +242,66 @@ public sealed partial class MainPage
         FlyoutPresenterStyle = (Style)Resources["ComposerFlyoutPresenter"]
     };
 
-    static string AccessGlyph(string access) => access switch
+    static string AccessGlyph(ComposerPermission permission) => permission.Id switch
     {
-        "Read only" => "\uE890", "Full access" => "\uE785", _ => "\uE8B7"
+        "Read only" => "\uEA18", "Auto" => "\uE9D9", "Full access" => "\uE785", _ => "\uE70F"
     };
+
+    Flyout? permissionsFlyout;
 
     void ComposerAccess_Click(object sender, RoutedEventArgs e) => ShowComposerAccess();
 
     void ShowComposerAccess()
     {
-        var menu = new MenuFlyout { Placement = FlyoutPlacementMode.TopEdgeAlignedLeft, AreOpenCloseAnimationsEnabled = false };
-        foreach (var access in new[] { "Read only", "Workspace", "Full access" })
+        if (current is not { } session || ActiveAgent is not null || DictationActive) return;
+        if (permissionsFlyout is { } open) { open.Hide(); return; }
+        var list = new StackPanel { Width = 260, Spacing = 4 };
+        list.Children.Add(new TextBlock { Text = "Permissions", FontSize = 12,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, Margin = new Thickness(7, 0, 7, 3) });
+        var flyout = new Flyout { Content = list, Placement = FlyoutPlacementMode.TopEdgeAlignedLeft };
+        foreach (var mode in ComposerPermission.Options)
         {
-            var item = new RadioMenuFlyoutItem
+            var available = !mode.AutomaticReview || workspace.SupportsAutomaticReview;
+            var description = available ? mode.Detail : "Automatic review requires a supported Codex runtime.";
+            var label = new StackPanel { Spacing = 2, Children =
             {
-                Text = access, GroupName = "ComposerAccess", IsChecked = composerAccess == access,
-                Icon = new FontIcon { Glyph = AccessGlyph(access), FontSize = 12 }
-            };
-            item.Click += async (_, _) =>
+                new TextBlock { Text = mode.Title, FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.Medium },
+                new TextBlock { Text = description, FontSize = 11, TextWrapping = TextWrapping.Wrap,
+                    Foreground = ComposerKeyHints.Foreground }
+            } };
+            var row = new Grid { ColumnSpacing = 9 };
+            row.ColumnDefinitions.Add(new() { Width = new GridLength(18) });
+            row.ColumnDefinitions.Add(new());
+            row.ColumnDefinitions.Add(new() { Width = new GridLength(16) });
+            row.Children.Add(new FontIcon { Glyph = AccessGlyph(mode), FontSize = 12, VerticalAlignment = VerticalAlignment.Top });
+            Grid.SetColumn(label, 1);
+            row.Children.Add(label);
+            if (composerAccess == mode.Id)
             {
-                if (composerAccess == access) return;
-                composerAccess = access;
-                await SaveComposerControlAsync();
+                var check = new FontIcon { Glyph = "\uE73E", FontSize = 11 };
+                Grid.SetColumn(check, 2);
+                row.Children.Add(check);
+            }
+            var option = new Button
+            {
+                Style = (Style)Application.Current.Resources["SubtleButtonStyle"], Content = row,
+                HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                Padding = new Thickness(7, 6, 7, 6), IsEnabled = available
             };
-            menu.Items.Add(item);
+            AutomationProperties.SetName(option, mode.Title + (composerAccess == mode.Id ? ", selected" : ""));
+            AutomationProperties.SetHelpText(option, description);
+            option.Click += async (_, _) =>
+            {
+                if (!ReferenceEquals(session, current) || composerAccess == mode.Id) { flyout.Hide(); return; }
+                composerAccess = mode.Id;
+                flyout.Hide();
+                await Run(SaveComposerControlAsync);
+            };
+            list.Children.Add(option);
         }
-        menu.ShowAt(AccessButton);
+        permissionsFlyout = flyout;
+        flyout.Closed += (_, _) => { if (permissionsFlyout == flyout) permissionsFlyout = null; };
+        ShowComposerPill(flyout, composerPermissionsPill);
     }
 
     async Task SetComposerModeAsync(string mode)

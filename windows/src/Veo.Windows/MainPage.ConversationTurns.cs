@@ -52,10 +52,6 @@ public sealed partial class MainPage
         var groups = items.Where(item => item.TurnId is not null).ToLookup(item => item.TurnId!);
         var rows = new List<TimelineItem>(items.Count + turns.Count * 2);
         var liveTurnId = session.Timeline.IsRunning ? session.Timeline.ActiveTurnId : null;
-        var livePrompt = session.Timeline.IsRunning
-            ? items.FirstOrDefault(item => item.Kind == "userMessage" && item.TurnId == liveTurnId && liveTurnId is not null)
-                ?? items.LastOrDefault(item => item.Kind == "userMessage" && item.TurnId is null)
-            : null;
         var segmentByItem = new Dictionary<string, string>(StringComparer.Ordinal);
         var activityBySegment = new Dictionary<string, List<TimelineItem>>(StringComparer.Ordinal);
         var lastPromptByTurn = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -92,16 +88,15 @@ public sealed partial class MainPage
                     rows.Add(new(kind + "-" + item.Id, turn.Id, kind, summary, status, item.Raw, item.Order));
                 }
             }
-            else if (item.Id == livePrompt?.Id) rows.Add(ActiveStatus(session));
             if (turn?.TerminalObserved == true && item.Id == lastReplies[turn.Id]
                 && TurnPatch(turn, groups[turn.Id]) is { Length: > 0 } patch)
                 rows.Add(new("turn-diff-" + turn.Id, turn.Id, "veoTurnDiff", patch, "", default, item.Order));
         }
-        if (session.Timeline.IsRunning && livePrompt is null) rows.Add(ActiveStatus(session));
+        if (session.Timeline.IsRunning) rows.Add(ActiveStatus(session, items, liveTurnId));
         return rows;
     }
 
-    TimelineItem ActiveStatus(ThreadSession session)
+    TimelineItem ActiveStatus(ThreadSession session, IReadOnlyList<TimelineItem> items, string? turnId)
     {
         var runtimeId = session.Record.CodexThreadId;
         var request = workspace.PendingRequests.FirstOrDefault(request => runtimeId is not null && request.Parameters.Str("threadId") == runtimeId);
@@ -111,7 +106,24 @@ public sealed partial class MainPage
             null => "",
             _ => "Waiting for approval"
         };
-        return new("turn-work-active", session.Timeline.ActiveTurnId, "veoTurnProgress", label, "", default, long.MaxValue);
+        var active = label.Length == 0 && turnId is not null
+            ? items.Where(item => item.TurnId == turnId && IsFoldableWork(item)
+                && item.Status is "inProgress" or "running" or "active" or "pending").ToArray() : [];
+        var step = active.LastOrDefault(item => item.Kind != "reasoning") ?? active.LastOrDefault();
+        if (step is not null)
+        {
+            label = step.Kind switch
+            {
+                "commandExecution" => step.Raw.Str("command") is { Length: > 0 } command
+                    ? "Running " + command.ReplaceLineEndings(" ") : "Running a command",
+                "fileChange" => "Updating files",
+                "webSearch" => "Searching the web",
+                "planUpdate" => "Updating the execution plan",
+                _ => TimelinePresentation.Item(step).Title.ReplaceLineEndings(" ")
+            };
+        }
+        return new("turn-work-active", turnId, "veoTurnProgress", label,
+            step?.Kind ?? (request is null ? "" : "waitingForInput"), default, step?.Order ?? long.MaxValue);
     }
 
     static bool IsFoldableWork(TimelineItem item) => TimelinePresentation.IsActivity(item.Kind)

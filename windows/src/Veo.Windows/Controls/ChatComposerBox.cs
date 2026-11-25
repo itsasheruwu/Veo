@@ -37,7 +37,7 @@ public sealed class ChatComposerBox : RichEditBox
 
     protected override void OnKeyDown(KeyRoutedEventArgs e)
     {
-        if (SelectionLength == 0 && e.Key is VirtualKey.Back or VirtualKey.Delete)
+        if (!IsReadOnly && SelectionLength == 0 && e.Key is VirtualKey.Back or VirtualKey.Delete)
         {
             var position = Document.Selection.StartPosition;
             var chip = chips.FirstOrDefault(candidate => e.Key == VirtualKey.Back

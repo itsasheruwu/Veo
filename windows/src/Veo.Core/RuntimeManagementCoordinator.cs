@@ -96,9 +96,9 @@ public sealed class RuntimeManagementCoordinator : IAsyncDisposable
         catch (NotSupportedException) { return; }
         catch (CodexRpcException exception) when (exception.Code == -32601) { return; }
         if (!response.TryObjectProperty("requirements", out var requirements)) return;
-        var mode = payload.Access switch { "Read only" => "read-only", "Full access" => "danger-full-access", _ => "workspace-write" };
-        if (requirements.TryGetProperty("allowedSandboxModes", out var modes) && modes.ValueKind == JsonValueKind.Array && !modes.EnumerateArray().Any(x => x.ValueKind == JsonValueKind.String && x.GetString() == mode)) throw new InvalidOperationException("Managed runtime policy does not allow the selected access. Choose an allowed profile; Veo has kept the current scope unchanged.");
-        if (requirements.TryGetProperty("allowedApprovalPolicies", out var policies) && policies.ValueKind == JsonValueKind.Array && !policies.EnumerateArray().Any(x => x.ValueKind == JsonValueKind.String && x.GetString() == "on-request")) throw new InvalidOperationException("Managed runtime policy does not allow Veo's on-request approval policy. Repair the runtime policy before sending.");
+        var permission = ComposerPermission.Get(payload.Access);
+        if (requirements.TryGetProperty("allowedSandboxModes", out var modes) && modes.ValueKind == JsonValueKind.Array && !modes.EnumerateArray().Any(x => x.ValueKind == JsonValueKind.String && x.GetString() == permission.Sandbox)) throw new InvalidOperationException("Managed runtime policy does not allow the selected access. Choose an allowed profile; Veo has kept the current scope unchanged.");
+        if (requirements.TryGetProperty("allowedApprovalPolicies", out var policies) && policies.ValueKind == JsonValueKind.Array && !policies.EnumerateArray().Any(x => x.ValueKind == JsonValueKind.String && x.GetString() == permission.Policy)) throw new InvalidOperationException("Managed runtime policy does not allow the selected permission mode. Choose an allowed mode before sending.");
     }
     public async Task<RuntimeConfigWriteResult> WriteScalarAsync(IntegrationContext context, string key, string value, CancellationToken cancellation = default)
     {

@@ -168,7 +168,10 @@ public sealed class AutoRoutingCoordinator : IAsyncDisposable
         var key = workspace.Runtime.Generation + ":" + id; var signature = payload.ContextTokens?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "runtime-default";
         if (contextSignatures.TryGetValue(key, out var previous) && previous == signature) return new("Applied", "The requested context is already configured.");
         var model = models.Find(payload.CatalogModelId) ?? models.Find(payload.Model); var unsubscribed = false;
-        var parameters = new Dictionary<string, object?> { ["threadId"] = id, ["cwd"] = session.Record.Cwd, ["sandbox"] = payload.Access switch { "Read only" => "read-only", "Full access" => "danger-full-access", _ => "workspace-write" }, ["approvalPolicy"] = "on-request", ["excludeTurns"] = true };
+        var permission = ComposerPermission.Get(payload.Access);
+        var parameters = new Dictionary<string, object?> { ["threadId"] = id, ["cwd"] = session.Record.Cwd,
+            ["sandbox"] = permission.Sandbox, ["approvalPolicy"] = permission.Policy, ["excludeTurns"] = true };
+        workspace.AddApprovalsReviewer(parameters, payload.Access);
         if (payload.Model is not null) parameters["model"] = payload.Model;
         if (payload.Tier is not null) parameters["serviceTier"] = payload.Tier;
         if (payload.ContextTokens is not null) parameters["config"] = new { model_context_window = payload.ContextTokens };

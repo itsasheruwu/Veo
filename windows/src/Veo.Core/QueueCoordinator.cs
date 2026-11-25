@@ -39,7 +39,7 @@ public sealed class QueueCoordinator : IDisposable
     public async Task AddedUnderDispatchGateAsync(ThreadSession session, ComposerSnapshot payload, CancellationToken token = default)
     {
         // The server queue carries input only. Apply access programs and goals on the local dispatch path.
-        if (payload.Daybreak is not null || payload.StartGoal) return;
+        if (payload.Daybreak is not null || payload.StartGoal || payload.Access != session.EffectiveAccess) return;
         if (session.Record.CodexThreadId is not { } id || !rpc.Supports("thread/queue/add") || !rpc.Supports("thread/queue/list")) return;
         var bindings = await ReadBindingsAsync(session, token);
         if (bindings.Any(x => x.ClientId == payload.ClientId && x.State != "local")) return;
@@ -145,6 +145,8 @@ public sealed class QueueCoordinator : IDisposable
         try
         {
             if (!session.Timeline.IsRunning) throw new InvalidOperationException("Steer needs an active turn.");
+            if (payload.Access != session.EffectiveAccess)
+                throw new InvalidOperationException("Start a new turn to apply the follow-up’s permissions.");
             var turnId = session.Timeline.ActiveTurnId;
             if (turnId is null)
             {

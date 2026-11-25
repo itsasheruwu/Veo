@@ -13,6 +13,8 @@ public sealed partial class SettingsPanel : UserControl
     static readonly Category[] Navigation =
     [
         new("General", "Project, access, and utility model", "\uE713"),
+        new("Providers", "Connections and enabled models", "\uE950"),
+        new("Voice", "Dictation model and language", "\uE720"),
         new("Keyboard Shortcuts", "Commands and project actions", "\uE765"),
         new("Projects", "Actions and new chat defaults", "\uE8B7"),
         new("Appearance", "Theme, accent, and materials", "\uE771"),
@@ -91,7 +93,7 @@ public sealed partial class SettingsPanel : UserControl
 
     public void Select(string? category)
     {
-        category = category is "Providers" or "Continuation" ? "Account" : category;
+        category = category is "Continuation" ? "Account" : category;
         var index = Array.FindIndex(Navigation, item => item.Title == category);
         Categories.SelectedIndex = Math.Max(0, index);
     }
@@ -137,7 +139,9 @@ public sealed partial class SettingsPanel : UserControl
 
         switch (category.Title)
         {
+            case "Providers": ShowProviders(); break;
             case "General": ShowGeneral(); break;
+            case "Voice": ShowVoice(); break;
             case "Keyboard Shortcuts":
                 shortcuts = new ShortcutSettingsPanel(App.Commands, shortcutAvailable);
                 Sections.Children.Add(shortcuts);
@@ -172,7 +176,9 @@ public sealed partial class SettingsPanel : UserControl
 
         var defaults = Section("Workspace defaults");
         AddRow(defaults, "New chat access", "Default filesystem access for new chats.", "\uEA18",
-            Choice("New chat access", ["Read only", "Workspace", "Full access"], p.DefaultAccess, v => p.DefaultAccess = v));
+            Choice("New chat access", ComposerPermission.Options.Select(mode => mode.Title).ToArray(),
+                ComposerPermission.Get(p.DefaultAccess).Title,
+                title => p.DefaultAccess = ComposerPermission.Options.First(mode => mode.Title == title).Id));
         AddRow(defaults, "Group chats by project", "Organize the sidebar by workspace folder.", "\uE8B7",
             Toggle("Group chats by project", p.GroupByProject, v => p.GroupByProject = v));
         AddRow(defaults, "Show archived chats", "Include archived chats in the workspace catalog.", "\uE7B8",
@@ -382,7 +388,7 @@ public sealed partial class SettingsPanel : UserControl
         PopulateAccount(summary);
         AddEmbedded("Usage-limit continuation", new ContinuationPanel(workspace, App.Continuation, App.QuietWake)
             { MinWidth = 0 });
-        AddEmbedded("Connected providers", new ProvidersPanel(workspace, uri => _ = App.Main?.NavigateBrowserAsync(uri)));
+
     }
 
     void PopulateAccount(StackPanel summary)

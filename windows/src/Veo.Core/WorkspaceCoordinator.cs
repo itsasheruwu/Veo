@@ -55,6 +55,7 @@ public sealed class WorkspaceCoordinator : IAsyncDisposable
     string? runtimeExecutableOverride;
     int changedPending;
     public string DataRoot { get; }
+    public bool SupportsAutomaticReview => Runtime.Capabilities.Availability(ComposerPermission.ReviewerCapability) == CapabilityAvailability.Available;
     public ThreadRepository Threads { get; }
     public CodexRuntimeService Runtime { get; private set; }
     public VeoPreferences Preferences { get; private set; } = new();
@@ -88,10 +89,19 @@ public sealed class WorkspaceCoordinator : IAsyncDisposable
         Runtime = new();
         dynamicTools = new(id => sessions.Values.FirstOrDefault(x => x.Record.CodexThreadId == id) is { } thread ? new(thread.Record.Cwd, thread.EffectiveAccess, id) : null, ListBackgroundTerminalsAsync);
     }
-    public async Task InitializeAsync()
+    bool preferencesLoaded;
+    public async Task LoadPreferencesAsync()
+    {
+        if (preferencesLoaded) return;
+        Preferences = await preferences.LoadAsync();
+        preferencesLoaded = true;
+    }
+
+    public async Task InitializeAsync(Action? profileLoaded = null)
     {
         await Threads.InitializeAsync(lifetime.Token);
-        Preferences = await preferences.LoadAsync();
+        await LoadPreferencesAsync();
+        profileLoaded?.Invoke();
         foreach (var stored in await Threads.ListThreadsAsync(limit: 10000))
         {
             var record = stored;
@@ -348,6 +358,7 @@ public sealed class WorkspaceCoordinator : IAsyncDisposable
         }
         if (session.DispatchWarning is not null) throw new InvalidOperationException(session.DispatchWarning);
         if (Runtime.RuntimeState != CodexRuntimeState.Ready) throw new InvalidOperationException("Connect Codex in Runtime settings first. Your draft has been kept.");
+        ValidateComposerPermission(payload.Access);
         _ = DaybreakProgram(payload);
         if (PreparePayloadAsync is { } preparePayload && !isContinuation) payload = await preparePayload(session, payload, lifetime.Token);
         _ = DaybreakProgram(payload);
@@ -379,13 +390,23 @@ public sealed class WorkspaceCoordinator : IAsyncDisposable
         session.Timeline.AddLocal(payload.ClientId, "userMessage", payload.Text, status: "pending");
         await PersistTimelineAsync(session); var dispatchVersion = session.Timeline.BeginPending(); ScheduleChanged();
         var input = ComposerProtocol.Input(payload);
+        var providerHistory = session.Timeline.Items.Reverse()
+            .TakeWhile(item => item.Kind != "agentMessage" || item.Raw.Str("veoAfter") != null)
+            .Where(item => item.Raw.Str("veoAfter") != null).Reverse()
+            .Select(item => new { role = item.Kind == "userMessage" ? "user" : "assistant", text = item.Text }).ToArray();
+        if (providerHistory.Length > 0)
+        {
+            var transcript = JsonSerializer.Serialize(providerHistory);
+            input = [.. input, new { type = "text", text = "<veo_provider_history>Previous messages from this chat before switching providers:\n" + transcript + "\n</veo_provider_history>" }];
+        }
         var request = new Dictionary<string, object?>
         {
             ["threadId"] = session.Record.CodexThreadId, ["clientUserMessageId"] = payload.ClientId,
-            ["input"] = input, ["cwd"] = session.Record.Cwd, ["approvalPolicy"] = "on-request",
+            ["input"] = input, ["cwd"] = session.Record.Cwd, ["approvalPolicy"] = ComposerPermission.Get(payload.Access).Policy,
             ["sandboxPolicy"] = ComposerProtocol.SandboxPolicy(payload.Access, session.Record.Cwd), ["model"] = payload.Model,
             ["effort"] = payload.Effort, ["serviceTier"] = payload.Tier,
         };
+        AddApprovalsReviewer(request, payload.Access);
         if (daybreak is not null) request["cyberAccessProgram"] = daybreak;
         var familyInstructions = payload.FamilyPlan is { } familyPlan ? FamilyAutoRouting.Instructions(familyPlan, payload.Mode) : null;
         if ((payload.Mode == "Plan" || familyInstructions is not null) && payload.Model is not null)
@@ -471,12 +492,15 @@ public sealed class WorkspaceCoordinator : IAsyncDisposable
     }
     async Task StartRuntimeThreadCoreAsync(ThreadSession session, ComposerSnapshot payload, CancellationToken cancellationToken)
     {
+        ValidateComposerPermission(payload.Access);
+        var permission = ComposerPermission.Get(payload.Access);
         var parameters = new Dictionary<string, object?>
         {
-            ["cwd"] = session.Record.Cwd, ["model"] = payload.Model, ["sandbox"] = Sandbox(payload.Access),
-            ["approvalPolicy"] = "on-request", ["ephemeral"] = session.Record.WorkspaceKind == "temporary",
+            ["cwd"] = session.Record.Cwd, ["model"] = payload.Model, ["sandbox"] = permission.Sandbox,
+            ["approvalPolicy"] = permission.Policy, ["ephemeral"] = session.Record.WorkspaceKind == "temporary",
             ["dynamicTools"] = DynamicToolBridge.Specifications
         };
+        AddApprovalsReviewer(parameters, payload.Access);
         if (payload.ContextTokens is { } tokens) parameters["config"] = new { model_context_window = tokens };
         var created = await Runtime.RequestAsync("thread/start", parameters, cancellationToken);
         session.Record = session.Record with { CodexThreadId = created.GetProperty("thread").Str("id") };
@@ -639,7 +663,16 @@ public sealed class WorkspaceCoordinator : IAsyncDisposable
     }
     static string TextFromRaw(string json) { using var d = JsonDocument.Parse(json); return d.RootElement.Str("veoRenderedText") ?? TimelineReducer.ExtractText(d.RootElement); }
     static string? RuntimeStatus(JsonElement element) => element.Str("status") ?? (element.TryObjectProperty("status", out var status) ? status.Str("type") : null);
-    static string Sandbox(string access) => access switch { "Read only" => "read-only", "Full access" => "danger-full-access", _ => "workspace-write" };
+    void ValidateComposerPermission(string access)
+    {
+        if (ComposerPermission.Get(access).AutomaticReview && !SupportsAutomaticReview)
+            throw new InvalidOperationException("Automatic review requires a Codex runtime that supports it. Choose another permission mode.");
+    }
+
+    internal void AddApprovalsReviewer(Dictionary<string, object?> parameters, string access)
+    {
+        if (SupportsAutomaticReview) parameters["approvalsReviewer"] = ComposerPermission.Get(access).Reviewer;
+    }
     void ScheduleChanged()
     {
         if (Interlocked.Exchange(ref changedPending, 1) != 0) return;

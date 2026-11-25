@@ -11,19 +11,28 @@ struct DesktopModelMenu: View {
         DesktopModelPickerAppearance.defaultAppearance.rawValue
     @Environment(\.colorScheme) private var colorScheme
     @State private var isPresented = false
-    @State private var isTriggerHovered = false
+
+    private var agent: VeoAgentConnection? { store.activeAgent.flatMap { store.agents.connections[$0] } }
+
+    private var displayedEffort: String {
+        if let agent {
+            return agent.selectedModel?.efforts?.first { $0.id == agent.selectedEffort }?.name ?? ""
+        }
+        return store.reasoningDisplayName
+    }
 
     private var catalog: DesktopModelCatalogPresentation {
-        DesktopModelCatalogPresentation(models: store.selectableModels)
+        DesktopModelCatalogPresentation(models: store.composerModels)
     }
 
     private var selectedVariant: DesktopGPT56Variant? {
         store.routingMode == .auto
             ? .auto
-            : (store.routingMode == .direct ? store.selectedModel.flatMap(catalog.variant(for:)) : nil)
+            : (store.routingMode == .direct ? store.selectedModel.flatMap(DesktopModelCatalogPresentation.variant(for:)) : nil)
     }
 
     private var collapsedModelTitle: String {
+        if let agent { return agent.selectedModel?.name ?? "Provider default" }
         if store.autoModelSelectionEnabled || store.hasLockedAutoModel { return store.modelDisplayName }
         guard let variant = selectedVariant else { return store.modelDisplayName }
         return variant == .astra ? "6 Astra" : "5.6 \(variant.title)"
@@ -39,6 +48,7 @@ struct DesktopModelMenu: View {
     private var isFamilyAutoSelected: Bool { store.routingMode.isFamilyAuto }
 
     private var modelPickerHelp: String {
+        if agent != nil { return store.providerTitle + " model settings" }
         if let detail = store.autoModelRoutingDetail ?? store.autoModelRoutingStatus { return detail }
         if let family = store.routingMode.autoFamily {
             return "Veo routes work across the \(family.productName) family."
@@ -47,6 +57,7 @@ struct DesktopModelMenu: View {
     }
 
     private var modelPickerAccessibilityValue: String {
+        if agent != nil { return [collapsedModelTitle, displayedEffort, agent?.usesFastSpeed == true ? "Fast Mode on" : ""].filter { !$0.isEmpty }.joined(separator: ", ") }
         if store.autoModelSelectionEnabled || store.hasLockedAutoModel {
             return (store.autoModelRoutingStatus ?? "Auto, chooses on first prompt") + speedAccessibilitySuffix
         }
@@ -60,11 +71,11 @@ struct DesktopModelMenu: View {
         DesktopModelPickerAppearance(rawValue: pickerAppearanceRaw) ?? .defaultAppearance
     }
 
-    private var isFastModeEnabled: Bool { store.selectedModelServiceTier?.isFastModeTier == true }
+    private var isFastModeEnabled: Bool { agent?.usesFastSpeed ?? (store.selectedModelServiceTier?.isFastModeTier == true) }
 
     private var isUltraFastModeEnabled: Bool {
-        store.selectedModelServiceTier?.isUltrafastTier == true
-            || (store.routingMode == .direct && store.selectedModel?.isGPT53CodexSpark == true)
+        agent == nil && (store.selectedModelServiceTier?.isUltrafastTier == true
+            || (store.routingMode == .direct && store.selectedModel?.isGPT53CodexSpark == true))
     }
 
     private var speedAccessibilitySuffix: String {
@@ -78,153 +89,105 @@ struct DesktopModelMenu: View {
         return ""
     }
 
-    @ViewBuilder
-    private var speedIndicator: some View {
-        if store.autoModelSelectionEnabled || store.hasLockedAutoModel {
-            DesktopAutoSpeedPermissionIndicator(policy: store.displayedAutoSpeedPolicy)
-        } else if isFastModeEnabled || isUltraFastModeEnabled {
-            if isUltraFastModeEnabled {
-                UltrafastBoltPair(fontSize: 10)
-            } else {
-                Text(Image(systemName: "bolt.fill"))
-                    .font(.system(size: 10, weight: .semibold))
-                    .baselineOffset(
-                        (NSFont.systemFont(ofSize: 12, weight: .medium).capHeight
-                         - NSFont.systemFont(ofSize: 10, weight: .semibold).capHeight) / 2
-                    )
-                    .foregroundStyle(.yellow)
-                    .accessibilityHidden(true)
-            }
-        }
+    private enum Mark: Equatable {
+        case symbol(String), grok, variant(DesktopGPT56Variant)
+    }
+
+    private enum Speed: Equatable {
+        case standard, fast, ultrafast, auto(DesktopAutoSpeedPolicy)
+    }
+
+    private struct Selection: Equatable {
+        var title: String
+        var accessibilityValue: String
+        var effort: String?
+        var effortColor: Color
+        var mark: Mark
+        var speed: Speed
+    }
+
+    private var selection: Selection {
+        let isAuto = agent == nil && (store.autoModelSelectionEnabled || store.hasLockedAutoModel)
+        let mark: Mark
+        if agent != nil { mark = .symbol("cube") }
+        else if isAuto { mark = .symbol(store.autoModelRoutingDetail == nil ? "sparkles" : "exclamationmark.triangle") }
+        else if isFamilyAutoSelected { mark = .symbol("sparkles") }
+        else if store.selectedModel?.isGrok == true { mark = .grok }
+        else if let composerVariant { mark = .variant(composerVariant) }
+        else { mark = .symbol("cube") }
+
+        let speed: Speed = if isAuto { .auto(store.displayedAutoSpeedPolicy) }
+            else if isUltraFastModeEnabled { .ultrafast }
+            else if isFastModeEnabled { .fast }
+            else { .standard }
+        let showsEffort = !displayedEffort.isEmpty &&
+            (agent != nil || (store.routingMode == .direct && !store.autoModelSelectionEnabled))
+        return Selection(
+            title: collapsedModelTitle,
+            accessibilityValue: modelPickerAccessibilityValue,
+            effort: showsEffort ? displayedEffort : nil,
+            effortColor: agent == nil && pickerAppearance != .native && isPeakReasoningSelected
+                ? SliderPickerPalette.peakText(colorScheme, usesBlueTheme: store.selectedModel?.usesAstraBluePickerStyle == true)
+                : .secondary,
+            mark: mark, speed: speed
+        )
     }
 
     var body: some View {
-        Button {
-            isPresented.toggle()
-        } label: {
-            if pickerAppearance == .native {
-                ViewThatFits(in: .horizontal) {
-                    nativeModelLabel(showsReasoning: store.routingMode == .direct && !store.autoModelSelectionEnabled)
-                    nativeModelLabel(showsReasoning: false)
-                }
-            } else {
-                sliderModelLabel(showsReasoning: store.routingMode == .direct && !store.autoModelSelectionEnabled)
-            }
-        }
-        .contentShape(Rectangle())
-        .buttonStyle(.plain)
-        .disabled(store.selectableModels.isEmpty && store.selectedModel == nil)
-        .help(modelPickerHelp)
-        .accessibilityLabel("Model settings")
-        .accessibilityValue(modelPickerAccessibilityValue)
-        .popover(isPresented: $isPresented, arrowEdge: .top) {
-            Group {
-                if pickerAppearance == .native {
-                    DesktopModelStudioPicker(store: store, catalog: catalog)
-                } else {
-                    DesktopModelSliderAdvancedPicker(store: store, catalog: catalog)
+        if pickerAppearance == .native, let id = store.activeAgent, let agent {
+            DesktopAgentModelPicker(agents: store.agents, id: id, connection: agent)
+        } else {
+            DesktopComposerPickerPill(kind: .model, value: selection, isOpen: $isPresented,
+                                      spokenValue: { $0.accessibilityValue }) { selected in
+                speedMark(selected.speed)
+                identityMark(selected.mark)
+                Text(selected.title).lineLimit(1)
+                if let effort = selected.effort {
+                    Text(effort).foregroundStyle(selected.effortColor)
                 }
             }
-            .textSelection(.disabled)
-        }
-    }
-
-    private func nativeModelLabel(showsReasoning: Bool) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
-            speedIndicator
-
-            composerIdentity(showsFallback: true)
-
-            Text(collapsedModelTitle)
-                .fontWeight(.medium)
-                .lineLimit(1)
-
-            if showsReasoning {
-                Text("·")
-                    .foregroundStyle(.tertiary)
-
-                Text(store.reasoningDisplayName)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+            .disabled(agent == nil && store.selectedModel == nil && store.selectableModels.isEmpty)
+            .help(modelPickerHelp)
+            .accessibilityLabel("Model settings")
+            .popover(isPresented: $isPresented, arrowEdge: .top) {
+                Group {
+                    if pickerAppearance == .native {
+                        DesktopModelStudioPicker(store: store, catalog: catalog)
+                    } else {
+                        DesktopModelSliderAdvancedPicker(store: store)
+                    }
+                }
+                .textSelection(.disabled)
             }
-
-            Image(systemName: "chevron.down")
-                .font(.system(size: 8, weight: .semibold))
-                .foregroundStyle(.tertiary)
         }
-        .fixedSize()
     }
 
     @ViewBuilder
-    private func composerIdentity(showsFallback: Bool) -> some View {
-        if store.autoModelSelectionEnabled || store.hasLockedAutoModel {
-            Image(systemName: store.autoModelRoutingDetail == nil ? "sparkles" : "exclamationmark.triangle")
-                .accessibilityHidden(true)
-        } else if isFamilyAutoSelected {
-            Image(systemName: "sparkles").accessibilityHidden(true)
-        } else if store.selectedModel?.isGrok == true {
-            DesktopGrokMark(fontSize: 12)
-        } else if let composerVariant {
-            DesktopGPT56VariantIcon(variant: composerVariant, fontSize: 12)
-        } else if showsFallback {
-            Image(systemName: "cube")
-                .font(.system(size: 11, weight: .medium))
-                .accessibilityHidden(true)
+    private func speedMark(_ speed: Speed) -> some View {
+        switch speed {
+        case .standard: EmptyView()
+        case .auto(let policy): DesktopAutoSpeedPermissionIndicator(policy: policy)
+        case .ultrafast: UltrafastBoltPair(fontSize: 10)
+        case .fast:
+            Image(systemName: "bolt.fill").font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.yellow).accessibilityHidden(true)
         }
     }
 
-    private var reasoningOptions: [DesktopReasoningOption] {
-        guard store.routingMode == .direct else { return [] }
-        return store.selectedModel?.supportedReasoningEfforts ?? []
+    @ViewBuilder
+    private func identityMark(_ mark: Mark) -> some View {
+        switch mark {
+        case .symbol(let name):
+            Image(systemName: name).font(.system(size: 11, weight: .medium)).accessibilityHidden(true)
+        case .grok: DesktopGrokMark(fontSize: 12)
+        case .variant(let variant): DesktopGPT56VariantIcon(variant: variant, fontSize: 12)
+        }
     }
 
     private var isPeakReasoningSelected: Bool {
-        guard reasoningOptions.count > 1, let peak = reasoningOptions.last else { return false }
-        return store.selectedReasoningEffort == peak.id
-    }
-
-    private func sliderModelLabel(showsReasoning: Bool) -> some View {
-        ZStack {
-            HStack(alignment: .firstTextBaseline, spacing: 5) {
-                speedIndicator
-
-                composerIdentity(showsFallback: false)
-
-                Text(collapsedModelTitle)
-                    .fontWeight(.medium)
-                    .lineLimit(1)
-                    .layoutPriority(2)
-
-                if showsReasoning {
-                    Text(store.reasoningDisplayName)
-                        .foregroundStyle(
-                            isPeakReasoningSelected
-                                ? SliderPickerPalette.peakText(colorScheme, usesBlueTheme: store.selectedModel?.usesAstraBluePickerStyle == true)
-                                : Color.secondary
-                        )
-                        .lineLimit(1)
-                        .layoutPriority(1)
-                }
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.leading, 12)
-            .padding(.trailing, 26)
-
-            HStack(spacing: 0) {
-                Spacer(minLength: 0)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .semibold))
-                    .foregroundStyle(.tertiary)
-            }
-            .padding(.trailing, 9)
-        }
-        .font(.system(size: 12))
-        .frame(width: SliderPickerMetrics.triggerWidth, height: SliderPickerMetrics.triggerHeight)
-        .background(
-            Color.primary.opacity(isTriggerHovered || isPresented ? 0.085 : 0.05),
-            in: Capsule()
-        )
-        .onHover { isTriggerHovered = $0 }
+        guard store.routingMode == .direct,
+              let options = store.selectedModel?.supportedReasoningEfforts, options.count > 1 else { return false }
+        return store.selectedReasoningEffort == options.last?.id
     }
 }
 
@@ -241,8 +204,6 @@ private enum SliderPickerMetrics {
     static let knobDiameter: CGFloat = 28
     static let rowHeight: CGFloat = 28
     static let labelSize: CGFloat = 13
-    static let triggerWidth: CGFloat = 178
-    static let triggerHeight: CGFloat = 26
 }
 
 private enum SliderPickerPalette {
@@ -296,10 +257,18 @@ private extension DesktopModelOption {
     var usesAstraBluePickerStyle: Bool { isGPT6Astra || isGPT6Sol || isGPT61Sol }
 }
 
-private struct DesktopModelSliderAdvancedPicker: View {
+struct DesktopModelSliderAdvancedPicker: View {
     @State private var showsModelDetails = false
+    @State private var catalogError: String?
+    private var agent: VeoAgentConnection? { store.activeAgent.flatMap { store.agents.connections[$0] } }
+    private var selectedEffort: String? { agent != nil ? agent?.selectedEffort : store.selectedReasoningEffort }
+
+    private func selectEffort(_ id: String) {
+        if let provider = store.activeAgent { store.agents.setEffort(id, agent: provider) }
+        else { store.selectReasoningEffort(id) }
+    }
     @Bindable var store: DesktopCodexStore
-    let catalog: DesktopModelCatalogPresentation
+    private var catalog: DesktopModelCatalogPresentation { .init(models: store.composerModels) }
 
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -317,22 +286,26 @@ private struct DesktopModelSliderAdvancedPicker: View {
     private var selectedVariant: DesktopGPT56Variant? {
         store.routingMode == .auto
             ? .auto
-            : (store.routingMode == .direct ? store.selectedModel.flatMap(catalog.variant(for:)) : nil)
+            : (store.routingMode == .direct ? store.selectedModel.flatMap(DesktopModelCatalogPresentation.variant(for:)) : nil)
     }
 
     private var compactModelTitle: String {
+        if let agent { return agent.selectedModel?.name ?? "Provider default" }
         if store.autoModelSelectionEnabled || store.hasLockedAutoModel { return store.modelDisplayName }
         guard let variant = selectedVariant else { return store.modelDisplayName }
         return variant == .astra ? "6 Astra" : "5.6 \(variant.title)"
     }
 
     private var reasoningOptions: [DesktopReasoningOption] {
+        if let agent { return (agent.selectedModel?.efforts ?? []).map {
+            DesktopReasoningOption(id: $0.id, description: "", providerTitle: $0.name)
+        } }
         guard store.routingMode == .direct else { return [] }
         return store.selectedModel?.supportedReasoningEfforts ?? []
     }
 
     private var selectedReasoningIndex: Int {
-        guard let selection = store.selectedReasoningEffort,
+        guard let selection = selectedEffort,
               let index = reasoningOptions.firstIndex(where: { $0.id == selection }) else { return 0 }
         return index
     }
@@ -350,42 +323,48 @@ private struct DesktopModelSliderAdvancedPicker: View {
     /// The caption the reference shows in place of "Faster / Smarter" once the
     /// slider reaches its most expensive stop.
     private var peakCaption: String? {
-        guard isPeakSelected else { return nil }
+        guard agent == nil, isPeakSelected else { return nil }
         return "Uses your limits faster"
     }
 
     private var speedChoices: [DesktopPickerSpeed] {
+        if let agent {
+            return agent.supportsFastSpeed ? [
+                .init(kind: .standard, tier: nil), .init(kind: .fast, tier: nil)
+            ] : []
+        }
         guard store.routingMode == .direct, let model = store.selectedModel else { return [] }
         return DesktopPickerSpeed.choices(for: model)
     }
 
     private var isSparkModel: Bool {
-        store.routingMode == .direct && store.selectedModel?.isGPT53CodexSpark == true
+        agent == nil && store.routingMode == .direct && store.selectedModel?.isGPT53CodexSpark == true
     }
 
-    private var isFastModeEnabled: Bool { store.selectedModelServiceTier?.isFastModeTier == true }
+    private var isFastModeEnabled: Bool { agent?.usesFastSpeed ?? (store.selectedModelServiceTier?.isFastModeTier == true) }
 
     private var isUltraFastModeEnabled: Bool {
-        isSparkModel || store.selectedModelServiceTier?.isUltrafastTier == true
+        agent == nil && (isSparkModel || store.selectedModelServiceTier?.isUltrafastTier == true)
     }
 
     private var isAutoRouteSelected: Bool {
-        store.autoModelSelectionEnabled || store.hasLockedAutoModel
+        agent == nil && (store.autoModelSelectionEnabled || store.hasLockedAutoModel)
     }
 
     private var canEditAutoRoute: Bool {
-        store.autoModelSelectionEnabled && !store.hasLockedAutoModel
+        agent == nil && store.autoModelSelectionEnabled && !store.hasLockedAutoModel
     }
 
     private var speedTitle: String {
         if isAutoRouteSelected { return store.displayedAutoSpeedPolicy.title }
-        guard store.routingMode == .direct else { return "Auto" }
+        guard agent != nil || store.routingMode == .direct else { return "Auto" }
         if isUltraFastModeEnabled { return "Ultrafast" }
         if isFastModeEnabled { return "Fast Mode" }
         return "Standard"
     }
 
     private var canReset: Bool {
+        if let agent { return agent.usesFastSpeed || (agent.selectedModel?.defaultEffort.map { $0 != selectedEffort } ?? false) }
         guard store.routingMode == .direct, let model = store.selectedModel else { return false }
         let effortChanged = (store.selectedReasoningEffort ?? model.defaultReasoningEffort) != model.defaultReasoningEffort
         let tierChanged = store.selectedServiceTier != model.defaultServiceTier
@@ -393,10 +372,13 @@ private struct DesktopModelSliderAdvancedPicker: View {
     }
 
     var body: some View {
-        Group {
+        VStack(spacing: 0) {
             switch page {
             case .compact: compactPage
             case .advanced: advancedPage
+            }
+            if let catalogError {
+                Text(catalogError).font(.caption).foregroundStyle(.secondary).padding(8)
             }
         }
         .frame(width: SliderPickerMetrics.panelWidth)
@@ -405,6 +387,15 @@ private struct DesktopModelSliderAdvancedPicker: View {
         .accessibilityLabel("Model, effort, and speed")
         .onAppear { page = .compact }
         .onExitCommand { handleEscape() }
+        .task(id: [store.activeAgent ?? "", agent?.model ?? ""]) {
+            catalogError = nil
+            guard let id = store.activeAgent, let agent,
+                  agent.models.isEmpty || (!agent.model.isEmpty && agent.selectedModel?.efforts == nil) ||
+                  (id == "grok-build" && agent.models.allSatisfy { $0.efforts == nil })
+            else { return }
+            do { try await store.agents.refreshModelCatalog(id) }
+            catch { if !Task.isCancelled { catalogError = error.localizedDescription } }
+        }
     }
 
     // MARK: Compact
@@ -469,7 +460,7 @@ private struct DesktopModelSliderAdvancedPicker: View {
             Group {
                 if let peakCaption {
                     Text(peakCaption)
-                        .foregroundStyle(SliderPickerPalette.peakText(colorScheme, usesBlueTheme: store.selectedModel?.usesAstraBluePickerStyle == true))
+                        .foregroundStyle(SliderPickerPalette.peakText(colorScheme, usesBlueTheme: agent == nil && store.selectedModel?.usesAstraBluePickerStyle == true))
                         .frame(maxWidth: .infinity, alignment: .leading)
                 } else {
                     HStack(spacing: 0) {
@@ -493,7 +484,7 @@ private struct DesktopModelSliderAdvancedPicker: View {
 
     @ViewBuilder
     private var reasoningControl: some View {
-        if store.autoModelSelectionEnabled && !store.hasLockedAutoModel {
+        if canEditAutoRoute {
             VStack(spacing: 8) {
                 HStack(spacing: 8) {
                     Text("Speed")
@@ -521,7 +512,7 @@ private struct DesktopModelSliderAdvancedPicker: View {
                 }
             }
             .font(.system(size: 11.5, weight: .medium))
-        } else if store.hasLockedAutoModel {
+        } else if isAutoRouteSelected && store.hasLockedAutoModel {
             Text(store.autoModelRoutingStatus ?? "Auto route locked for this chat")
                 .font(.system(size: 11.5))
                 .foregroundStyle(.secondary)
@@ -533,17 +524,17 @@ private struct DesktopModelSliderAdvancedPicker: View {
             DesktopReasoningSlider(
                 options: reasoningOptions,
                 selectedIndex: selectedReasoningIndex,
-                usesBlueTheme: store.selectedModel?.usesAstraBluePickerStyle == true,
+                usesBlueTheme: agent == nil && store.selectedModel?.usesAstraBluePickerStyle == true,
                 isFastModeEnabled: isFastModeEnabled,
                 isEngaged: $isSliderEngaged,
                 previewIndex: $previewReasoningIndex
             ) { index in
                 guard reasoningOptions.indices.contains(index) else { return }
-                store.selectReasoningEffort(reasoningOptions[index].id)
+                selectEffort(reasoningOptions[index].id)
             }
             .frame(height: SliderPickerMetrics.knobDiameter)
         } else {
-            Text(store.routingMode.isFamilyAuto ? "Auto picks the effort for each turn" : "This model has one effort level")
+            Text(agent != nil && reasoningOptions.isEmpty ? "Reasoning effort is unavailable" : (agent == nil && store.routingMode.isFamilyAuto ? "Auto picks the effort for each turn" : "This model has one effort level"))
                 .font(.system(size: 11.5))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
@@ -558,9 +549,9 @@ private struct DesktopModelSliderAdvancedPicker: View {
     private var advancedPage: some View {
         VStack(spacing: 0) {
             modelRow
-            DesktopContextControl(store: store, style: .advanced)
-            effortRow
-            speedRow
+            if agent == nil { DesktopContextControl(store: store, style: .advanced) }
+            if agent == nil || !reasoningOptions.isEmpty { effortRow }
+            if agent == nil || !speedChoices.isEmpty { speedRow }
 
             Divider()
                 .padding(.horizontal, 8)
@@ -596,17 +587,19 @@ private struct DesktopModelSliderAdvancedPicker: View {
                     .accessibilityLabel("Reset to default")
                 }
 
-                SliderPickerQuietButton {
-                    showsModelDetails = true
-                } label: {
-                    Image(systemName: "info.circle")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 14, height: 16)
+                if agent == nil {
+                    SliderPickerQuietButton {
+                        showsModelDetails = true
+                    } label: {
+                        Image(systemName: "info.circle")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 14, height: 16)
+                    }
+                    .help("Model details and personality")
+                    .accessibilityLabel("Model details and personality")
+                    .popover(isPresented: $showsModelDetails) { DesktopModelDetailsView(store: store) }
                 }
-                .help("Model details and personality")
-                .accessibilityLabel("Model details and personality")
-                .popover(isPresented: $showsModelDetails) { DesktopModelDetailsView(store: store) }
             }
             .frame(height: SliderPickerMetrics.rowHeight)
         }
@@ -617,13 +610,20 @@ private struct DesktopModelSliderAdvancedPicker: View {
         DesktopAdvancedMenuRow(
             title: "Model",
             value: compactModelTitle,
-            isEnabled: !store.selectableModels.isEmpty || store.selectedModel != nil,
+            isEnabled: agent != nil || !store.selectableModels.isEmpty || store.selectedModel != nil,
             header: "Model",
             items: { modelMenuItems }
         )
     }
 
     private var modelMenuItems: [DesktopMenuItemSpec] {
+        if let id = store.activeAgent, let agent {
+            let options = [VeoAgentModel(id: "", name: "Provider default")] + agent.pickerModels.filter { !agent.hidden.contains($0.id) }
+            return options.map { model in
+                DesktopMenuItemSpec(title: model.name, isSelected: agent.pickerModelID == model.id,
+                                    action: { store.agents.setModel(model.id, agent: id) })
+            }
+        }
         var items: [DesktopMenuItemSpec] = []
         for family in catalog.recentGPT6Families {
             if !items.isEmpty { items.append(.separator) }
@@ -728,9 +728,9 @@ private struct DesktopModelSliderAdvancedPicker: View {
             title: "Effort",
             value: isAutoRouteSelected
                 ? (store.autoRouterAllowsUltraReasoning ? "Ultra allowed" : "Ultra disallowed")
-                : (store.routingMode.isFamilyAuto ? "Auto" : store.reasoningDisplayName),
+                : (agent != nil ? (reasoningOptions.first { $0.id == selectedEffort }?.title ?? "Default") : (store.routingMode.isFamilyAuto ? "Auto" : store.reasoningDisplayName)),
             valueTint: !isAutoRouteSelected && isPeakSelected
-                ? SliderPickerPalette.peakText(colorScheme, usesBlueTheme: store.selectedModel?.usesAstraBluePickerStyle == true)
+                ? SliderPickerPalette.peakText(colorScheme, usesBlueTheme: agent == nil && store.selectedModel?.usesAstraBluePickerStyle == true)
                 : nil,
             isEnabled: canEditAutoRoute || (!isAutoRouteSelected && !reasoningOptions.isEmpty),
             header: "Effort",
@@ -758,13 +758,13 @@ private struct DesktopModelSliderAdvancedPicker: View {
         return reasoningOptions.map { option in
             DesktopMenuItemSpec(
                 title: option.title,
-                subtitle: option.id.caseInsensitiveCompare("ultra") == .orderedSame
+                subtitle: agent == nil && option.id.caseInsensitiveCompare("ultra") == .orderedSame
                     ? (option.description.isEmpty
                         ? "Maximum reasoning with automatic task delegation."
                         : option.description)
                     : "",
-                isSelected: store.selectedReasoningEffort == option.id,
-                action: { store.selectReasoningEffort(option.id) }
+                isSelected: selectedEffort == option.id,
+                action: { selectEffort(option.id) }
             )
         }
     }
@@ -774,7 +774,7 @@ private struct DesktopModelSliderAdvancedPicker: View {
             if speedChoices.contains(where: { $0.kind == .ultrafast }) {
                 speedMenuAnchor.present(header: nil, items: { speedMenuItems })
             } else if let next = speedChoices.first(where: { $0.kind == (isFastModeEnabled ? .standard : .fast) }) {
-                store.selectServiceTier(next.tierID)
+                selectSpeed(next)
             }
         } label: {
             Group {
@@ -786,7 +786,7 @@ private struct DesktopModelSliderAdvancedPicker: View {
                         .foregroundStyle(
                             isFastModeEnabled
                                 ? (isPeakSelected
-                                    ? SliderPickerPalette.peakText(colorScheme, usesBlueTheme: store.selectedModel?.usesAstraBluePickerStyle == true)
+                                    ? SliderPickerPalette.peakText(colorScheme, usesBlueTheme: agent == nil && store.selectedModel?.usesAstraBluePickerStyle == true)
                                     : Color(red: 0.11, green: 0.40, blue: 0.85))
                                 : Color.secondary
                         )
@@ -834,11 +834,19 @@ private struct DesktopModelSliderAdvancedPicker: View {
             DesktopMenuItemSpec(
                 title: speed.title,
                 systemImage: speed.systemImage,
-                subtitle: speed.detail,
-                isSelected: speed.isSelected(in: store),
+                subtitle: agent != nil && speed.kind == .fast ? "Use Grok 4.7 Fast" : speed.detail,
+                isSelected: agent != nil ? (isFastModeEnabled ? speed.kind == .fast : speed.kind == .standard) : speed.isSelected(in: store),
                 usesUltrafastBolts: speed.kind == .ultrafast,
-                action: { store.selectServiceTier(speed.tierID) }
+                action: { selectSpeed(speed) }
             )
+        }
+    }
+
+    private func selectSpeed(_ speed: DesktopPickerSpeed) {
+        if let id = store.activeAgent {
+            store.agents.setFastSpeed(speed.kind == .fast, agent: id)
+        } else {
+            store.selectServiceTier(speed.tierID)
         }
     }
 
@@ -860,6 +868,11 @@ private struct DesktopModelSliderAdvancedPicker: View {
     }
 
     private func resetCurrentModelControls() {
+        if let agent {
+            if let effort = agent.selectedModel?.defaultEffort { selectEffort(effort) }
+            if let id = store.activeAgent, agent.usesFastSpeed { store.agents.setFastSpeed(false, agent: id) }
+            return
+        }
         guard let model = store.selectedModel else { return }
         store.selectReasoningEffort(model.defaultReasoningEffort)
         store.selectServiceTier(model.defaultServiceTier)
@@ -1490,13 +1503,13 @@ private struct DesktopModelStudioPicker: View {
 
     private var isGPT56Selected: Bool {
         store.routingMode == .auto
-            || (store.routingMode == .direct && store.selectedModel.map(catalog.isGPT56) == true)
+            || (store.routingMode == .direct && store.selectedModel.map(DesktopModelCatalogPresentation.isGPT56) == true)
     }
 
     private var selectedVariant: DesktopGPT56Variant? {
         store.routingMode == .auto
             ? .auto
-            : (store.routingMode == .direct ? store.selectedModel.flatMap(catalog.variant(for:)) : nil)
+            : (store.routingMode == .direct ? store.selectedModel.flatMap(DesktopModelCatalogPresentation.variant(for:)) : nil)
     }
 
     var body: some View {
@@ -2421,7 +2434,7 @@ private struct DesktopModelCatalogPresentation {
     let models: [DesktopModelOption]
 
     var gpt56Models: [DesktopModelOption] {
-        models.filter(isGPT56)
+        models.filter(Self.isGPT56)
     }
 
     var recentGPT6Families: [String] {
@@ -2461,7 +2474,7 @@ private struct DesktopModelCatalogPresentation {
 
     var variantModels: [VariantModel] {
         DesktopGPT56Variant.allCases.filter { $0 != .auto }.compactMap { variant in
-            let candidates = gpt56Models.filter { self.variant(for: $0) == variant }
+            let candidates = gpt56Models.filter { Self.variant(for: $0) == variant }
             guard let model = canonicalModel(for: variant, from: candidates) else { return nil }
             return VariantModel(variant: variant, model: model)
         }
@@ -2475,7 +2488,7 @@ private struct DesktopModelCatalogPresentation {
             ?? gpt56Models.first
     }
 
-    func isGPT56(_ model: DesktopModelOption) -> Bool {
+    static func isGPT56(_ model: DesktopModelOption) -> Bool {
         model.pickerFamily == "5.6"
     }
 
@@ -2483,14 +2496,14 @@ private struct DesktopModelCatalogPresentation {
         if model.isGrok { return nil }
         if model.isGPT61Sol || model.isGPT6Sol { return "sun.max.fill" }
         if model.isGPT6Luna { return "moon.fill" }
-        return variant(for: model)?.systemImage
+        return Self.variant(for: model)?.systemImage
     }
 
     func identityAssetImage(for model: DesktopModelOption) -> String? {
         model.isGrok ? DesktopGrokMark.assetName : nil
     }
 
-    func variant(for model: DesktopModelOption) -> DesktopGPT56Variant? {
+    static func variant(for model: DesktopModelOption) -> DesktopGPT56Variant? {
         if model.isGPT6Astra { return .astra }
         guard isGPT56(model) else { return nil }
         let text = modelSearchText(model)
@@ -2505,17 +2518,17 @@ private struct DesktopModelCatalogPresentation {
     ) -> DesktopModelOption? {
         let canonicalName = "gpt-5.6-\(variant.rawValue)"
         return candidates.first(where: {
-            normalized($0.model) == canonicalName || normalized($0.id) == canonicalName
+            Self.normalized($0.model) == canonicalName || Self.normalized($0.id) == canonicalName
         }) ?? candidates.first(where: \.isDefault) ?? candidates.first
     }
 
-    private func modelSearchText(_ model: DesktopModelOption) -> String {
+    private static func modelSearchText(_ model: DesktopModelOption) -> String {
         [model.id, model.model, model.displayName]
             .map(normalized)
             .joined(separator: "-")
     }
 
-    private func normalized(_ value: String) -> String {
+    private static func normalized(_ value: String) -> String {
         value.lowercased()
             .replacingOccurrences(of: "_", with: "-")
             .replacingOccurrences(of: " ", with: "-")

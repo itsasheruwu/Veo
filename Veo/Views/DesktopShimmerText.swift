@@ -12,33 +12,8 @@ struct DesktopShimmerText: View {
     var baseStyle: AnyShapeStyle = AnyShapeStyle(.secondary)
     var isActive = true
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
     var body: some View {
-        if isActive, !reduceMotion {
-            TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: false)) { context in
-                let period = 1.55
-                let phase = context.date.timeIntervalSinceReferenceDate
-                    .truncatingRemainder(dividingBy: period) / period
-                textView
-                    .foregroundStyle(
-                        LinearGradient(
-                            stops: [
-                                .init(color: Color.primary.opacity(0.28), location: 0),
-                                .init(color: Color.primary.opacity(0.55), location: 0.42),
-                                .init(color: Color.primary.opacity(0.95), location: 0.5),
-                                .init(color: Color.primary.opacity(0.55), location: 0.58),
-                                .init(color: Color.primary.opacity(0.28), location: 1),
-                            ],
-                            startPoint: UnitPoint(x: phase - 0.55, y: 0.5),
-                            endPoint: UnitPoint(x: phase + 0.55, y: 0.5)
-                        )
-                    )
-            }
-        } else {
-            textView
-                .foregroundStyle(baseStyle)
-        }
+        textView.modifier(DesktopShimmerStyle(baseStyle: baseStyle, isActive: isActive))
     }
 
     private var textView: Text {
@@ -48,5 +23,32 @@ struct DesktopShimmerText: View {
             value = value.fontWeight(weight)
         }
         return value
+    }
+}
+
+struct DesktopShimmerStyle: ViewModifier {
+    var baseStyle: AnyShapeStyle = AnyShapeStyle(.secondary)
+    let isActive: Bool
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        if isActive, !reduceMotion {
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { context in
+                let period = 1.8
+                let phase = context.date.timeIntervalSinceReferenceDate
+                    .truncatingRemainder(dividingBy: period) / period
+                let center = phase * 1.5 - 0.25
+                content.foregroundStyle(
+                    LinearGradient(
+                        colors: [Color.primary.opacity(0.58), Color.primary, Color.primary.opacity(0.58)],
+                        startPoint: UnitPoint(x: center - 0.22, y: 0.5),
+                        endPoint: UnitPoint(x: center + 0.22, y: 0.5)
+                    )
+                )
+            }
+        } else {
+            content.foregroundStyle(baseStyle)
+        }
     }
 }

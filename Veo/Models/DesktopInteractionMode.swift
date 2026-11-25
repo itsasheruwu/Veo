@@ -8,6 +8,8 @@ enum DesktopInteractionMode: String, CaseIterable, Codable, Identifiable {
     case agentic
     case plan
     case debug
+    case ask
+    case roblox
 
     var id: Self { self }
 
@@ -16,6 +18,8 @@ enum DesktopInteractionMode: String, CaseIterable, Codable, Identifiable {
         case .agentic: return "Agentic"
         case .plan: return "Plan"
         case .debug: return "Debug"
+        case .ask: return "Ask"
+        case .roblox: return "Roblox"
         }
     }
 
@@ -27,6 +31,10 @@ enum DesktopInteractionMode: String, CaseIterable, Codable, Identifiable {
             return "Plan the approach before implementation."
         case .debug:
             return "Diagnose defects with an evidence-first workflow."
+        case .ask:
+            return "Investigate and answer with read-only access."
+        case .roblox:
+            return "Use the Roblox and Luau development workflow."
         }
     }
 
@@ -35,7 +43,37 @@ enum DesktopInteractionMode: String, CaseIterable, Codable, Identifiable {
         case .agentic: return "sparkles"
         case .plan: return "list.bullet.clipboard"
         case .debug: return "ladybug"
+        case .ask: return "questionmark.circle"
+        case .roblox: return "veo.roblox"
+
         }
+    }
+
+    var marker: String { "<veo_mode_\(rawValue)>" }
+
+    func turnGuidance(wild: Bool, skill: URL?) -> String? {
+        var guidance: [String] = []
+        if self == .ask {
+            guidance.append("Investigate and answer using read-only actions. Do not write files, request additional permissions, delegate execution, or call tools that modify external state.")
+        }
+        if let skill, self == .roblox {
+            guidance.append("Read the Roblox Dev Skill at \(skill.path) and follow its routing to the relevant references. Use Roblox Studio MCP only if already configured and available.")
+        }
+        if wild {
+            guidance.append("Research existing implementations and design references within the task’s scope and current permissions. Respect third-party licenses.")
+            if self == .roblox {
+                guidance.append("Focus on Roblox and Luau implementations, suitable Creator Store assets, and visual references for the experience.")
+            }
+            if self == .ask || self == .plan {
+                guidance.append("Keep the research read-only. Do not generate files or implement changes.")
+            } else if self == .agentic || self == .roblox {
+                guidance.append("Use image generation for visual references when available. Include requested deliverables in the reply and keep incidental reference images in activity.")
+            } else {
+                guidance.append("Keep the evidence-first debugging workflow and use research to confirm hypotheses.")
+            }
+        }
+        guard !guidance.isEmpty else { return nil }
+        return ([marker] + guidance).joined(separator: "\n\n")
     }
 
     static let debugDeveloperInstructions = """

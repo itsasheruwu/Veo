@@ -7,16 +7,39 @@ import SwiftUI
 struct DesktopComposerOptionsView: View {
     @Bindable var store: DesktopCodexStore
     let openProject: () -> Void
+    var didInsertPlugin: () -> Void = {}
     @Environment(\.veoAccent) private var veoAccent
     @State private var showsSavedPrompts = false
+    @State private var showsPlugins = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Group {
             if showsSavedPrompts {
                 DesktopPromptLibraryView(store: store) { showsSavedPrompts = false }
+            } else if showsPlugins {
+                VStack(alignment: .leading, spacing: 10) {
+                    Button { showsPlugins = false } label: { Label("Plugins", systemImage: "chevron.left") }
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(store.pluginSuggestions()) { item in
+                                Button {
+                                    store.insertPluginMention(item)
+                                    didInsertPlugin()
+                                } label: {
+                                    optionLabel(title: item.title, detail: item.subtitle, systemImage: "puzzlepiece.extension", color: veoAccent)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                    .scrollBounceBehavior(.basedOnSize)
+                    .frame(maxHeight: 280)
+                }
             } else {
-                options
+                ScrollView { options }
+                    .scrollBounceBehavior(.basedOnSize)
+                    .frame(maxHeight: 600)
             }
         }
         .padding(12)
@@ -72,6 +95,13 @@ struct DesktopComposerOptionsView: View {
                 Divider()
             }
 
+            if !store.pluginSuggestions().isEmpty {
+                Button { showsPlugins = true } label: {
+                    optionLabel(title: "Plugins", detail: "Mention an enabled Codex plugin.", systemImage: "puzzlepiece.extension", color: veoAccent)
+                }
+                .buttonStyle(.plain)
+            }
+
             Button { store.stashPrompt() } label: {
                 optionLabel(title: "Save draft for later", detail: "Keep this prompt and its attachments.", systemImage: "tray.and.arrow.down", color: .secondary)
             }
@@ -82,6 +112,15 @@ struct DesktopComposerOptionsView: View {
             }
             .buttonStyle(.plain)
             Divider()
+
+            optionToggle(
+                title: "Wild",
+                detail: "Find existing implementations and design references.",
+                systemImage: "veo.wild",
+                color: .pink,
+                isOn: Binding(get: { store.isWildEnabled }, set: { store.setWildEnabled($0) })
+            )
+            .disabled(store.activeAgent != nil)
 
             Text("Mode")
                 .font(.system(size: 10.5, weight: .semibold))
@@ -95,8 +134,7 @@ struct DesktopComposerOptionsView: View {
                         modeOptionLabel(mode)
                     }
                     .buttonStyle(.plain)
-                    .disabled(!canSelect(mode))
-                    .help(modeHelp(mode))
+                    .disabled(store.modeUnavailableReason(mode) != nil)
                 }
             }
 
@@ -136,7 +174,8 @@ struct DesktopComposerOptionsView: View {
                 title: title,
                 detail: detail,
                 systemImage: systemImage,
-                color: color
+                color: color,
+                detailLines: 2
             )
         }
         .toggleStyle(.switch)
@@ -147,7 +186,7 @@ struct DesktopComposerOptionsView: View {
 
     private func modeOptionLabel(_ mode: DesktopInteractionMode) -> some View {
         HStack(alignment: .top, spacing: 9) {
-            Image(systemName: mode.systemImage)
+            DesktopModeGlyph(name: mode.systemImage)
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(modeColor(mode))
                 .frame(width: 16, height: 18)
@@ -157,10 +196,10 @@ struct DesktopComposerOptionsView: View {
                     .font(.system(size: 12.5, weight: .semibold))
                     .foregroundStyle(.primary)
 
-                Text(mode.detail)
+                Text(store.modeUnavailableReason(mode) ?? mode.detail)
                     .font(.system(size: 10.5))
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             Spacer(minLength: 8)
@@ -173,31 +212,7 @@ struct DesktopComposerOptionsView: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel(mode.title)
         .accessibilityValue(store.interactionMode == mode ? "Selected" : "Not selected")
-        .accessibilityHint(mode.detail)
-    }
-
-    private func canSelect(_ mode: DesktopInteractionMode) -> Bool {
-        switch mode {
-        case .agentic:
-            return true
-        case .plan:
-            return store.hasExplicitWorkspace && store.supportsPlanMode
-        case .debug:
-            return store.hasExplicitWorkspace && store.supportsDebugMode
-        }
-    }
-
-    private func modeHelp(_ mode: DesktopInteractionMode) -> String {
-        switch mode {
-        case .agentic:
-            return mode.detail
-        case .plan where !store.supportsPlanMode:
-            return "Plan mode is unavailable in this Codex runtime"
-        case .debug where !store.supportsDebugMode:
-            return "Debug mode requires collaboration-mode support in the Codex runtime"
-        default:
-            return mode.detail
-        }
+        .accessibilityHint(store.modeUnavailableReason(mode) ?? mode.detail)
     }
 
     private func modeColor(_ mode: DesktopInteractionMode) -> Color {
@@ -205,6 +220,8 @@ struct DesktopComposerOptionsView: View {
         case .agentic: return veoAccent
         case .plan: return .orange
         case .debug: return .purple
+        case .ask: return .blue
+        case .roblox: return .red
         }
     }
 
@@ -212,10 +229,11 @@ struct DesktopComposerOptionsView: View {
         title: String,
         detail: String,
         systemImage: String,
-        color: Color
+        color: Color,
+        detailLines: Int = 1
     ) -> some View {
         HStack(alignment: .top, spacing: 9) {
-            Image(systemName: systemImage)
+            DesktopModeGlyph(name: systemImage)
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(color)
                 .frame(width: 16, height: 18)
@@ -228,7 +246,8 @@ struct DesktopComposerOptionsView: View {
                 Text(detail)
                     .font(.system(size: 10.5))
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .lineLimit(detailLines)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             Spacer(minLength: 8)
@@ -241,24 +260,21 @@ struct DesktopComposerModePills: View {
     @Bindable var store: DesktopCodexStore
 
     var body: some View {
-        if store.isPlanModeEnabled || store.isDebugModeEnabled || store.isGoalModeEnabled {
+        if store.interactionMode != .agentic || store.isGoalModeEnabled || store.isWildEnabled {
             HStack(spacing: 6) {
-                if store.isPlanModeEnabled {
+                let mode = store.interactionMode
+                if mode != .agentic {
                     DesktopComposerModePill(
-                        title: "Plan",
-                        systemImage: "list.bullet.clipboard",
-                        color: .orange,
-                        onDismiss: { store.setPlanModeEnabled(false) }
+                        title: mode.title,
+                        systemImage: mode.systemImage,
+                        color: mode == .plan ? .orange : mode == .debug ? .purple : mode == .roblox ? .red : .blue,
+                        onDismiss: { store.setInteractionMode(.agentic) }
                     )
                 }
 
-                if store.isDebugModeEnabled {
-                    DesktopComposerModePill(
-                        title: "Debug",
-                        systemImage: "ladybug",
-                        color: .purple,
-                        onDismiss: { store.setInteractionMode(.agentic) }
-                    )
+                if store.isWildEnabled {
+                    DesktopComposerModePill(title: "Wild", systemImage: "veo.wild", color: .pink,
+                                            onDismiss: { store.setWildEnabled(false) })
                 }
 
                 if store.isGoalModeEnabled {
@@ -286,7 +302,11 @@ private struct DesktopComposerModePill: View {
     var body: some View {
         Button(action: onDismiss) {
             ZStack {
-                Label(title, systemImage: systemImage)
+                Label {
+                    Text(title)
+                } icon: {
+                    DesktopModeGlyph(name: systemImage)
+                }
                     .blur(radius: isHovered ? 3.5 : 0)
                     .opacity(isHovered ? 0.2 : 1)
 
@@ -313,5 +333,36 @@ private struct DesktopComposerModePill: View {
         .help("Turn off \(title)")
         .accessibilityLabel("Turn off \(title)")
         .accessibilityHint("Removes \(title) from this chat")
+    }
+}
+
+
+struct DesktopModeGlyph: View {
+    let name: String
+
+    var body: some View {
+        switch name {
+        case "veo.roblox":
+            Canvas { context, size in
+                let width = size.width
+                let height = size.height
+                var shape = Path()
+                shape.addRect(CGRect(x: width * 0.16, y: height * 0.16, width: width * 0.68, height: height * 0.68))
+                shape.addRect(CGRect(x: width * 0.4, y: height * 0.4, width: width * 0.2, height: height * 0.2))
+                context.translateBy(x: width / 2, y: height / 2)
+                context.rotate(by: .degrees(14))
+                context.translateBy(x: -width / 2, y: -height / 2)
+                context.fill(shape, with: .foreground, style: FillStyle(eoFill: true))
+            }.frame(width: 15, height: 15)
+        case "veo.wild":
+            VStack(spacing: -2) {
+                UnevenRoundedRectangle(topLeadingRadius: 2, topTrailingRadius: 2)
+                    .frame(width: 8, height: 6)
+                    .overlay(alignment: .bottom) { Capsule().frame(width: 15, height: 1.5) }
+                Image(systemName: "eyeglasses").font(.system(size: 9, weight: .semibold))
+            }.frame(width: 16, height: 16)
+        default:
+            Image(systemName: name)
+        }
     }
 }

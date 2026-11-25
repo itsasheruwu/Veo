@@ -176,6 +176,24 @@ actor VeoThreadStore {
         try stepDone(statement)
     }
 
+    func moveThread(_ thread: DesktopThread, to cwd: String, replacingRuntimeWith runtimeID: String?) throws {
+        try openIfNeeded()
+        let statement = try prepare("""
+            UPDATE threads SET cwd = ?, codex_thread_id = ?, workspace_kind = 'project'
+            WHERE veo_id = ? AND cwd = ? AND codex_thread_id IS ?;
+            """)
+        defer { sqlite3_finalize(statement) }
+        try bindText(statement, 1, cwd)
+        try bindOptionalText(statement, 2, runtimeID)
+        try bindText(statement, 3, thread.selection.bareID)
+        try bindText(statement, 4, thread.cwd)
+        try bindOptionalText(statement, 5, thread.codexThreadId)
+        try stepDone(statement)
+        guard sqlite3_changes(db) == 1 else {
+            throw CodexAppServerClientError.invalidInput("The chat changed before it could be moved. Try again.")
+        }
+    }
+
     func setCodexThreadID(veoID: String, codexThreadID: String) throws {
         try openIfNeeded()
         let bare = DesktopThreadSelection.parse(veoID).bareID
@@ -367,6 +385,9 @@ actor VeoThreadStore {
         let localPresentationItems = try loadLocalPresentationItems(veoID: bare).filter { item in
             !pruningRemovedTurns || item.turnID.map { retainedTurnIDs.contains($0) } == true
         }
+        let canonicalIDs = Set(turns.flatMap { ($0["items"] as? [[String: Any]] ?? []).compactMap { $0.string("id") } })
+        let retainedImages = Dictionary(uniqueKeysWithValues: localPresentationItems.filter { $0.type == "imageGeneration" || $0.type == "webSearch" }
+            .map { ($0.itemID, $0) })
         try exec("BEGIN IMMEDIATE;")
         do {
             for table in ["items", "turns"] {
@@ -388,6 +409,14 @@ actor VeoThreadStore {
                 let items = turn["items"] as? [[String: Any]] ?? []
                 for (itemIndex, item) in items.enumerated() {
                     guard let itemID = item.string("id") else { continue }
+                    let prior = retainedImages[itemID].flatMap { row in
+                        (try? JSONSerialization.jsonObject(with: Data(row.rawJSON.utf8))) as? [String: Any]
+                    }
+                    var presentation = item
+                    for field in ["veoWildResearch", "savedPath", "result"] {
+                        if presentation[field] == nil || presentation[field] is NSNull || presentation.string(field) == "",
+                           let stored = prior?[field] { presentation[field] = stored }
+                    }
                     try upsertItem(
                         veoID: bare,
                         itemID: itemID,
@@ -395,13 +424,14 @@ actor VeoThreadStore {
                         type: item.string("type"),
                         clientID: item.string("clientId"),
                         status: item.displayString("status"),
-                        rawJSON: jsonString(item) ?? "{}",
+                        rawJSON: jsonString(presentation) ?? "{}",
                         sortIndex: itemIndex,
                         updatedAt: Date()
                     )
                 }
             }
-            for item in localPresentationItems {
+            for item in localPresentationItems where !canonicalIDs.contains(item.itemID) {
+                let media = item.type == "imageGeneration" || item.type == "webSearch"
                 try upsertItem(
                     veoID: bare,
                     itemID: item.itemID,
@@ -410,7 +440,7 @@ actor VeoThreadStore {
                     clientID: item.clientID,
                     status: item.status,
                     rawJSON: item.rawJSON,
-                    sortIndex: max(item.sortIndex, 1_000_000),
+                    sortIndex: media ? item.sortIndex : max(item.sortIndex, 1_000_000),
                     updatedAt: item.updatedAt
                 )
             }
@@ -476,7 +506,7 @@ actor VeoThreadStore {
             }
             items.append(parsed)
         }
-        return items
+        return DesktopTimelineItem.placingProviderItems(items)
     }
 
     func recordTurnPresentation(_ presentation: DesktopTurnPresentation, threadID: String) throws {
@@ -515,7 +545,8 @@ actor VeoThreadStore {
         let sql = """
         SELECT item_id, turn_id, type, client_id, status, raw_json, sort_index, updated_at
         FROM items
-        WHERE veo_id = ? AND type = 'veoUserInputAnswer'
+        WHERE veo_id = ? AND (type IN ('veoUserInputAnswer', 'imageGeneration') OR turn_id LIKE 'veo-agent-%'
+          OR (type = 'webSearch' AND raw_json LIKE '%"veoWildResearch"%'))
         ORDER BY sort_index ASC, updated_at ASC;
         """
         let statement = try prepare(sql)

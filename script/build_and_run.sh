@@ -10,7 +10,9 @@ DERIVED_DATA_DIR="${VEO_DERIVED_DATA_DIR:-/tmp/veo-derived}"
 APP_BUNDLE="$DERIVED_DATA_DIR/Build/Products/Debug/$APP_NAME.app"
 APP_BINARY="$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 
-pkill -x "$APP_NAME" >/dev/null 2>&1 || true
+if [[ "$MODE" != "build" && "$MODE" != "--build" ]]; then
+  pkill -x "$APP_NAME" >/dev/null 2>&1 || true
+fi
 
 xcodebuild \
   -project "$ROOT_DIR/Veo.xcodeproj" \
@@ -25,6 +27,8 @@ open_app() {
 }
 
 case "$MODE" in
+  --build|build)
+    ;;
   run)
     open_app
     ;;
@@ -45,7 +49,7 @@ case "$MODE" in
     pgrep -x "$APP_NAME" >/dev/null
     ;;
   *)
-    echo "usage: $0 [run|--debug|--logs|--telemetry|--verify]" >&2
+    echo "usage: $0 [run|--build|--debug|--logs|--telemetry|--verify]" >&2
     exit 2
     ;;
 esac

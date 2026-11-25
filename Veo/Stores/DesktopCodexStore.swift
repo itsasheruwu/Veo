@@ -412,7 +412,17 @@ final class DesktopCodexStore {
     private var hasStarted = false
     @ObservationIgnored private var connectionTask: Task<Void, Never>?
     @ObservationIgnored private var pendingOverlayReload = false
+    private(set) var defaultAccessMode: DesktopAccessMode = .workspace
+    private var accessByDraftContext: [String: String] = [:]
     private var interactionModeByThreadID: [String: DesktopInteractionMode] = [:]
+    private var wildThreadIDs = Set<String>()
+    private var protectedTurnThreadIDs = Set<String>()
+    private(set) var movingThreadIDs = Set<String>()
+    var moveThreadTarget: DesktopThread?
+    private(set) var moveThreadError: String?
+    private(set) var isWildEnabled = false
+    private(set) var composerFocusRevision = 0
+    private var dispatchedComposerByThread: [String: DesktopComposerPayload] = [:]
     private var routingModeByThreadID: [String: DesktopModelRoutingMode] = [:]
     private var defaultRoutingMode: DesktopModelRoutingMode = .direct
     private var planModeReasoningEffort: String?
@@ -526,8 +536,9 @@ final class DesktopCodexStore {
         }
         if let rawMode = defaults.string(forKey: "VeoDesktop.accessMode"),
            let mode = DesktopAccessMode(rawValue: rawMode) {
-            accessMode = mode
+            defaultAccessMode = mode
         }
+        accessByDraftContext = defaults.dictionary(forKey: "VeoDesktop.accessByDraftContext") as? [String: String] ?? [:]
         if let savedSelection = defaults.string(forKey: "VeoDesktop.selectedThreadID") {
             selectedThreadID = DesktopThreadSelection.parse(savedSelection).storageKey
         }
@@ -560,6 +571,9 @@ final class DesktopCodexStore {
                 defaults.removeObject(forKey: "VeoDesktop.planModeThreadIDs")
             }
         }
+        wildThreadIDs = Set(defaults.stringArray(forKey: "VeoDesktop.wildThreadIDs") ?? [])
+        protectedTurnThreadIDs = Set(defaults.stringArray(forKey: "VeoDesktop.protectedTurnThreadIDs") ?? [])
+        isWildEnabled = selectedThreadID.map(wildThreadIDs.contains) ?? false
         interactionMode = selectedThreadID.flatMap { interactionModeByThreadID[$0] } ?? .agentic
         if let rawRoutingMode = defaults.string(forKey: "VeoDesktop.defaultModelRoutingMode"),
            let savedDefault = DesktopModelRoutingMode(rawValue: rawRoutingMode) {
@@ -594,6 +608,7 @@ final class DesktopCodexStore {
         )
         serverQueueManagedClientIDs.formUnion(defaults.stringArray(forKey: "VeoDesktop.serverQueueManagedIDs") ?? [])
         serverQueueUncertainClientIDs = Set(defaults.stringArray(forKey: "VeoDesktop.serverQueueUncertainIDs") ?? [])
+        accessMode = storedAccess(for: currentDraftContextID)
         draft = draftsByContextID[currentDraftContextID] ?? ""
         attachments = attachmentsByContextID[currentDraftContextID] ?? []
         autoContinuationJobs = autoContinuationCoordinator.jobs
@@ -621,6 +636,7 @@ final class DesktopCodexStore {
         }
         resolvedClient.serverRequestHandler = { [weak self] request, route in
             if self?.utilityInference.handleServerRequest(request, route: route) == true { return true }
+            if self?.blocksProtectedServerRequest(route) == true { return false }
             if self?.appServer0153.handleDynamicToolRequest(request, route: route, resolveContext: { runtimeID in
                 guard let self,
                       let thread = self.allKnownThreads.first(where: { $0.runtimeThreadID == runtimeID }) else { return nil }
@@ -1276,7 +1292,83 @@ final class DesktopCodexStore {
         currentWorkspaceKind == .project || gitRepository != nil || selectedTurnDiff?.isEmpty == false
     }
 
+    let agents = DesktopAgentConnections()
+    var activeAgent: String? { agents.choice(selectedThreadID) }
+    var composerModels: [DesktopModelOption] {
+        let id = selectedModelID.flatMap { DesktopModelCatalogPreferences.shared.provider(forModelID:$0)?.id }
+        return selectableModels.filter { model in
+            if let id { return DesktopModelCatalogPreferences.shared.provider(forModelID:model.id)?.id == id }
+            return !model.isExternal
+        }
+    }
+    var providerTitle: String {
+        if let agent = VeoAgent.catalog.first(where: { $0.id == activeAgent }) { return agent.name }
+        return selectedModelID.flatMap { DesktopModelCatalogPreferences.shared.provider(forModelID: $0)?.name } ?? "Codex"
+    }
+    func chooseProvider(_ id: String?) {
+        guard !isBusyTurn else { return }
+        if let id, agents.connections[id] != nil { agents.choose(id, thread:selectedThreadID); return }
+        if let current = selectedModel, id == nil, !current.isExternal {
+            agents.choose(nil,thread:selectedThreadID)
+            return
+        }
+        if hasLockedAutoModel {
+            transientError = "This chat has a locked Auto route. Choose a provider in a new chat."
+            return
+        }
+        if autoModelSelectionEnabled { setAutoModelSelectionEnabled(false) }
+        let model = selectableModels.first { candidate in
+            (id == nil ? !candidate.isExternal : DesktopModelCatalogPreferences.shared.provider(forModelID:candidate.id)?.id == id) && canSelectModel(candidate)
+        }
+        if let model { selectModel(model.id); agents.choose(nil, thread:selectedThreadID) }
+        else if id == nil { agents.choose(nil, thread:selectedThreadID) }
+        else { transientError = "Enable an available model for this provider first." }
+    }
+    private func sendAgentDraft(_ agent: String, message: String) {
+        guard attachments.isEmpty else { transientError = "This agent connection accepts text. Remove the attachment to send."; return }
+        guard interactionMode == .agentic, !isGoalModeEnabled else {
+            transientError = "Switch to Agentic and turn off Goal to send to this provider."
+            return
+        }
+        let thread = selectedThread ?? createNewChat(workspaceKind:.projectless, projectURL:nil)
+        guard let thread, !agents.running.contains(thread.id) else { return }
+        agents.choose(agent, thread:thread.id)
+        let history = timeline.filter { $0.kind == .user || $0.kind == .assistant }.map { ["role":$0.kind == .user ? "user":"assistant", "text":$0.body] }
+        let providerName = VeoAgent.catalog.first { $0.id == agent }?.name ?? agent
+        if history.isEmpty { applyAutoTitle(message, to: thread.id) }
+        let turn = "veo-agent-" + UUID().uuidString, reply = UUID().uuidString, userItem = UUID().uuidString
+        let input: [String:Any] = ["id":userItem,"veoAfter":timeline.last?.id ?? "","type":"userMessage","content":[["type":"text","text":message]]]
+        upsert(item:input,turnID:turn,uiThreadID:thread.id)
+        draft = ""
+        saveCurrentDraft()
+        isRunningTurn = true
+        let access = accessMode
+        Task {
+            var collected = ""
+            @MainActor func show(_ text:String, final:Bool) {
+                let item:[String:Any] = ["id":reply,"type":"agentMessage","veoProviderName":providerName,"veoAfter":userItem,"text":text,"status":final ? "completed":"inProgress"]
+                if selectedThreadID == thread.id {
+                    if final { upsert(item:item,turnID:turn,uiThreadID:thread.id) }
+                    else if let parsed=DesktopTimelineItem.parse(item,turnID:turn) {
+                        if let i=timeline.firstIndex(where:{$0.id==reply}) { timeline[i]=parsed } else { timeline.append(parsed) }
+                    }
+                } else if final { persistVeoItemJSON(item,veoID:thread.id,turnID:turn) }
+            }
+            do {
+                let text = try await agents.turn(agent:agent,thread:thread.id,cwd:thread.cwd,text:message,history:history,access:access) { delta in
+                    collected += delta
+                    show(collected,final:false)
+                }
+                show(text.isEmpty ? "The agent finished without a text reply." : text,final:true)
+            } catch {
+                show([collected,error.localizedDescription].filter { !$0.isEmpty }.joined(separator:"\n\n"),final:true)
+            }
+            if selectedThreadID==thread.id { isRunningTurn=false }
+        }
+    }
+
     var canSend: Bool {
+        if activeAgent != nil { return !isBusyTurn && !isLoadingTimeline && !draft.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty && (selectedThread == nil || selectedThread?.origin == .veo) }
         guard runtimeState.isReady,
               visionFallbackStatus == nil,
               (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty),
@@ -2082,15 +2174,28 @@ final class DesktopCodexStore {
         }
     }
 
-    func isAccessModeAllowed(_ mode: DesktopAccessMode) -> Bool {
-        guard !managedRequirements.allowedSandboxModes.isEmpty else { return true }
-        let accepted: Set<String>
-        switch mode {
-        case .readOnly: accepted = ["readOnly", "read-only"]
-        case .workspace: accepted = ["workspaceWrite", "workspace-write"]
-        case .fullAccess: accepted = ["dangerFullAccess", "danger-full-access"]
+    func accessModeUnavailableReason(_ mode: DesktopAccessMode) -> String? {
+        let allowedModes = managedRequirements.allowedSandboxModes
+        let allowedPolicies = managedRequirements.allowedApprovalPolicies
+        let sandboxType = mode.sandboxPolicy(workspacePath: "")["type"] as? String
+        if (!allowedModes.isEmpty && !allowedModes.contains(mode.sandboxValue) && !allowedModes.contains(sandboxType ?? ""))
+            || (!allowedPolicies.isEmpty && !allowedPolicies.contains(mode.approvalPolicyValue)) {
+            return "Managed Codex requirements disallow this permission mode."
         }
-        return !accepted.isDisjoint(with: Set(managedRequirements.allowedSandboxModes))
+        if mode == .autoReview && !capabilities.supports(.approvalAutoReview) {
+            return "Automatic review requires a Codex runtime that supports it."
+        }
+        return nil
+    }
+
+    func isAccessModeAllowed(_ mode: DesktopAccessMode) -> Bool {
+        accessModeUnavailableReason(mode) == nil
+    }
+
+    private func addApprovalsReviewer(_ mode: DesktopAccessMode, protected: Bool = false, to params: inout [String: Any]) {
+        if capabilities.supports(.approvalAutoReview) {
+            params["approvalsReviewer"] = protected ? "user" : mode.approvalsReviewer
+        }
     }
 
     func setExperimentalFeature(_ feature: DesktopExperimentalFeature, enabled: Bool) {
@@ -3546,7 +3651,7 @@ final class DesktopCodexStore {
     }
 
     private func mergeHistoryPage(_ page: [DesktopTimelineItem], replacing: Bool, appending: Bool = false) {
-        if replacing { timeline = [] }
+        if replacing { timeline = timeline.filter { $0.providerPredecessor != nil } }
         let pageIDs = Set(page.map(\.id))
         if appending {
             let existingIDs = Set(timeline.map(\.id))
@@ -3555,6 +3660,7 @@ final class DesktopCodexStore {
         } else {
             timeline = page + timeline.filter { !pageIDs.contains($0.id) }
         }
+        timeline = DesktopTimelineItem.placingProviderItems(timeline)
     }
 
     private func fetchRetainedTurns(runtimeID: String) async throws -> [[String: Any]] {
@@ -3692,6 +3798,100 @@ final class DesktopCodexStore {
         catch { if selectedThreadID == uiID { transientError = "Reverted history could not be refreshed: \(error.localizedDescription)" } }
     }
 
+    var moveDestinationPaths: [String] {
+        var paths = Set((threads + archivedThreads).filter { $0.workspaceKind == .project }.map(\.cwd))
+        if let workspaceURL { paths.insert(workspaceURL.path) }
+        return paths.filter { path in
+            var directory: ObjCBool = false
+            return FileManager.default.fileExists(atPath: path, isDirectory: &directory) && directory.boolValue
+        }.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    }
+
+    func moveUnavailableReason(_ thread: DesktopThread) -> String? {
+        if thread.origin != .veo { return "Move is available for Veo chats." }
+        if movingThreadIDs.contains(thread.id) { return "This chat is being moved." }
+        if thread.isRunning || isThreadTurnActive(thread.id) || agents.running.contains(thread.id)
+            || (selectedThreadID == thread.id && (isBusyTurn || isLoadingTimeline))
+            || queuedDraftsByThreadID[thread.id]?.isEmpty == false
+            || queuedDispatchingThreadIDs.contains(thread.id)
+            || protectedTurnThreadIDs.contains(thread.id)
+            || autoContinuationDispatchingThreadIDs.contains(thread.id) {
+            return "Wait for active, queued, or unresolved work to finish before moving this chat."
+        }
+        if thread.runtimeThreadID != nil && (!runtimeState.isReady || !capabilities.supports(method: "thread/fork")) {
+            return "Connect Codex to move this chat with its runtime history."
+        }
+        return nil
+    }
+
+    func requestChatMove(_ thread: DesktopThread) {
+        guard let current = findThread(thread.id) else { return }
+        if let reason = moveUnavailableReason(current) {
+            transientError = reason
+            return
+        }
+        moveThreadError = nil
+        moveThreadTarget = current
+    }
+
+    func moveChat(_ target: DesktopThread, to destination: String) async {
+        guard let thread = findThread(target.id), moveDestinationPaths.contains(destination), destination != thread.cwd else { return }
+        if let reason = moveUnavailableReason(thread) { moveThreadError = reason; return }
+        movingThreadIDs.insert(thread.id)
+        defer { movingThreadIDs.remove(thread.id) }
+        moveThreadError = nil
+        do {
+            let targetPath = URL(fileURLWithPath: destination).standardizedFileURL.resolvingSymlinksInPath().path
+            let runtimeID: String?
+            if let previous = thread.runtimeThreadID {
+                do {
+                    let mode = storedAccess(for: "thread:\(thread.id)")
+                    var params: [String: Any] = [
+                        "threadId": previous, "cwd": targetPath, "excludeTurns": true,
+                        "approvalPolicy": mode.approvalPolicyValue, "sandbox": mode.sandboxValue,
+                    ]
+                    addApprovalsReviewer(mode, to: &params)
+                    let reply = try await client.request(method: "thread/fork", params: params, requiring: .threadManagement)
+                    guard let copied = reply["thread"] as? [String: Any], let newID = copied.string("id"),
+                          let actual = copied.string("cwd"),
+                          URL(fileURLWithPath: actual).standardizedFileURL.resolvingSymlinksInPath().path == targetPath else {
+                        throw CodexAppServerClientError.invalidInput("Codex could not reopen the chat in the destination folder.")
+                    }
+                    runtimeID = newID
+                } catch CodexAppServerClientError.rpc(_, let message) where message.contains("no rollout found") {
+                    guard (try await threadStore.loadTimelineItems(veoID: thread.id)).isEmpty else {
+                        throw CodexAppServerClientError.invalidInput("Codex history could not be reopened. The chat stayed in its original project.")
+                    }
+                    runtimeID = nil
+                }
+            } else {
+                runtimeID = nil
+            }
+            try await threadStore.moveThread(thread, to: targetPath, replacingRuntimeWith: runtimeID)
+            var moved = thread
+            moved.cwd = targetPath
+            moved.workspaceKind = .project
+            moved.codexThreadId = runtimeID
+            replaceThread(moved)
+            rebuildCodexMappings()
+            autoContinuationCoordinator.cancel(threadID: thread.id, detail: "Canceled because the chat moved to another project.")
+            moveThreadTarget = nil
+            if selectedThreadID != thread.id { selectThread(thread.id) }
+            else {
+                stopInteractiveTerminalForContextChange()
+                invalidateGitContext()
+                invalidateAccountResourceContext()
+                appServer0153.selectRuntimeThread(runtimeID)
+                refreshInvalidatedGitContextIfNeeded()
+                await loadSkills()
+                await loadAccountResources()
+            }
+            gitMessage = "Moved chat to \(moved.workspaceName)."
+        } catch {
+            moveThreadError = error.localizedDescription
+        }
+    }
+
     func forkThread(_ thread: DesktopThread, through turnID: String?) {
         guard let runtimeID = thread.runtimeThreadID else {
             transientError = "Chat could not be forked: start a turn in this chat first."
@@ -3699,12 +3899,14 @@ final class DesktopCodexStore {
         }
         Task {
             do {
+                let mode = storedAccess(for: "thread:\(thread.id)")
                 var params: [String: Any] = [
                     "threadId": runtimeID,
                     "cwd": thread.cwd,
-                    "approvalPolicy": accessMode.approvalPolicyValue,
-                    "sandbox": accessMode.sandboxValue,
+                    "approvalPolicy": mode.approvalPolicyValue,
+                    "sandbox": mode.sandboxValue,
                 ]
+                addApprovalsReviewer(mode, to: &params)
                 if let turnID { params["lastTurnId"] = turnID }
                 let response = try await client.request(
                     method: "thread/fork",
@@ -3728,6 +3930,9 @@ final class DesktopCodexStore {
                     threads.removeAll(where: { $0.id == forked.id })
                     threads.insert(forked, at: 0)
                     rebuildCodexMappings()
+                    persistAccess(mode, context: "thread:\(forked.id)")
+                    persistInteractionMode(interactionModeByThreadID[thread.id] ?? .agentic, threadID: forked.id)
+                    persistWild(wildThreadIDs.contains(thread.id), threadID: forked.id)
                     isBrowsingArchivedThreads = false
                     selectThread(forked.id)
                 } else {
@@ -3883,6 +4088,7 @@ final class DesktopCodexStore {
         threads.insert(created, at: 0)
         rebuildCodexMappings()
         persistVeoThread(created, isArchived: false)
+        agents.choose(agents.choice(nil),thread:created.id)
         selectedThreadID = created.id
         historyNextCursor = nil
         historyUsesTimeline = false
@@ -3897,6 +4103,7 @@ final class DesktopCodexStore {
         isRunningTurn = false
         applyPendingOverlayReloadIfNeeded()
         interactionMode = .agentic
+        isWildEnabled = false
         routingMode = availableRoutingMode(defaultRoutingMode)
         selectedModelID = defaults.string(forKey: "VeoDesktop.modelID")
         selectedReasoningEffort = defaults.string(forKey: "VeoDesktop.reasoningEffort")
@@ -4007,6 +4214,7 @@ final class DesktopCodexStore {
         isSubmittingTurn = false
         isRunningTurn = false
         interactionMode = id.flatMap { interactionModeByThreadID[$0] } ?? .agentic
+        isWildEnabled = id.map(wildThreadIDs.contains) ?? false
         routingMode = availableRoutingMode(
             id.flatMap { routingModeByThreadID[$0] } ?? (id == nil ? defaultRoutingMode : .direct)
         )
@@ -4036,6 +4244,10 @@ final class DesktopCodexStore {
     }
 
     func chooseWorkspace() {
+        if let url = pickProjectFolder() { beginProjectChat(at: url) }
+    }
+
+    func pickProjectFolder() -> URL? {
         let panel = NSOpenPanel()
         panel.title = "Open a project"
         panel.message = "Choose the folder Codex should work in."
@@ -4046,8 +4258,7 @@ final class DesktopCodexStore {
         panel.canCreateDirectories = true
         panel.directoryURL = workspaceURL ?? FileManager.default.homeDirectoryForCurrentUser
 
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        beginProjectChat(at: url)
+        return panel.runModal() == .OK ? panel.url : nil
     }
 
     func chooseMediaAttachments() {
@@ -4153,12 +4364,15 @@ final class DesktopCodexStore {
             }
             return
         }
-        guard token.hasPrefix("@"), hasExplicitWorkspace else {
+        guard token.hasPrefix("@") else {
             composerSuggestions = []
             return
         }
 
         let query = String(token.dropFirst())
+        let plugins = pluginSuggestions(matching: query)
+        composerSuggestions = Array(plugins.prefix(8))
+        guard hasExplicitWorkspace else { return }
         let root = effectiveWorkspaceURL.standardizedFileURL.resolvingSymlinksInPath().path
         let contextID = currentDraftContextID
         autocompleteTask = Task { [weak self] in
@@ -4178,7 +4392,7 @@ final class DesktopCodexStore {
                       currentDraftContextID == contextID,
                       effectiveWorkspaceURL.standardizedFileURL.resolvingSymlinksInPath().path == root else { return }
                 let rows = response["files"] as? [[String: Any]] ?? []
-                composerSuggestions = rows.prefix(8).compactMap { row in
+                composerSuggestions = Array(plugins.prefix(8)) + rows.prefix(max(0, 8 - plugins.count)).compactMap { row in
                     guard row.string("match_type") != "directory",
                           let path = row.string("path") else { return nil }
                     let rowRoot = row.string("root") ?? root
@@ -4196,7 +4410,7 @@ final class DesktopCodexStore {
             } catch {
                 guard autocompleteToken == token,
                       currentDraftContextID == contextID else { return }
-                composerSuggestions = []
+                composerSuggestions = Array(plugins.prefix(8))
             }
         }
     }
@@ -4220,6 +4434,13 @@ final class DesktopCodexStore {
                     name: suggestion.title
                 ))
             }
+        case .plugin:
+            if let autocompleteToken, draft.hasSuffix(autocompleteToken) {
+                draft.removeLast(autocompleteToken.count)
+            }
+            insertPluginMention(suggestion)
+            closeComposerPalette()
+            return
         case .command:
             guard let command = DesktopComposerCommand.named(suggestion.source) else { return }
             executeComposerCommand(command, arguments: "")
@@ -4351,6 +4572,9 @@ final class DesktopCodexStore {
             } else {
                 renameThread(selectedThread, name: arguments)
             }
+        case .move:
+            if let selectedThread { requestChatMove(selectedThread) }
+            else { transientError = "Select a Veo chat before moving it." }
         case .archive:
             guard let selectedThread else {
                 transientError = "Select a thread before archiving it."
@@ -4454,6 +4678,23 @@ final class DesktopCodexStore {
         selectedComposerSuggestionID = composerSuggestions
             .first(where: { $0.source == selectedReasoningEffort })?.id
             ?? composerSuggestions.first?.id
+    }
+
+    func pluginSuggestions(matching query: String = "") -> [DesktopComposerSuggestion] {
+        guard activeAgent == nil, capabilities.supports(.plugins) else { return [] }
+        return pluginRecords.compactMap { plugin in
+            guard plugin.installed, plugin.enabled, plugin.availability != .disabledByAdmin,
+                  DesktopInlineContext.validPluginID(plugin.id),
+                  query.isEmpty || plugin.displayName.localizedCaseInsensitiveContains(query)
+                      || plugin.id.localizedCaseInsensitiveContains(query) else { return nil }
+            return .init(kind: .plugin, title: plugin.displayName, subtitle: plugin.description, source: plugin.id)
+        }
+    }
+
+    func insertPluginMention(_ suggestion: DesktopComposerSuggestion) {
+        guard pluginSuggestions().contains(where: { $0.id == suggestion.id }) else { return }
+        insertContextAtCaret(DesktopInlineContext.reference("@" + suggestion.title, kind: "plugin", value: suggestion.source))
+        composerFocusRevision += 1
     }
 
     private func presentAccessModeSuggestions() {
@@ -4683,12 +4924,31 @@ final class DesktopCodexStore {
     }
 
     func updateAccessMode(_ mode: DesktopAccessMode) {
-        guard isAccessModeAllowed(mode) else {
-            transientError = "This access mode is disabled by managed Codex requirements."
+        if let reason = accessModeUnavailableReason(mode) {
+            transientError = reason
             return
         }
         accessMode = mode
+        persistAccess(mode, context: currentDraftContextID)
+    }
+
+    func updateDefaultAccessMode(_ mode: DesktopAccessMode) {
+        if let reason = accessModeUnavailableReason(mode) {
+            transientError = reason
+            return
+        }
+        defaultAccessMode = mode
         defaults.set(mode.rawValue, forKey: "VeoDesktop.accessMode")
+        if accessByDraftContext[currentDraftContextID] == nil { accessMode = mode }
+    }
+
+    private func storedAccess(for context: String) -> DesktopAccessMode {
+        accessByDraftContext[context].flatMap(DesktopAccessMode.init(rawValue:)) ?? defaultAccessMode
+    }
+
+    private func persistAccess(_ mode: DesktopAccessMode?, context: String) {
+        accessByDraftContext[context] = mode?.rawValue
+        defaults.set(accessByDraftContext, forKey: "VeoDesktop.accessByDraftContext")
     }
 
     func stashPrompt() {
@@ -4732,12 +4992,35 @@ final class DesktopCodexStore {
         }
     }
 
+    func addConceptFeedback(_ selected: [DesktopToolArtifact], from all: [DesktopToolArtifact], feedback: String) {
+        let ids = Set(selected.map(\.id))
+        let references = all.enumerated().compactMap { index, image -> String? in
+            guard ids.contains(image.id) else { return nil }
+            let reference = image.kind == .localFile ? image.source : "generation \(image.id)"
+            return "- Concept \(index + 1) (\(reference))"
+        }
+        appendContextToDraft("Feedback for generated concepts\n" + references.joined(separator: "\n") + "\n" + feedback)
+        composerFocusRevision += 1
+    }
+
     func appendContextToDraft(_ text: String) {
         draft += (draft.isEmpty ? "" : "\n\n") + text
     }
 
     func updateComposerSelection(text: String, range: NSRange) {
         composerSelection = (text, range)
+    }
+
+    func dictationDraft() -> DesktopDictationDraft {
+        let length = draft.utf16.count
+        let range = composerSelection.flatMap {
+            $0.text == draft && NSMaxRange($0.range) <= length ? $0.range : nil
+        } ?? NSRange(location: length, length: 0)
+        return DesktopDictationDraft(context: currentDraftContextID, text: draft, selection: range)
+    }
+
+    func isCurrentDictationDraft(_ snapshot: DesktopDictationDraft) -> Bool {
+        snapshot.context == currentDraftContextID && snapshot.text == draft
     }
 
     func insertContextAtCaret(_ text: String) {
@@ -5057,6 +5340,10 @@ final class DesktopCodexStore {
     }
 
     func approveGuardianDeniedAction(_ review: DesktopApprovalReview) {
+        if let threadID = selectedThreadID, protectedTurnThreadIDs.contains(threadID) {
+            transientError = "This turn is read-only. Retrying a denied action is unavailable."
+            return
+        }
         guard let runtimeID = selectedRuntimeThreadID else { return }
         Task {
             do { try await appServer0153.approveGuardianDeniedAction(review, runtimeThreadID: runtimeID) }
@@ -5064,17 +5351,54 @@ final class DesktopCodexStore {
         }
     }
 
-    func setInteractionMode(_ mode: DesktopInteractionMode) {
-        guard mode == .agentic || hasExplicitWorkspace else { return }
-        guard mode != .plan || supportsPlanMode else { return }
-        guard mode != .debug || supportsDebugMode else { return }
-        guard interactionMode != mode else { return }
-
-        interactionMode = mode
-        if let threadID = selectedThreadID {
-            persistInteractionMode(mode, threadID: threadID)
-            updateActiveThreadSettings()
+    func modeUnavailableReason(_ mode: DesktopInteractionMode) -> String? {
+        switch mode {
+        case .agentic: return nil
+        case .ask, .roblox:
+            if activeAgent != nil { return "Select Codex to use \(mode.title)." }
+            if !runtimeState.isReady || capabilities.serverVersion == nil || !capabilities.supports(method: "turn/start") {
+                return "Connect a compatible Codex runtime to use \(mode.title)."
+            }
+            if mode == .ask && (routingMode != .direct || autoModelSelectionEnabled || hasLockedAutoModel) {
+                return "Select a direct Codex model for read-only Ask."
+            }
+            return nil
+        case .plan, .debug:
+            if !hasExplicitWorkspace { return "Open a project to use \(mode.title)." }
+            if mode == .plan && !supportsPlanMode { return "Plan mode is unavailable in this Codex runtime." }
+            if mode == .debug && !supportsDebugMode { return "Debug requires Codex collaboration modes." }
+            return nil
         }
+    }
+
+    func setInteractionMode(_ mode: DesktopInteractionMode) {
+        guard modeUnavailableReason(mode) == nil, interactionMode != mode else { return }
+        interactionMode = mode
+        if let threadID = selectedThreadID { persistInteractionMode(mode, threadID: threadID) }
+    }
+
+    func setWildEnabled(_ enabled: Bool) {
+        guard activeAgent == nil else { return }
+        isWildEnabled = enabled
+        if let threadID = selectedThreadID { persistWild(enabled, threadID: threadID) }
+    }
+
+    private func persistWild(_ enabled: Bool, threadID: String) {
+        if enabled { wildThreadIDs.insert(threadID) } else { wildThreadIDs.remove(threadID) }
+        defaults.set(wildThreadIDs.sorted(), forKey: "VeoDesktop.wildThreadIDs")
+    }
+
+    private func markProtectedTurn(_ protected: Bool, threadID: String) {
+        if protected { protectedTurnThreadIDs.insert(threadID) } else { protectedTurnThreadIDs.remove(threadID) }
+        defaults.set(protectedTurnThreadIDs.sorted(), forKey: "VeoDesktop.protectedTurnThreadIDs")
+    }
+
+    private func blocksProtectedServerRequest(_ route: CodexAppServerRoute) -> Bool {
+        let protected = route.threadID.map { protectedTurnThreadIDs.contains(uiThreadID(forRuntimeThreadID: $0)) }
+            ?? !protectedTurnThreadIDs.isEmpty
+        return protected && (route.method == "item/tool/call"
+            || route.method.contains("Approval")
+            || route.method == "mcpServer/elicitation/request")
     }
 
     func setPlanModeEnabled(_ enabled: Bool) {
@@ -5319,7 +5643,12 @@ final class DesktopCodexStore {
 
     func sendDraft(willSubmit: ((DesktopComposerPayload) -> Void)? = nil) {
         let message = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard canSend else { return }
+        guard canSend, selectedThreadID.map({ !movingThreadIDs.contains($0) }) ?? true else { return }
+        if let reason = modeUnavailableReason(interactionMode) {
+            transientError = reason
+            return
+        }
+        if let agent=activeAgent { sendAgentDraft(agent,message:message); return }
         if let issue = daybreakTurnIssue {
             transientError = issue
             return
@@ -5358,6 +5687,7 @@ final class DesktopCodexStore {
                 usesAuto: autoModelSelectionEnabled || hasLockedAutoModel || routingMode.isFamilyAuto
             ),
             interactionMode: interactionMode,
+            wild: isWildEnabled,
             routingMode: (autoModelSelectionEnabled || hasLockedAutoModel) ? .direct : routingMode,
             autoRoutePlan: autoPlan,
             daybreakEnabled: outgoingDaybreakChoice
@@ -5460,9 +5790,12 @@ final class DesktopCodexStore {
                 return
             }
             enqueue(payload, queueKey: threadID)
-            if followUpBehavior == .steer, isRunningTurn {
+            let needsNewTurn = payload.wild || payload.interactionMode == .ask || payload.interactionMode == .roblox
+                || protectedTurnThreadIDs.contains(threadID)
+                || dispatchedComposerByThread[threadID]?.accessMode != payload.accessMode
+            if followUpBehavior == .steer, isRunningTurn, !needsNewTurn {
                 steerQueuedDraft(payload.id)
-            } else if payload.daybreakEnabled == nil, capabilities.supports(.serverQueue),
+            } else if payload.daybreakEnabled == nil, !needsNewTurn, capabilities.supports(.serverQueue),
                       findThread(threadID)?.workspaceKind != .temporary,
                       let runtimeID = runtimeThreadID(forUIThreadID: threadID) {
                 serverQueueUncertainClientIDs.insert(payload.id)
@@ -5580,6 +5913,7 @@ final class DesktopCodexStore {
             "sandbox": accessMode.sandboxValue,
             "excludeTurns": true,
         ]
+        addApprovalsReviewer(accessMode, to: &params)
         if let model { params["model"] = model }
         if let providerID { params["modelProvider"] = providerID }
         if let serviceTier { params["serviceTier"] = serviceTier }
@@ -5784,6 +6118,11 @@ final class DesktopCodexStore {
         guard let threadID = selectedThreadID,
               !queuedDeliveryInFlightIDs.contains(id), !serverQueueUncertainClientIDs.contains(id),
               let payload = queuedDraftsByThreadID[threadID]?.first(where: { $0.id == id }) else { return }
+        guard !protectedTurnThreadIDs.contains(threadID),
+              dispatchedComposerByThread[threadID]?.accessMode == payload.accessMode else {
+            transientError = "Start a new turn to apply the follow-up’s permissions."
+            return
+        }
         if serverQueueManagedClientIDs.contains(id) {
             guard let runtimeID = runtimeThreadID(forUIThreadID: threadID) else { return }
             queuedDeliveryInFlightIDs.insert(id)
@@ -5826,6 +6165,7 @@ final class DesktopCodexStore {
     }
 
     func stopTurn() {
+        if let id=selectedThreadID, agents.running.contains(id) { agents.stop(id); return }
         guard let threadID = selectedThreadID else { return }
         if let routingTask = autoRoutingTasks[threadID] {
             routingTask.cancel()
@@ -6506,8 +6846,7 @@ final class DesktopCodexStore {
                 managedRequirements = DesktopManagedRequirements.parse(
                     response["requirements"] as? [String: Any]
                 )
-                reconcileAccessModeWithRequirements()
-            } catch {
+                } catch {
                 managedRequirements = DesktopManagedRequirements()
                 failures.append("Managed requirements")
             }
@@ -6592,19 +6931,6 @@ final class DesktopCodexStore {
         runtimeConfigurationMessage = failures.isEmpty
             ? nil
             : "Unavailable from this runtime: \(failures.joined(separator: ", "))."
-    }
-
-    private func reconcileAccessModeWithRequirements() {
-        guard !isAccessModeAllowed(accessMode),
-              let fallback = DesktopAccessMode.allCases.first(where: isAccessModeAllowed) else { return }
-        accessMode = fallback
-        defaults.set(fallback.rawValue, forKey: "VeoDesktop.accessMode")
-        recordRuntimeNotice(
-            method: "configRequirements/read",
-            severity: .warning,
-            title: "Access mode adjusted",
-            detail: "Managed Codex requirements do not allow the previous access mode. Veo selected \(fallback.title)."
-        )
     }
 
     private static func compactDisplayValue(_ value: Any) -> String {
@@ -6752,6 +7078,7 @@ final class DesktopCodexStore {
             reasoningEffort: resolvedPayload.reasoningEffort,
             serviceTier: resolvedPayload.serviceTier,
             interactionMode: resolvedPayload.interactionMode,
+            wild: resolvedPayload.wild,
             routingMode: resolvedPayload.routingMode,
             autoRoutePlan: resolvedPayload.autoRoutePlan,
             isEnabled: enabled,
@@ -6791,6 +7118,7 @@ final class DesktopCodexStore {
             reasoningEffort: job.reasoningEffort,
             serviceTier: job.serviceTier,
             interactionMode: job.interactionMode,
+            wild: job.wild == true,
             routingMode: job.routingMode,
             autoRoutePlan: job.autoRoutePlan
         )
@@ -7577,6 +7905,10 @@ final class DesktopCodexStore {
         searchSnippetByThreadID.removeValue(forKey: threadID)
         agentStateByThreadID.removeValue(forKey: threadID)
         interactionModeByThreadID.removeValue(forKey: threadID)
+        persistAccess(nil, context: "thread:\(threadID)")
+        persistWild(false, threadID: threadID)
+        markProtectedTurn(false, threadID: threadID)
+        dispatchedComposerByThread[threadID] = nil
         routingModeByThreadID.removeValue(forKey: threadID)
         let planIDs = planArtifactsByID.values
             .filter { $0.reference.threadID == threadID }
@@ -7641,6 +7973,7 @@ final class DesktopCodexStore {
             }
         }
 
+        if activeAgent != nil { isRunningTurn = agents.running.contains(uiThreadID); return }
         guard let runtimeID = thread.runtimeThreadID else {
             if let turnID = activeTurnIDByThread[uiThreadID] {
                 activeTurnID = turnID
@@ -7654,12 +7987,15 @@ final class DesktopCodexStore {
 
     private func resumeThread(uiThreadID: String, runtimeID: String, loadGeneration: UUID) async {
         do {
+            let protected = protectedTurnThreadIDs.contains(uiThreadID)
             var params: [String: Any] = [
                 "threadId": runtimeID,
-                "approvalPolicy": accessMode.approvalPolicyValue,
-                "sandbox": accessMode.sandboxValue,
+                "cwd": findThread(uiThreadID)?.cwd as Any,
+                "approvalPolicy": protected ? "never" : accessMode.approvalPolicyValue,
+                "sandbox": protected ? DesktopAccessMode.readOnly.sandboxValue : accessMode.sandboxValue,
                 "excludeTurns": true,
             ]
+            addApprovalsReviewer(accessMode, protected: protected, to: &params)
             if let route = effectiveSelectedRoute {
                 params["model"] = route.model
                 if let providerID = route.modelProviderID { params["modelProvider"] = providerID }
@@ -7752,7 +8088,10 @@ final class DesktopCodexStore {
         var deliveryQueueKey = initialQueueKey ?? originUIThreadID
         // Persisted queues must never inherit broader settings from whichever chat
         // happens to be selected when they dispatch. Legacy payloads fail safe.
-        let deliveryAccessMode = payload.accessMode ?? .workspace
+        let protected = payload.interactionMode == .ask || (payload.interactionMode == .plan && payload.wild)
+        var requestedProtectedTurn = false
+        let deliveryAccessMode: DesktopAccessMode = protected ? .readOnly : (payload.accessMode ?? .workspace)
+        let approvalPolicy = protected ? "never" : deliveryAccessMode.approvalPolicyValue
         var deliveryModel = payload.model
         var deliveryEffort = payload.reasoningEffort
         var deliveryTier = payload.serviceTier
@@ -7772,6 +8111,17 @@ final class DesktopCodexStore {
         }
 
         do {
+            if !protected, let reason = accessModeUnavailableReason(deliveryAccessMode) {
+                throw CodexAppServerClientError.invalidInput(reason)
+            }
+            if protected && (capabilities.serverVersion == nil || !capabilities.supports(method: "turn/start")) {
+                throw CodexAppServerClientError.invalidInput("Connect a Codex runtime that supports read-only turns.")
+            }
+            if payload.interactionMode == .ask && (payload.autoModelSelectionEnabled || payload.routingMode != .direct) {
+                throw CodexAppServerClientError.invalidInput("Use a direct model and a Codex runtime that supports a read-only turn.")
+            }
+            let skill = payload.interactionMode == .roblox ? try await DesktopRobloxDevSkill.shared.resolve() : nil
+            let guidance = payload.interactionMode.turnGuidance(wild: payload.wild, skill: skill)
             let uiThreadID: String
             if let originUIThreadID {
                 uiThreadID = originUIThreadID
@@ -7803,9 +8153,8 @@ final class DesktopCodexStore {
                     migrateDraftContext(from: newChatDraftContext, to: created.id)
                     restoreDraft()
                 }
-                if payload.interactionMode != .agentic {
-                    persistInteractionMode(payload.interactionMode, threadID: created.id)
-                }
+                persistInteractionMode(payload.interactionMode, threadID: created.id)
+                persistWild(payload.wild, threadID: created.id)
             }
             targetUIThreadID = uiThreadID
 
@@ -7928,10 +8277,11 @@ final class DesktopCodexStore {
                 }
                 var startParams: [String: Any] = [
                     "cwd": thread.cwd,
-                    "approvalPolicy": deliveryAccessMode.approvalPolicyValue,
+                    "approvalPolicy": approvalPolicy,
                     "sandbox": deliveryAccessMode.sandboxValue,
                     "dynamicTools": appServer0153.dynamicToolSpecs,
                 ]
+                addApprovalsReviewer(deliveryAccessMode, protected: protected, to: &startParams)
                 if capabilities.supports(.historyRevert) { startParams["historyMode"] = "paginated" }
                 if let deliveryModel { startParams["model"] = deliveryModel }
                 if let deliveryProviderID {
@@ -7989,7 +8339,7 @@ final class DesktopCodexStore {
             )
             rememberPresentationAttachments(for: payload, threadID: uiThreadID)
 
-            if selectedThreadID == uiThreadID, !isAutoContinuation {
+            if selectedThreadID == uiThreadID, !isAutoContinuation, !protected {
                 try await prepareGoalIfNeeded(threadID: uiThreadID, objective: payload.trimmedText)
             }
 
@@ -8006,14 +8356,25 @@ final class DesktopCodexStore {
                !isAutoContinuation, !isPlanHandoff {
                 persistOptimisticUserItem(payload, veoID: uiThreadID)
             }
+            var input = payload.protocolInput
+            let priorItems = selectedThreadID == uiThreadID ? timeline : ((try? await threadStore.loadTimelineItems(veoID: uiThreadID)) ?? [])
+            let providerHistory = priorItems.reversed()
+                .prefix { !($0.kind == .assistant && $0.providerPredecessor == nil) }
+                .filter { $0.providerPredecessor != nil }
+                .reversed().map { ["role": $0.kind == .user ? "user" : "assistant", "text": $0.body] }
+            if !providerHistory.isEmpty, let data = try? JSONEncoder().encode(providerHistory) {
+                let transcript = String(decoding: data, as: UTF8.self).replacingOccurrences(of: "<", with: "\\u003c")
+                input.append(["type": "text", "text": "<veo_provider_history>Previous messages from this chat before switching providers:\n" + transcript + "\n</veo_provider_history>"])
+            }
             var turnParams: [String: Any] = [
                 "threadId": runtimeID,
-                "input": payload.protocolInput,
+                "input": input,
                 "clientUserMessageId": payload.id,
-                "approvalPolicy": deliveryAccessMode.approvalPolicyValue,
+                "approvalPolicy": approvalPolicy,
                 "cwd": targetWorkspacePath,
                 "sandboxPolicy": deliveryAccessMode.sandboxPolicy(workspacePath: targetWorkspacePath),
             ]
+            addApprovalsReviewer(deliveryAccessMode, protected: protected, to: &turnParams)
             if let deliveryModel { turnParams["model"] = deliveryModel }
             if let deliveryProviderID {
                 turnParams["modelProvider"] = deliveryProviderID
@@ -8029,9 +8390,12 @@ final class DesktopCodexStore {
                 reasoningEffort: deliveryEffort,
                 interactionMode: payload.interactionMode,
                 routingMode: autoModelChoices[uiThreadID] != nil ? .direct : payload.routingMode,
-                autoRoutePlan: autoModelChoices[uiThreadID] != nil ? nil : payload.autoRoutePlan
-            ) {
+                autoRoutePlan: autoModelChoices[uiThreadID] != nil || protected ? nil : payload.autoRoutePlan,
+                guidance: guidance
+            ), capabilities.supports(.collaborationModes) {
                 turnParams["collaborationMode"] = collaborationMode
+            } else if let guidance {
+                turnParams["input"] = [["type": "text", "text": "<codex_internal_context source=\"veo_mode\">\n" + guidance + "\n</codex_internal_context>"]] + input
             }
             var workspaceCheckpoint: DesktopWorkspaceCheckpoint?
             if capabilities.supports(.historyRevert), historyModeByThreadID[uiThreadID] == "paginated",
@@ -8045,7 +8409,7 @@ final class DesktopCodexStore {
                     }
                 }
             }
-            if let enabled = payload.daybreakEnabled {
+            if let enabled = payload.daybreakEnabled, !protected {
                 let program: DesktopDaybreakProgram = enabled ? .daybreakBlue : .standard
                 guard daybreakCatalogGeneration == client.runtimeGeneration, !payload.autoModelSelectionEnabled,
                       payload.routingMode == .direct, autoModelChoices[uiThreadID] == nil, deliveryProviderID == nil,
@@ -8054,6 +8418,9 @@ final class DesktopCodexStore {
                 }
                 turnParams["cyberAccessProgram"] = program.rawValue
             }
+            markProtectedTurn(protected, threadID: uiThreadID)
+            requestedProtectedTurn = protected
+            dispatchedComposerByThread[uiThreadID] = payload
             let response = try await client.request(
                 method: "turn/start",
                 params: turnParams
@@ -8103,6 +8470,10 @@ final class DesktopCodexStore {
                 isSubmittingTurn = false
             }
         } catch {
+            if requestedProtectedTurn, let threadID = targetUIThreadID,
+               case CodexAppServerClientError.rpc = error {
+                markProtectedTurn(false, threadID: threadID)
+            }
             if let handoff = payload.planHandoff {
                 failPlanHandoff(handoff, message: error.localizedDescription)
             }
@@ -8200,6 +8571,7 @@ final class DesktopCodexStore {
     }
 
     private func restoreDraft() {
+        accessMode = storedAccess(for: currentDraftContextID)
         draft = draftsByContextID[currentDraftContextID] ?? ""
         attachments = attachmentsByContextID[currentDraftContextID] ?? []
     }
@@ -8216,6 +8588,10 @@ final class DesktopCodexStore {
 
     private func migrateDraftContext(from sourceContextID: String, to threadID: String) {
         let targetContextID = "thread:\(threadID)"
+        if accessByDraftContext[targetContextID] == nil {
+            persistAccess(storedAccess(for: sourceContextID), context: targetContextID)
+        }
+        persistAccess(nil, context: sourceContextID)
         if draftsByContextID[targetContextID] == nil {
             draftsByContextID[targetContextID] = draftsByContextID[sourceContextID] ?? ""
         }
@@ -8567,6 +8943,10 @@ final class DesktopCodexStore {
         threadID: String,
         turnID: String
     ) async throws {
+        guard !protectedTurnThreadIDs.contains(threadID), !payload.wild,
+              payload.interactionMode != .ask, payload.interactionMode != .roblox else {
+            throw CodexAppServerClientError.invalidInput("This follow-up is queued for a new turn so its mode and permissions can be applied.")
+        }
         guard let runtimeID = runtimeThreadID(forUIThreadID: threadID) else {
             throw CodexAppServerClientError.malformedResponse("Missing Codex thread for steer.")
         }
@@ -8612,7 +8992,8 @@ final class DesktopCodexStore {
     }
 
     private func applyActiveThreadSettings(threadID: String) async {
-        guard selectedThreadID == threadID, !autoModelSelectionEnabled, !hasLockedAutoModel else { return }
+        guard selectedThreadID == threadID, !autoModelSelectionEnabled, !hasLockedAutoModel,
+              !protectedTurnThreadIDs.contains(threadID) else { return }
         guard capabilities.supports(.collaborationModes) else { return }
         guard let runtimeID = runtimeThreadID(forUIThreadID: threadID) else { return }
         let route = effectiveSelectedRoute
@@ -8623,7 +9004,7 @@ final class DesktopCodexStore {
         if let model = route?.model { params["model"] = model }
         if let provider = route?.modelProviderID { params["modelProvider"] = provider }
         if let effort = route?.effort { params["effort"] = effort }
-        if let collaborationMode = collaborationModePayload() {
+        if !isBusyTurn, let collaborationMode = collaborationModePayload() {
             params["collaborationMode"] = collaborationMode
         }
         if selectedModel?.supportsPersonality == true { params["personality"] = selectedPersonality }
@@ -8678,21 +9059,22 @@ final class DesktopCodexStore {
         reasoningEffort: String?,
         interactionMode: DesktopInteractionMode,
         routingMode: DesktopModelRoutingMode = .direct,
-        autoRoutePlan: DesktopAutoRoutePlan? = nil
+        autoRoutePlan: DesktopAutoRoutePlan? = nil,
+        guidance: String? = nil
     ) -> [String: Any]? {
         guard let model else { return nil }
 
-        let developerInstructions: Any
+        let baseInstructions: String?
         if routingMode.isFamilyAuto, let autoRoutePlan {
-            developerInstructions = DesktopAutoOrchestrationPolicy.instructions(
+            baseInstructions = DesktopAutoOrchestrationPolicy.instructions(
                 plan: autoRoutePlan,
                 interactionMode: interactionMode
             )
         } else {
-            developerInstructions = interactionMode == .debug
-                ? DesktopInteractionMode.debugDeveloperInstructions
-                : NSNull()
+            baseInstructions = interactionMode == .debug ? DesktopInteractionMode.debugDeveloperInstructions : nil
         }
+        let instructions = [baseInstructions, guidance].compactMap { $0 }
+        let developerInstructions: Any = instructions.isEmpty ? NSNull() : instructions.joined(separator: "\n\n")
         var settings: [String: Any] = [
             "model": model,
             "developer_instructions": developerInstructions,
@@ -8972,7 +9354,7 @@ final class DesktopCodexStore {
             return
         }
         let turns = thread["turns"] as? [[String: Any]] ?? []
-        timeline = Self.parseTimeline(from: thread).map(applyingPresentationAttachments)
+        timeline = DesktopTimelineItem.placingProviderItems(Self.parseTimeline(from: thread).map(applyingPresentationAttachments) + timeline.filter { $0.providerPredecessor != nil })
         for item in timeline {
             mergeAgentStates(item.agentStates)
         }
@@ -9375,7 +9757,11 @@ final class DesktopCodexStore {
                         payload: payloadByTurnID[failedTurnID]
                     )
                 }
-                if completedTurnID == nil || activeTurnIDByThread[eventThreadID] == completedTurnID {
+                if completedTurnID == nil || activeTurnIDByThread[eventThreadID] == nil
+                    || activeTurnIDByThread[eventThreadID] == completedTurnID {
+                    if protectedTurnThreadIDs.contains(eventThreadID) {
+                        markProtectedTurn(false, threadID: eventThreadID)
+                    }
                     activeTurnIDByThread.removeValue(forKey: eventThreadID)
                 }
                 compactingThreadIDs.remove(eventThreadID)
@@ -9599,6 +9985,9 @@ final class DesktopCodexStore {
                 let uiID = uiThreadID(forRuntimeThreadID: runtimeID)
                 let modeSettings = collaborationMode["settings"] as? [String: Any]
                 let developerInstructions = modeSettings?.string("developer_instructions")
+                guard !protectedTurnThreadIDs.contains(uiID),
+                      interactionModeByThreadID[uiID] != .ask,
+                      interactionModeByThreadID[uiID] != .roblox else { break }
                 let resolvedMode: DesktopInteractionMode
                 if mode == "plan" {
                     resolvedMode = .plan
@@ -9656,6 +10045,7 @@ final class DesktopCodexStore {
     }
 
     private func upsert(item: [String: Any], turnID: String?, uiThreadID: String? = nil) {
+        let item = presentingWildItem(item, turnID: turnID, threadID: uiThreadID ?? selectedThreadID)
         guard let rawParsed = DesktopTimelineItem.parse(item, turnID: turnID) else { return }
         let parsed = applyingPresentationAttachments(rawParsed)
         mergeAgentStates(parsed.agentStates)
@@ -9673,16 +10063,33 @@ final class DesktopCodexStore {
         }
     }
 
+    private func presentingWildItem(_ item: [String: Any], turnID: String?, threadID: String?) -> [String: Any] {
+        let payload = turnID.flatMap { payloadByTurnID[$0] } ?? threadID.flatMap { dispatchedComposerByThread[$0] }
+        guard let payload, payload.wild else { return item }
+        let kind = item.string("type")
+        let purpose = item.string("purpose") ?? (item["_meta"] as? [String: Any])?.string("purpose")
+        let value = purpose?.lowercased()
+        let requestsImage = payload.text.range(
+            of: #"(?i)\b(generate|create|draw|render|make|produce|design)\b[^.\n]{0,60}\b(image|picture|illustration|logo|icon|poster|concepts?|mockups?|visuals?)\b"#,
+            options: .regularExpression
+        ) != nil
+        guard kind == "webSearch" || (kind == "imageGeneration" && (value == "research" || value == "reference" || (value == nil && !requestsImage))) else { return item }
+        var presented = item
+        presented["veoWildResearch"] = true
+        return presented
+    }
+
     private func persistVeoItemJSON(
         _ item: [String: Any],
         veoID: String,
         turnID: String?,
         sortIndex: Int = 0
     ) {
+        let presented = presentingWildItem(item, turnID: turnID, threadID: veoID)
         Task {
             try? await threadStore.upsertItemJSON(
                 veoID: veoID,
-                item: item,
+                item: presented,
                 turnID: turnID,
                 sortIndex: sortIndex
             )

@@ -25,7 +25,9 @@
 	<key>NSHumanReadableCopyright</key>
 	<string>Copyright © 2026 Ash. Licensed under Apache 2.0.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Veo uses the microphone only when you start an experimental realtime voice session with Codex.</string>
+	<string>Veo uses your microphone when you dictate a draft or start a realtime voice session.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Veo uses on-device Apple Speech to turn dictation into an editable draft.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 	<key>CFBundleURLTypes</key>

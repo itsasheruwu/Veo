@@ -11,6 +11,7 @@ enum DesktopTimelineEntry: Identifiable, Equatable {
     case plan(DesktopTimelineItem)
     case activity(DesktopActivityGroup)
     case viewedImages(DesktopViewedImagesGroup)
+    case imageGeneration(DesktopTimelineItem)
 
     var id: String {
         switch self {
@@ -19,6 +20,7 @@ enum DesktopTimelineEntry: Identifiable, Equatable {
         case .plan(let item): return item.id
         case .activity(let group): return group.id
         case .viewedImages(let group): return group.id
+        case .imageGeneration(let item): return item.id
         }
     }
 
@@ -39,14 +41,40 @@ enum DesktopTimelineEntry: Identifiable, Equatable {
             imageItems.removeAll(keepingCapacity: true)
         }
 
-        for item in items {
+        let replies = Dictionary(grouping: items.enumerated().filter { $0.element.kind == .assistant }, by: { $0.element.turnID })
+        var delivered: [String: [DesktopToolArtifact]] = [:]
+        var linkedImages = Set<String>()
+        var emittedSources = Set<String>()
+        for (index, item) in items.enumerated() where item.isGeneratedImage && !item.isResearch && !item.isImageGenerationInProgress {
+            guard let turnID = item.turnID,
+                  let artifact = item.artifacts.first else { continue }
+            let recipients = replies[turnID] ?? []
+            let named = artifact.kind == .localFile ? recipients.first(where: { $0.element.body.contains(artifact.source) }) : nil
+            guard let reply = named ?? recipients.first(where: { $0.offset > index }) ?? recipients.last else { continue }
+            linkedImages.insert(item.id)
+            if emittedSources.insert(turnID + "|" + artifact.source).inserted {
+                delivered[reply.element.id, default: []].append(artifact)
+            }
+        }
+
+        for var item in items {
+            if item.isGeneratedImage && !item.isResearch {
+                flushActivity()
+                flushImages()
+                if !linkedImages.contains(item.id) { entries.append(.imageGeneration(item)) }
+                continue
+            }
+            if let concepts = delivered[item.id] { item.generatedConcepts = concepts }
             switch item.kind {
             case .imageView:
                 flushActivity()
                 imageItems.append(item)
             case .reasoning, .command, .fileChange, .activity, .planUpdate:
                 flushImages()
-                if let previous = activityItems.last, previous.turnID != item.turnID { flushActivity() }
+                if let previous = activityItems.last, previous.turnID != item.turnID
+                    || previous.isRobloxTool != item.isRobloxTool
+                    || previous.isResearch != item.isResearch
+                    || (item.isResearch && previous.isGeneratedImage != item.isGeneratedImage) { flushActivity() }
                 activityItems.append(item)
             case .plan:
                 flushActivity()
@@ -74,6 +102,8 @@ struct DesktopActivityGroup: Identifiable, Equatable {
 
     var id: String { "activity-group-\(items.first?.id ?? "empty")" }
     var itemIDs: [String] { items.map(\.id) }
+    var isRoblox: Bool { items.first?.isRobloxTool == true }
+    var isResearch: Bool { items.first?.isResearch == true }
     var hasFailure: Bool {
         items.contains { item in
             let status = (item.status ?? "").lowercased()
@@ -127,25 +157,33 @@ struct DesktopActivityGroupView: View {
     var onOpenSubagent: (String) -> Void = { _ in }
 
     @State private var isExpanded = false
+    @State private var isVisible = false
+    @Environment(\.controlActiveState) private var windowState
 
-    private var isActive: Bool {
-        guard isTurnRunning else { return false }
-        return group.items.contains { item in
+    private var liveItem: DesktopTimelineItem? {
+        guard isTurnRunning else { return nil }
+        let active = group.items.filter { item in
             let status = (item.status ?? "").lowercased()
             return status.contains("progress") || status == "running" || status == "active" || status == "pending"
         }
+        return active.last(where: { $0.kind != .reasoning }) ?? active.last
     }
 
     private var hasFailure: Bool { group.hasFailure }
 
-    private var title: String {
+    private func title(for liveItem: DesktopTimelineItem?) -> String {
+        if group.isRoblox { return "Roblox ×\(group.items.count)" + (hasFailure ? " · Failed" : "") }
+        if group.isResearch {
+            let image = group.items.first?.isGeneratedImage == true
+            if let liveItem { return liveItem.isGeneratedImage ? "Generating reference" : "Referencing" }
+            if group.items.contains(where: { $0.status?.localizedCaseInsensitiveContains("cancel") == true }) { return "Reference canceled" }
+            if hasFailure { return "Reference failed" }
+            return image ? "Referenced generation" : "Referenced"
+        }
+        if let liveItem { return activeTitle(for: liveItem) }
         let tools = group.items.filter { $0.kind != .reasoning }
         let reasoningCount = group.items.count - tools.count
 
-        if isActive {
-            if let latestTool = tools.last { return activeTitle(for: latestTool) }
-            return "Thinking"
-        }
         if let summary = group.completedSummary { return summary }
         if tools.isEmpty { return reasoningCount == 1 ? "Thought through the approach" : "Reasoned through the task" }
         if tools.count == 1, let tool = tools.first { return completedTitle(for: tool) }
@@ -159,26 +197,46 @@ struct DesktopActivityGroupView: View {
 
     var body: some View {
         let sites = DesktopActivitySite.extract(from: group.items)
+        let liveItem = liveItem
+        let title = title(for: liveItem)
+        let headerID = (liveItem?.id ?? "") + "\n" + title
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 7) {
                 Button(action: toggleExpanded) {
-                    HStack(spacing: 8) {
-                        statusMark
+                    ZStack(alignment: .leading) {
+                        HStack(spacing: 8) {
+                            if group.isRoblox || group.isResearch {
+                                DesktopModeGlyph(name: group.isRoblox ? "veo.roblox" : "veo.wild")
+                                    .foregroundStyle(group.isRoblox ? Color.red : .pink)
+                                    .accessibilityHidden(true)
+                            } else if let liveItem {
+                                Image(systemName: liveItem.activityGlyph)
+                                    .font(.system(size: 10, weight: .medium))
+                                    .symbolEffect(.pulse, options: .repeating, isActive: !reduceMotion)
+                                    .frame(width: 12, height: 12)
+                                    .accessibilityHidden(true)
+                            } else {
+                                DesktopActivityCompletionMark(isLoading: false, hasFailure: hasFailure)
+                                    .frame(width: 12, height: 12)
+                            }
 
-                        if isActive {
-                            DesktopShimmerText(
-                                text: title,
-                                font: .system(size: 11.5, weight: .medium),
-                                baseStyle: AnyShapeStyle(.secondary),
-                                isActive: true
-                            )
-                        } else {
                             Text(title)
                                 .font(.system(size: 11.5, weight: .medium))
-                                .foregroundStyle(.secondary)
                                 .lineLimit(1)
                         }
+                        .modifier(DesktopShimmerStyle(isActive: liveItem != nil && (!group.isResearch || (isVisible && windowState != .inactive))))
+                        .id(headerID)
+                        .transition(reduceMotion ? .identity : .asymmetric(
+                            insertion: .modifier(
+                                active: DesktopActivityReveal(fraction: 0),
+                                identity: DesktopActivityReveal(fraction: 1)
+                            ).combined(with: .opacity),
+                            removal: .opacity
+                        ))
                     }
+                    .frame(height: 15)
+                    .clipped()
+                    .animation(reduceMotion ? nil : .easeOut(duration: 0.24), value: headerID)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -190,7 +248,7 @@ struct DesktopActivityGroupView: View {
 
                 Button(action: toggleExpanded) {
                     HStack(spacing: 4) {
-                        if let stepLabel {
+                        if let stepLabel, !group.isRoblox {
                             Text(stepLabel)
                                 .font(.system(size: 10.5))
                                 .foregroundStyle(.tertiary)
@@ -244,17 +302,14 @@ struct DesktopActivityGroupView: View {
                 .accessibilityHidden(true)
             }
         }
-    }
-
-    @ViewBuilder
-    private var statusMark: some View {
-        DesktopActivityCompletionMark(isLoading: isActive, hasFailure: hasFailure)
-            .frame(width: 12, height: 12)
+        .trackingScrollVisibility { isVisible = $0 }
     }
 
     private func activeTitle(for item: DesktopTimelineItem) -> String {
         switch item.kind {
-        case .command: return "Running a command"
+        case .command:
+            return item.title.isEmpty ? "Running a command" :
+                "Running " + item.title.split(whereSeparator: \.isNewline).joined(separator: " ")
         case .fileChange: return "Updating files"
         case .planUpdate: return "Updating the execution plan"
         case .imageView:
@@ -281,6 +336,37 @@ struct DesktopActivityGroupView: View {
     private func toggleExpanded() {
         withAnimation(reduceMotion ? nil : .easeOut(duration: 0.18)) {
             isExpanded.toggle()
+        }
+    }
+}
+
+private struct DesktopActivityReveal: AnimatableModifier {
+    var fraction: CGFloat
+
+    var animatableData: CGFloat {
+        get { fraction }
+        set { fraction = newValue }
+    }
+
+    func body(content: Content) -> some View {
+        content.mask(alignment: .leading) {
+            GeometryReader { proxy in
+                Rectangle().frame(width: proxy.size.width * fraction)
+            }
+        }
+    }
+}
+
+private extension DesktopTimelineItem {
+    var activityGlyph: String {
+        switch kind {
+        case .reasoning: return "ellipsis"
+        case .command: return "terminal"
+        case .fileChange: return "pencil"
+        case .plan, .planUpdate: return "checklist"
+        case .imageView: return "photo"
+        case .activity where title.localizedCaseInsensitiveContains("web search"): return "magnifyingglass"
+        default: return "gearshape"
         }
     }
 }

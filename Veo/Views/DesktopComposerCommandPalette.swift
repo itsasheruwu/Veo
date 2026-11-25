@@ -128,6 +128,7 @@ struct DesktopComposerAutocompletePanel: View {
         switch suggestion.kind {
         case .file: return "doc.text"
         case .skill: return "bolt.badge.checkmark"
+        case .plugin: return suggestion.source.hasPrefix("chrome@") ? "globe" : "puzzlepiece.extension"
         case .command: return DesktopComposerCommand.named(suggestion.source)?.systemImage ?? "command"
         case .model: return "cube"
         case .reasoning: return "brain"
@@ -139,6 +140,13 @@ struct DesktopComposerAutocompletePanel: View {
         switch suggestion.kind {
         case .file: return veoAccent
         case .skill: return .orange
+        case .plugin:
+            if let hex = store.pluginRecords.first(where: { $0.id == suggestion.source })?.brandColor,
+               hex.hasPrefix("#"), hex.count == 7, let rgb = UInt32(hex.dropFirst(), radix: 16) {
+                return Color(red: Double(rgb >> 16) / 255, green: Double((rgb >> 8) & 255) / 255,
+                             blue: Double(rgb & 255) / 255)
+            }
+            return veoAccent
         case .command: return .secondary
         case .model, .reasoning, .accessMode: return .secondary
         }
@@ -149,6 +157,7 @@ struct DesktopComposerAutocompletePanel: View {
         case .models: return "Models"
         case .reasoning: return "Reasoning"
         case .accessModes: return "Permissions"
+        case .plugins: return "Plugins"
         case nil:
             return store.composerSuggestions.contains(where: { $0.kind == .command })
                 ? "Veo commands"
@@ -164,7 +173,7 @@ struct DesktopComposerAutocompletePanel: View {
             return suggestion.source == store.selectedReasoningEffort
         case .accessMode:
             return suggestion.source == store.accessMode.rawValue
-        case .file, .skill, .command:
+        case .file, .skill, .plugin, .command:
             return false
         }
     }

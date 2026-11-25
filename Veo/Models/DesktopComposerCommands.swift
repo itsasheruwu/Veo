@@ -8,6 +8,7 @@ enum DesktopComposerPaletteContext: Hashable {
     case models
     case reasoning
     case accessModes
+    case plugins
 }
 
 enum DesktopComposerCommandAction: Hashable {
@@ -20,6 +21,7 @@ enum DesktopComposerCommandAction: Hashable {
     case review
     case sideChat
     case rename
+    case move
     case archive
     case fork
     case agentic
@@ -78,6 +80,7 @@ struct DesktopComposerCommand: Identifiable, Hashable {
         .init(name: "rename", description: "Rename the current chat in Veo", action: .rename, systemImage: "pencil", supportsInlineArguments: true),
         .init(name: "new", description: "Start a new chat", action: .newChat, systemImage: "square.and.pencil", supportsInlineArguments: true),
         .init(name: "temporary", description: "Make this unused projectless chat temporary", action: .temporaryChat, systemImage: "timer"),
+        .init(name: "move", description: "Move this chat to another project", action: .move, systemImage: "folder"),
         .init(name: "archive", description: "Archive the current Veo chat", action: .archive, systemImage: "archivebox"),
         .init(name: "delete", description: "Delete the current Veo chat with confirmation", action: .delete, systemImage: "trash"),
         .init(name: "fork", description: "Fork the current chat at a chosen point", action: .fork, systemImage: "arrow.triangle.branch"),

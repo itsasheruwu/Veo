@@ -33,6 +33,7 @@ struct DesktopAutoContinuationJob: Identifiable, Codable, Hashable {
     let reasoningEffort: String?
     let serviceTier: String?
     let interactionMode: DesktopInteractionMode
+    var wild: Bool?
     let routingMode: DesktopModelRoutingMode
     let autoRoutePlan: DesktopAutoRoutePlan?
     var isEnabled: Bool
@@ -55,6 +56,7 @@ struct DesktopAutoContinuationJob: Identifiable, Codable, Hashable {
         case reasoningEffort
         case serviceTier
         case interactionMode
+        case wild
         case routingMode
         case autoRoutePlan
         case isPlanMode
@@ -77,6 +79,7 @@ struct DesktopAutoContinuationJob: Identifiable, Codable, Hashable {
         reasoningEffort: String?,
         serviceTier: String?,
         interactionMode: DesktopInteractionMode,
+        wild: Bool? = nil,
         routingMode: DesktopModelRoutingMode,
         autoRoutePlan: DesktopAutoRoutePlan?,
         isEnabled: Bool,
@@ -96,6 +99,7 @@ struct DesktopAutoContinuationJob: Identifiable, Codable, Hashable {
         self.reasoningEffort = reasoningEffort
         self.serviceTier = serviceTier
         self.interactionMode = interactionMode
+        self.wild = wild
         self.routingMode = routingMode
         self.autoRoutePlan = autoRoutePlan
         self.isEnabled = isEnabled
@@ -127,6 +131,7 @@ struct DesktopAutoContinuationJob: Identifiable, Codable, Hashable {
                 ? .plan
                 : .agentic
         }
+        wild = try container.decodeIfPresent(Bool.self, forKey: .wild)
         routingMode = try container.decodeIfPresent(DesktopModelRoutingMode.self, forKey: .routingMode) ?? .direct
         autoRoutePlan = try container.decodeIfPresent(DesktopAutoRoutePlan.self, forKey: .autoRoutePlan)
         isEnabled = try container.decode(Bool.self, forKey: .isEnabled)
@@ -149,6 +154,7 @@ struct DesktopAutoContinuationJob: Identifiable, Codable, Hashable {
         try container.encodeIfPresent(reasoningEffort, forKey: .reasoningEffort)
         try container.encodeIfPresent(serviceTier, forKey: .serviceTier)
         try container.encode(interactionMode, forKey: .interactionMode)
+        try container.encodeIfPresent(wild, forKey: .wild)
         try container.encode(routingMode, forKey: .routingMode)
         try container.encodeIfPresent(autoRoutePlan, forKey: .autoRoutePlan)
         try container.encode(isEnabled, forKey: .isEnabled)

@@ -18,8 +18,12 @@ struct VeoApp: App {
     @AppStorage(DesktopAppearancePreferences.appearanceModeKey) private var appearanceModeRaw =
         DesktopAppearanceMode.dark.rawValue
 
+    @FocusedValue(\.showWorkspaceTour) private var showWorkspaceTour
+
     init() {
+        let existing = UserDefaults.standard.bool(forKey: "VeoDesktop.sliderPickerDefaultApplied")
         DesktopModelPickerUpgrade.applyIfNeeded()
+        WorkspaceTour.initializeProgress(existingProfile: existing)
         DesktopNotificationPreferences.registerDefaults()
         DesktopBrowserPreferences.registerDefaults()
         DesktopAutoContinuationPreferences.registerDefaults()
@@ -29,21 +33,30 @@ struct VeoApp: App {
         (DesktopAppearanceMode(rawValue: appearanceModeRaw) ?? .dark).preferredColorScheme
     }
 
+    private var startsWithTour: Bool {
+        UserDefaults.standard.integer(forKey: WorkspaceTour.progressKey) < WorkspaceTour.finished
+    }
+
     var body: some Scene {
         WindowGroup("Veo", id: "workspace") {
-            DesktopWorkspaceView(store: store, navigation: navigation)
+            DesktopLaunchView(store: store, navigation: navigation)
+                .environmentObject(navigation)
                 .environmentObject(updateService)
                 .environmentObject(notifications)
                 .environmentObject(permissionsPanel)
                 .environmentObject(menuBarController)
                 .preferredColorScheme(preferredColorScheme)
         }
-        .defaultSize(width: 1440, height: 900)
+        .defaultSize(width: startsWithTour ? 558 : 1440, height: startsWithTour ? 548 : 900)
         .defaultPosition(.center)
         .windowResizability(.contentMinSize)
         .windowStyle(.hiddenTitleBar)
         .commands {
             ToolbarCommands()
+            CommandGroup(after: .help) {
+                Button("Welcome to Veo") { showWorkspaceTour?() }
+                    .disabled(showWorkspaceTour == nil)
+            }
 
             CommandGroup(replacing: .newItem) {
                 Button("New Chat") {

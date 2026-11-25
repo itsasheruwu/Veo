@@ -21,7 +21,6 @@ enum DesktopTheme {
     /// Default accent used when no custom color is stored.
     static let accent = Color(red: 0.18, green: 0.55, blue: 0.98)
     static let sidebarWidth: CGFloat = 318
-    static let sidebarTitlebarClearance: CGFloat = 34
     static let conversationWidth: CGFloat = 820
     static let conversationMinWidth: CGFloat = 560
     static let welcomeWidth: CGFloat = 680
@@ -77,14 +76,17 @@ struct DesktopSidebarChromeBackground: ViewModifier {
     func body(content: Content) -> some View {
         content
             .background {
-                switch material {
-                case .solid:
-                    DesktopTheme.sidebar
-                case .mica:
-                    DesktopVisualEffectBackground(material: .sidebar)
-                case .liquidGlass:
-                    liquidGlassBackground
+                Group {
+                    switch material {
+                    case .solid:
+                        DesktopTheme.sidebar
+                    case .mica:
+                        DesktopVisualEffectBackground(material: .sidebar)
+                    case .liquidGlass:
+                        liquidGlassBackground
+                    }
                 }
+                .ignoresSafeArea(.container, edges: .top)
             }
     }
 
@@ -354,6 +356,7 @@ struct DesktopWorkspaceView: View {
     @ObservedObject var navigation: DesktopNavigationState
     @State private var inspectorVisible = false
     @State private var utilityPanelExpanded = false
+    let canPresentNotice: Bool
     @State private var showsModelPickerUpgrade = false
     @SceneStorage("VeoDesktop.utilityPanel.width") private var utilityPanelWidth = 560.0
     @State private var utilityPanelResizeStartWidth: Double?
@@ -444,7 +447,10 @@ struct DesktopWorkspaceView: View {
             }
             menuBarController.setVisible(showsMenuBarIcon)
             store.startIfNeeded()
-            if DesktopModelPickerUpgrade.claimNotice() { showsModelPickerUpgrade = true }
+            if canPresentNotice && store.activeAgent == nil && DesktopModelPickerUpgrade.claimNotice() { showsModelPickerUpgrade = true }
+        }
+        .onChange(of: canPresentNotice && store.activeAgent == nil) { _, ready in
+            if ready && DesktopModelPickerUpgrade.claimNotice() { showsModelPickerUpgrade = true }
         }
         .onChange(of: navigation.page) { _, page in
             if page == .settings {
@@ -480,10 +486,13 @@ struct DesktopWorkspaceView: View {
             }
             store.consumeComposerCommandDestinationRequest()
         }
+        .sheet(item: $store.moveThreadTarget) { thread in
+            DesktopChatMoveSheet(store: store, thread: thread)
+        }
         .sheet(isPresented: $showsModelPickerUpgrade, onDismiss: {
             DesktopModelPickerUpgrade.finishNotice()
         }) {
-            DesktopPickerUpgradeNotice {
+            DesktopPickerUpgradeNotice(store: store) {
                 DesktopModelPickerUpgrade.finishNotice(restoreNative: true)
                 showsModelPickerUpgrade = false
             } keep: {
@@ -1382,7 +1391,7 @@ private struct DesktopSidebarView: View {
             var current = thread
             var visited = Set([thread.id])
             while let parentID = current.parentThreadID,
-                  let parent = byID[parentID],
+                  let parent = byID[parentID], parent.cwd == current.cwd,
                   visited.insert(parentID).inserted {
                 current = parent
             }
@@ -1454,7 +1463,6 @@ private struct DesktopSidebarView: View {
             sidebarFooter
         }
         .desktopSidebarChrome(DesktopSidebarMaterial(rawValue: sidebarMaterialRaw) ?? .solid)
-        .ignoresSafeArea(.container, edges: .top)
         .sheet(item: $renameTarget) { thread in
             DesktopRenameThreadView(thread: thread, store: store)
         }
@@ -1856,7 +1864,7 @@ private struct DesktopSidebarView: View {
         .font(.system(size: 13.5, weight: .medium))
         .labelStyle(VeoSidebarLabelStyle())
         .padding(.horizontal, 10)
-        .padding(.top, DesktopTheme.sidebarTitlebarClearance)
+        .padding(.top, DesktopTheme.spaceXS)
         // The expanded search field supplies its own spacing, so the standing
         // gap below the buttons would otherwise read as dead space.
         .padding(.bottom, showsSearch ? DesktopTheme.spaceXS : DesktopTheme.spaceL)
@@ -1965,6 +1973,13 @@ private struct DesktopSidebarView: View {
 
     @ViewBuilder
     private func threadContextMenu(_ thread: DesktopThread) -> some View {
+        if thread.origin == .veo {
+            Button { store.requestChatMove(thread) } label: {
+                Label("Move to project…", systemImage: "folder")
+            }
+            .disabled(store.moveUnavailableReason(thread) != nil)
+            .help(store.moveUnavailableReason(thread) ?? "Move future turns to a different project")
+        }
         if let parentID = thread.parentThreadID,
            let parent = (store.threads + store.archivedThreads + store.codexThreads + store.archivedCodexThreads)
             .first(where: { $0.id == parentID }) {
@@ -3204,7 +3219,7 @@ private struct DesktopConversationView: View {
                                                 group.items.first.flatMap { turnAnchors.segmentByItem[$0.id] } ?? $0
                                             )
                                     } ?? false
-                                    if !collapsed || group.hasFailure {
+                                    if !collapsed || group.hasFailure || group.isRoblox || group.isResearch {
                                     DesktopActivityGroupView(
                                         group: group,
                                         workspaceURL: store.effectiveWorkspaceURL,
@@ -3220,6 +3235,11 @@ private struct DesktopConversationView: View {
                                     }
 
                                     }
+                                case .imageGeneration(let item):
+                                    DesktopImageGenerationCard(item: item, workspaceURL: store.effectiveWorkspaceURL,
+                                                               isTurnRunning: activeTimelineItemIDs.contains(item.id))
+                                        .id(item.id)
+
                                 case .viewedImages(let group):
                                     DesktopViewedImagesView(
                                         group: group,
@@ -3762,7 +3782,7 @@ private struct DesktopTimelineRow: View {
     private var assistantRow: some View {
         VStack(alignment: .leading, spacing: 7) {
             HStack {
-                Text("Codex")
+                Text(item.title)
                     .font(.system(size: 12, weight: .semibold))
                 Spacer(minLength: 12)
                 Button { showsQuoteEditor = true } label: {
@@ -3776,11 +3796,19 @@ private struct DesktopTimelineRow: View {
             .foregroundStyle(.secondary)
             MarkdownMessageView(
                 source: item.body,
-                artifacts: item.artifacts,
+                artifacts: item.artifacts.filter { artifact in !item.generatedConcepts.contains(where: { $0.source == artifact.source }) },
                 citations: item.citations,
                 workspaceURL: workspaceURL,
                 isStreaming: isActivelyStreamingResponse
             )
+            if item.generatedConcepts.count > 1 {
+                DesktopGeneratedConcepts(artifacts: item.generatedConcepts, workspaceURL: workspaceURL) { concepts, feedback in
+                    store.addConceptFeedback(concepts, from: item.generatedConcepts, feedback: feedback)
+                }
+            } else if let concept = item.generatedConcepts.first {
+                DesktopConceptImage(artifact: concept, workspaceURL: workspaceURL, label: "Generated image")
+                    .frame(maxWidth: 360)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -4111,6 +4139,11 @@ private struct DesktopComposerView: View {
     @AppStorage(DesktopComposerPreferences.contextWindowUsageStyleKey) private var contextWindowUsageStyleRaw =
         DesktopContextWindowUsageStyle.percent.rawValue
     @State private var focusToken = 0
+    @State private var pickerGroup = DesktopComposerPickerGroup()
+    @State private var dictation = DesktopDictation()
+    @State private var dictationDraft: DesktopDictationDraft?
+    @State private var dictatedSelection: (text: String, offset: Int)?
+
     @State private var isOptionsPresented = false
     @State private var recalledPromptIndex: Int?
     @State private var isAttachmentDropTarget = false
@@ -4122,7 +4155,7 @@ private struct DesktopComposerView: View {
                 composerCard
             } else {
                 VStack(spacing: 10) {
-                    DesktopTurnStatusView(store: store, onOpenSubagent: onOpenSubagent)
+                    if !dictation.isActive { DesktopTurnStatusView(store: store, onOpenSubagent: onOpenSubagent) }
                     composerCard
                 }
                     .padding(.horizontal, 16)
@@ -4131,16 +4164,23 @@ private struct DesktopComposerView: View {
             }
         }
         .onAppear { requestFocus() }
+        .onDisappear { dictation.cancel() }
         .onChange(of: isInputVisible) { _, visible in
             if visible { requestFocus() }
+            else { dictation.cancel() }
         }
         .onChange(of: store.selectedThreadID) { _, _ in
+            dictation.cancel()
+            dictatedSelection = nil
             recalledPromptIndex = nil
             requestFocus()
         }
         .onChange(of: store.hasExplicitWorkspace) { _, _ in requestFocus() }
         .onChange(of: store.selectedUserInputRequest?.id) { previousID, requestID in
-            if requestID != nil { isAttachmentDropTarget = false }
+            if requestID != nil {
+                isAttachmentDropTarget = false
+                dictation.cancel()
+            }
             if let previousID, !store.hasPendingRequest(id: previousID) {
                 askQuestionDraftsByRequestID.removeValue(forKey: previousID)
             }
@@ -4151,7 +4191,17 @@ private struct DesktopComposerView: View {
                 pendingIDs.contains($0.key)
             }
         }
-        .onChange(of: store.draft) { _, _ in store.updateComposerAutocomplete() }
+        .onChange(of: store.draft) { _, _ in
+            if dictation.isActive { dictation.cancel() }
+            store.updateComposerAutocomplete()
+        }
+        .onChange(of: store.effectiveWorkspaceURL.path) { _, _ in dictation.cancel() }
+        .onChange(of: store.realtimeSession != nil) { _, active in
+            if active { dictation.cancel() }
+        }
+        .onChange(of: dictation.isActive) { _, active in
+            if !active { requestFocus() }
+        }
         .modifier(ComposerTransitionGeometry(
             namespace: transitionNamespace,
             isEnabled: transitionNamespace != nil,
@@ -4181,6 +4231,7 @@ private struct DesktopComposerView: View {
     }
 
     private func submitDraft() {
+        guard !dictation.isActive else { return }
         store.sendDraft { payload in
             guard !reduceMotion else { return }
             messageSendTransition?.begin(payload)
@@ -4238,14 +4289,14 @@ private struct DesktopComposerView: View {
 
     private var composerCard: some View {
         VStack(spacing: 0) {
-            if !isWelcome && !store.selectedQueuedDrafts.isEmpty {
+            if !dictation.isActive && !isWelcome && !store.selectedQueuedDrafts.isEmpty {
                 DesktopQueuedDraftsView(store: store)
                     .transition(.asymmetric(
                         insertion: .offset(y: 5).combined(with: .opacity),
                         removal: .opacity
                     ))
             }
-            if !store.selectedAsyncQuestions.isEmpty {
+            if !dictation.isActive && !store.selectedAsyncQuestions.isEmpty {
                 DesktopAsyncQuestionsView(store: store)
                 Divider()
             }
@@ -4259,86 +4310,115 @@ private struct DesktopComposerView: View {
                     .transition(.opacity)
             } else {
             VStack(spacing: DesktopTheme.spaceS) {
-            if store.visibleTransientError != nil, store.timeline.isEmpty {
-                DesktopErrorNotice(store: store)
+            if !dictation.isActive {
+                if store.visibleTransientError != nil, store.timeline.isEmpty {
+                    DesktopErrorNotice(store: store)
+                }
+
+                if let plan = reviewPlan,
+                   let error = store.planErrorsByID[plan.reference.storageID],
+                   !error.isEmpty {
+                    Label(error, systemImage: "exclamationmark.triangle.fill")
+                        .font(.system(size: 11.5, weight: .medium))
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                if !isWelcome {
+                    DesktopApprovalReviewPanel(store: store)
+                    DesktopThreadCapabilityBar(store: store)
+                }
+
+                if !store.composerSuggestions.isEmpty {
+                    DesktopComposerAutocompletePanel(store: store)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .transition(commandPaletteTransition)
+                }
+
+                if let visionFallbackStatus = store.visionFallbackStatus {
+                    HStack(spacing: 6) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text(visionFallbackStatus)
+                            .lineLimit(1)
+                    }
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel(visionFallbackStatus)
+                }
+
+                if !store.attachments.isEmpty {
+                    DesktopAttachmentStrip(
+                        attachments: store.attachments,
+                        onRemove: store.removeAttachment,
+                        sendRole: .composer
+                    )
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .allowsHitTesting(store.visionFallbackStatus == nil)
+                }
+
             }
 
-            if let plan = reviewPlan,
-               let error = store.planErrorsByID[plan.reference.storageID],
-               !error.isEmpty {
-                Label(error, systemImage: "exclamationmark.triangle.fill")
-                    .font(.system(size: 11.5, weight: .medium))
-                    .foregroundStyle(.red)
+            ZStack(alignment: .topLeading) {
+                ComposerTextView(
+                    text: $store.draft,
+                    placeholder: isWelcome
+                        ? "Message \(store.providerTitle) in this workspace…"
+                        : (reviewPlan == nil ? "Send follow-up" : "Ask Codex to revise this plan…"),
+                    placeholderColor: composerPlaceholderColor,
+                    fontSize: isWelcome ? 15 : 14,
+                    minHeight: isWelcome ? 70 : 34,
+                    maxHeight: isWelcome ? 130 : 110,
+                    isEditable: isInputVisible && store.hasExplicitWorkspace && store.visionFallbackStatus == nil && !dictation.isActive,
+                    focusToken: focusToken,
+                    selectionAfterUpdate: dictatedSelection,
+                    onSubmit: {
+                        guard isInputVisible, !dictation.isActive else { return true }
+                        if store.executeComposerCommandIfPresent() { return true }
+                        guard store.canSend else { return false }
+                        submitDraft()
+                        return true
+                    },
+                    onTextViewReady: { messageSendTransition?.registerTextView($0) },
+                    onMoveAutocomplete: store.moveComposerSuggestionSelection,
+                    onSelection: store.updateComposerSelection,
+                    onOpenContext: store.openInlineContext,
+                    onRecallPrompt: recallPrompt,
+                    onAcceptAutocomplete: store.acceptSelectedComposerSuggestion,
+                    onDismissAutocomplete: store.dismissComposerSuggestions
+                )
+                .accessibilityLabel("Message \(store.providerTitle)")
+                .onChange(of: store.composerFocusRevision) { _, _ in requestFocus() }
+                .modifier(DesktopSendGeometry(part: .text, role: .composer))
+                .frame(height: dictation.isActive ? 0 : nil)
+                .opacity(dictation.isActive ? 0 : 1)
+                .accessibilityHidden(dictation.isActive)
+                .allowsHitTesting(!dictation.isActive)
+
+                if dictation.isActive, let dictationDraft {
+                    DesktopDictationVisual(
+                        dictation: dictation, draft: dictationDraft, fontSize: isWelcome ? 15 : 14,
+                        maxHeight: isWelcome ? 130 : 110, cancel: dictation.cancel
+                    )
+                    .overlay(alignment: .bottomTrailing) { dictationButton }
+                }
+            }
+            if let error = dictation.error {
+                Label(error, systemImage: "exclamationmark.circle")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            if !isWelcome {
-                DesktopApprovalReviewPanel(store: store)
-                DesktopThreadCapabilityBar(store: store)
-            }
 
-            if !store.composerSuggestions.isEmpty {
-                DesktopComposerAutocompletePanel(store: store)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .transition(commandPaletteTransition)
-            }
-
-            if let visionFallbackStatus = store.visionFallbackStatus {
-                HStack(spacing: 6) {
-                    ProgressView()
-                        .controlSize(.small)
-                    Text(visionFallbackStatus)
-                        .lineLimit(1)
-                }
-                .font(.system(size: 11.5, weight: .medium))
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel(visionFallbackStatus)
-            }
-
-            if !store.attachments.isEmpty {
-                DesktopAttachmentStrip(
-                    attachments: store.attachments,
-                    onRemove: store.removeAttachment,
-                    sendRole: .composer
-                )
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .allowsHitTesting(store.visionFallbackStatus == nil)
-            }
-
-            ComposerTextView(
-                text: $store.draft,
-                placeholder: isWelcome
-                    ? "Message Codex in this workspace…"
-                    : (reviewPlan == nil ? "Send follow-up" : "Ask Codex to revise this plan…"),
-                placeholderColor: composerPlaceholderColor,
-                fontSize: isWelcome ? 15 : 14,
-                minHeight: isWelcome ? 70 : 34,
-                maxHeight: isWelcome ? 130 : 110,
-                isEditable: isInputVisible && store.hasExplicitWorkspace && store.visionFallbackStatus == nil,
-                focusToken: focusToken,
-                onSubmit: {
-                    guard isInputVisible else { return true }
-                    if store.executeComposerCommandIfPresent() { return true }
-                    guard store.canSend else { return false }
-                    submitDraft()
-                    return true
-                },
-                onTextViewReady: { messageSendTransition?.registerTextView($0) },
-                onMoveAutocomplete: store.moveComposerSuggestionSelection,
-                onSelection: store.updateComposerSelection,
-                onOpenContext: store.openInlineContext,
-                onRecallPrompt: recallPrompt,
-                onAcceptAutocomplete: store.acceptSelectedComposerSuggestion,
-                onDismissAutocomplete: store.dismissComposerSuggestions
-            )
-            .accessibilityLabel("Message Codex")
-            .modifier(DesktopSendGeometry(part: .text, role: .composer))
-
+            if !dictation.isActive {
             VStack(alignment: .leading, spacing: 9) {
-                HStack(spacing: 8) {
+                DesktopComposerToolbarLayout {
+                    DesktopWrappingControlsLayout(spacing: 7) {
                     Button {
                         isOptionsPresented.toggle()
                     } label: {
@@ -4351,18 +4431,19 @@ private struct DesktopComposerView: View {
                     .help("Composer options")
                     .accessibilityLabel("Composer options")
                     .popover(isPresented: $isOptionsPresented, arrowEdge: .bottom) {
-                        DesktopComposerOptionsView(store: store) {
+                        DesktopComposerOptionsView(store: store, openProject: {
                             isOptionsPresented = false
-                            DispatchQueue.main.async {
-                                store.chooseWorkspace()
-                            }
-                        }
+                            DispatchQueue.main.async { store.chooseWorkspace() }
+                        }, didInsertPlugin: { isOptionsPresented = false })
                     }
                     .disabled(store.visionFallbackStatus != nil)
                     .layoutPriority(1)
 
-                    HStack(spacing: 7) {
-                        DesktopModelMenu(store: store)
+                    DesktopComposerProviderPicker(store: store)
+                    DesktopModelMenu(store: store)
+                    DesktopComposerPermissionsPicker(store: store)
+                    }
+                    HStack(spacing: 8) {
                         if showsContextWindowUsage, let usage = store.selectedTokenUsage, usage.fractionUsed != nil {
                             DesktopContextWindowUsageView(
                                 usage: usage,
@@ -4371,17 +4452,9 @@ private struct DesktopComposerView: View {
                                 isCompacting: store.isSelectedThreadCompacting
                             )
                         }
-                    }
-                    .layoutPriority(1)
-
-                    accessModeMenu
-                        .fixedSize(horizontal: true, vertical: false)
-                        .layoutPriority(1)
-
-                    Spacer(minLength: 4)
-                    sendNewlineHint
                     DesktopComposerModePills(store: store)
                         .layoutPriority(1)
+                    dictationButton
                     Button {
                         submitDraft()
                     } label: {
@@ -4392,8 +4465,8 @@ private struct DesktopComposerView: View {
                             .foregroundStyle(.black)
                     }
                     .buttonStyle(.plain)
-                    .disabled(!store.canSend)
-                    .opacity(store.canSend ? 1 : 0.42)
+                    .disabled(!store.canSend || dictation.isActive)
+                    .opacity(store.canSend && !dictation.isActive ? 1 : 0.42)
                     .help(sendButtonHelp)
                     .accessibilityLabel(sendButtonHelp)
                     .layoutPriority(1)
@@ -4415,6 +4488,9 @@ private struct DesktopComposerView: View {
                         .layoutPriority(1)
                     }
                 }
+                    }
+                    .environment(\.desktopComposerPickerGroup, pickerGroup)
+
                 if hasSecondaryComposerControls {
                     DesktopWrappingControlsLayout(spacing: 8) {
                         if store.isBusyTurn {
@@ -4536,9 +4612,10 @@ private struct DesktopComposerView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             }
+            }
             .padding(DesktopTheme.spaceM)
 
-            if isWelcome {
+            if isWelcome && !dictation.isActive {
                 DesktopComposerProjectBar(store: store)
             }
             }
@@ -4561,7 +4638,7 @@ private struct DesktopComposerView: View {
             for: URL.self,
             action: { urls, _ in
                 isAttachmentDropTarget = false
-                guard store.visionFallbackStatus == nil,
+                guard !dictation.isActive, store.visionFallbackStatus == nil,
                       store.selectedUserInputRequest == nil else { return false }
                 return store.addDroppedFiles(urls)
             },
@@ -4571,6 +4648,47 @@ private struct DesktopComposerView: View {
                     && store.selectedUserInputRequest == nil
             }
         )
+    }
+
+    private var dictationButton: some View {
+        let enabled = isInputVisible && store.hasExplicitWorkspace && store.visionFallbackStatus == nil
+            && store.selectedThread?.canAcceptDirectInput != false && store.realtimeSession == nil
+        let title = dictation.canFinish ? "Finish dictation" : dictation.isActive ? "Transcribing" : "Dictate"
+        let icon = dictation.canFinish ? "stop.fill" : dictation.isActive ? "ellipsis" : "mic"
+        return Button {
+            if dictation.canFinish {
+                dictation.finish()
+                return
+            }
+            guard enabled, !dictation.isActive else { return }
+            let snapshot = store.dictationDraft()
+            dictationDraft = snapshot
+            dictatedSelection = nil
+            _ = store.dismissComposerSuggestions()
+            Task {
+                await dictation.start { spoken in
+                    guard store.isCurrentDictationDraft(snapshot) else { return }
+                    let result = snapshot.inserting(spoken)
+                    dictatedSelection = (result.text, result.end)
+                    store.draft = result.text
+                    store.updateComposerSelection(text: result.text, range: NSRange(location: result.end, length: 0))
+                }
+            }
+        } label: {
+            Image(systemName: icon)
+                .font(.system(size: dictation.canFinish ? 9 : 12, weight: .semibold))
+                .frame(width: 28, height: 28)
+                .background(DesktopTheme.raised, in: Circle())
+                .contentShape(Circle())
+                .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
+                .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: icon)
+        }
+        .buttonStyle(.plain)
+        .keyboardShortcut("d", modifiers: [.command, .shift])
+        .disabled(!enabled || (dictation.isActive && !dictation.canFinish))
+        .help(title + " (⌘⇧D)")
+        .accessibilityLabel(title)
+        .layoutPriority(1)
     }
 
     private func askQuestionsDraftBinding(
@@ -4618,38 +4736,6 @@ private struct DesktopComposerView: View {
         }
     }
 
-    private var accessModeMenu: some View {
-        Menu {
-            Picker(
-                "Access mode",
-                selection: Binding(
-                    get: { store.accessMode },
-                    set: { store.updateAccessMode($0) }
-                )
-            ) {
-                ForEach(DesktopAccessMode.allCases) { mode in
-                    Label(mode.title, systemImage: mode.symbolName)
-                        .tag(mode)
-                }
-            }
-            .pickerStyle(.inline)
-            .labelsHidden()
-        } label: {
-            Label(store.accessMode.title, systemImage: store.accessMode.symbolName)
-                .labelStyle(.titleAndIcon)
-                .font(.system(size: 11.5, weight: .medium))
-                .foregroundStyle(store.accessMode == .fullAccess ? .orange : .secondary)
-        }
-        .menuStyle(.borderlessButton)
-        // A borderless menu paints its label with the tint, so the risk cue for
-        // full access has to be set there rather than with foregroundStyle alone.
-        .tint(store.accessMode == .fullAccess ? Color.orange : Color.secondary)
-        .lineLimit(1)
-        .help(store.accessMode.detail)
-        .accessibilityLabel("Access mode")
-        .accessibilityValue(store.accessMode.title)
-    }
-
     private var followUpMenu: some View {
         Menu {
             ForEach(DesktopFollowUpBehavior.allCases) { behavior in
@@ -4667,24 +4753,6 @@ private struct DesktopComposerView: View {
         }
         .menuStyle(.borderlessButton)
         .help("Choose how messages sent during an active turn are handled")
-    }
-
-    @ViewBuilder
-    private var sendNewlineHint: some View {
-        if store.hasExplicitWorkspace,
-           !store.isRunningTurn,
-           !store.isPlanModeEnabled,
-           !store.isDebugModeEnabled,
-           !store.isGoalModeEnabled {
-            ViewThatFits(in: .horizontal) {
-                Text("↩ send · ⇧↩ newline")
-                    .font(.system(size: 10.5, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .fixedSize()
-                EmptyView()
-            }
-        }
     }
 
     private var sendButtonHelp: String {

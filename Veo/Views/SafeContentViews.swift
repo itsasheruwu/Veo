@@ -30,14 +30,14 @@ enum SafeExternalURLPolicy {
 
 // MARK: - Local file validation
 
-private enum SafeLocalFileKind {
+enum SafeLocalFileKind {
     case text
     case image
     case pdf
     case other
 }
 
-private struct SafeLocalFileDescriptor {
+struct SafeLocalFileDescriptor {
     static let maximumTextBytes: Int64 = 1_048_576
     static let maximumImageBytes: Int64 = 16_777_216
     static let maximumPDFBytes: Int64 = 26_214_400
@@ -700,7 +700,7 @@ private struct SafeToolArtifactRow: View {
     }
 }
 
-private struct SafeInlineArtifactImage: View {
+struct SafeInlineArtifactImage: View {
     let artifact: DesktopToolArtifact
     @State private var image: NSImage?
     @State private var didDecode = false
@@ -870,7 +870,7 @@ struct SafeLocalImageThumbnail: View {
     }
 }
 
-private struct SafeLocalImagePreview: View {
+struct SafeLocalImagePreview: View {
     let descriptor: SafeLocalFileDescriptor
     @State private var image: NSImage?
     @State private var failureMessage: String?

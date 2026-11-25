@@ -30,41 +30,39 @@ enum DesktopRuntimeState: Equatable {
 enum DesktopAccessMode: String, CaseIterable, Identifiable, Codable, Hashable {
     case readOnly
     case workspace
+    case autoReview
     case fullAccess
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .readOnly: return "Read only"
-        case .workspace: return "Workspace"
+        case .readOnly: return "Supervised"
+        case .workspace: return "Auto-accept edits"
+        case .autoReview: return "Auto"
         case .fullAccess: return "Full access"
         }
     }
 
-    var shortTitle: String {
-        switch self {
-        case .readOnly: return "Read"
-        case .workspace: return "Workspace"
-        case .fullAccess: return "Full"
-        }
-    }
+    var shortTitle: String { title }
 
     var detail: String {
         switch self {
         case .readOnly:
-            return "Inspect the project without changing files."
+            return "Ask before running commands or writing outside the read-only sandbox."
         case .workspace:
-            return "Read and edit inside the selected project."
+            return "Allow project edits. Ask you before actions that need approval."
+        case .autoReview:
+            return "Use Codex automatic review for actions that need approval."
         case .fullAccess:
-            return "Allow Codex to work anywhere on this Mac."
+            return "Run commands and edit files without approval prompts."
         }
     }
 
     var sandboxValue: String {
         switch self {
         case .readOnly: return "read-only"
-        case .workspace: return "workspace-write"
+        case .workspace, .autoReview: return "workspace-write"
         case .fullAccess: return "danger-full-access"
         }
     }
@@ -76,7 +74,7 @@ enum DesktopAccessMode: String, CaseIterable, Identifiable, Codable, Hashable {
                 "type": "readOnly",
                 "networkAccess": false,
             ]
-        case .workspace:
+        case .workspace, .autoReview:
             return [
                 "type": "workspaceWrite",
                 "writableRoots": [workspacePath],
@@ -87,14 +85,21 @@ enum DesktopAccessMode: String, CaseIterable, Identifiable, Codable, Hashable {
         }
     }
 
-    // Requests that exceed the selected sandbox are routed into Veo's per-thread queue.
-    // The sandbox remains the hard boundary; approvals are explicit and user-scoped.
-    var approvalPolicyValue: String { "on-request" }
+    var approvalPolicyValue: String {
+        switch self {
+        case .readOnly: "untrusted"
+        case .workspace, .autoReview: "on-request"
+        case .fullAccess: "never"
+        }
+    }
+
+    var approvalsReviewer: String { self == .autoReview ? "auto_review" : "user" }
 
     var symbolName: String {
         switch self {
-        case .readOnly: return "eye"
-        case .workspace: return "folder.badge.gearshape"
+        case .readOnly: return "shield"
+        case .workspace: return "square.and.pencil"
+        case .autoReview: return "checkmark.shield"
         case .fullAccess: return "lock.open"
         }
     }
@@ -234,6 +239,7 @@ struct DesktopComposerSuggestion: Identifiable, Hashable {
     enum Kind: String, Hashable {
         case file
         case skill
+        case plugin
         case command
         case model
         case reasoning
@@ -260,6 +266,7 @@ struct DesktopComposerPayload: Identifiable, Codable, Hashable {
     /// Frozen at enqueue time so switching models or preferences cannot retarget a queued turn.
     var contextWindow: Int?
     let interactionMode: DesktopInteractionMode
+    var wild: Bool
     let routingMode: DesktopModelRoutingMode
     let autoRoutePlan: DesktopAutoRoutePlan?
     var autoModelSelectionEnabled: Bool = false
@@ -280,6 +287,7 @@ struct DesktopComposerPayload: Identifiable, Codable, Hashable {
         serviceTier: String? = nil,
         contextWindow: Int? = nil,
         interactionMode: DesktopInteractionMode = .agentic,
+        wild: Bool = false,
         routingMode: DesktopModelRoutingMode = .direct,
         autoRoutePlan: DesktopAutoRoutePlan? = nil,
         daybreakEnabled: Bool? = nil,
@@ -296,6 +304,7 @@ struct DesktopComposerPayload: Identifiable, Codable, Hashable {
         self.serviceTier = serviceTier
         self.contextWindow = contextWindow
         self.interactionMode = interactionMode
+        self.wild = wild
         self.routingMode = routingMode
         self.autoRoutePlan = autoRoutePlan
         self.daybreakEnabled = daybreakEnabled
@@ -315,6 +324,7 @@ struct DesktopComposerPayload: Identifiable, Codable, Hashable {
         case serviceTier
         case contextWindow
         case interactionMode
+        case wild
         case routingMode
         case autoRoutePlan
         case visionFallback
@@ -356,6 +366,7 @@ struct DesktopComposerPayload: Identifiable, Codable, Hashable {
                 ? .plan
                 : .agentic
         }
+        wild = try container.decodeIfPresent(Bool.self, forKey: .wild) ?? false
         routingMode = try container.decodeIfPresent(DesktopModelRoutingMode.self, forKey: .routingMode) ?? .direct
         autoRoutePlan = try container.decodeIfPresent(DesktopAutoRoutePlan.self, forKey: .autoRoutePlan)
         visionFallback = try container.decodeIfPresent(DesktopVisionFallbackContext.self, forKey: .visionFallback)
@@ -379,6 +390,7 @@ struct DesktopComposerPayload: Identifiable, Codable, Hashable {
         try container.encodeIfPresent(serviceTier, forKey: .serviceTier)
         try container.encodeIfPresent(contextWindow, forKey: .contextWindow)
         try container.encode(interactionMode, forKey: .interactionMode)
+        if wild { try container.encode(wild, forKey: .wild) }
         try container.encode(routingMode, forKey: .routingMode)
         try container.encodeIfPresent(autoRoutePlan, forKey: .autoRoutePlan)
         try container.encodeIfPresent(visionFallback, forKey: .visionFallback)
@@ -402,7 +414,7 @@ struct DesktopComposerPayload: Identifiable, Codable, Hashable {
             ? DesktopInteractionMode.applyingDebugInstructions(to: trimmedText)
             : trimmedText
         if !text.isEmpty {
-            input.append(["type": "text", "text": text])
+            input.append(["type": "text", "text": DesktopInlineContext.pluginProtocolText(text)])
         }
         if let visionFallback {
             input.append(["type": "text", "text": visionFallback.protocolText])
@@ -516,8 +528,10 @@ struct DesktopInteractionSnapshot: Codable {
 struct DesktopReasoningOption: Identifiable, Hashable {
     let id: String
     let description: String
+    var providerTitle: String? = nil
 
     var title: String {
+        if let providerTitle { return providerTitle }
         switch id.lowercased() {
         case "none": return "None"
         case "minimal": return "Minimal"
@@ -907,7 +921,7 @@ struct DesktopThread: Identifiable, Hashable {
     let sessionID: String?
     let title: String
     let preview: String
-    let cwd: String
+    var cwd: String
     let updatedAt: Date
     var status: String
     let isPinned: Bool
@@ -1353,6 +1367,30 @@ struct DesktopTimelineItem: Identifiable, Hashable {
     var citations: [DesktopCitationEntry] = []
     var terminalInteractions: [String] = []
     var asyncQuestions: [DesktopAsyncQuestion] = []
+    var providerPredecessor: String? = nil
+    var isGeneratedImage = false
+    var isResearch = false
+    var isRobloxTool = false
+    var generatedConcepts: [DesktopToolArtifact] = []
+
+    var isImageGenerationInProgress: Bool {
+        let state = status?.lowercased() ?? ""
+        return isGeneratedImage && (state.contains("progress") || ["running", "pending", "active"].contains(state))
+    }
+
+    /// A local provider reply has no position in the Codex CLI history.
+    /// Place it after the last item the user saw when the turn was sent.
+    static func placingProviderItems(_ items: [Self]) -> [Self] {
+        guard items.contains(where: { $0.providerPredecessor != nil }) else { return items }
+        let local = items.filter { $0.providerPredecessor != nil }
+        var result = items.filter { $0.providerPredecessor == nil }
+        for item in local {
+            let anchor = item.providerPredecessor ?? ""
+            let position = anchor.isEmpty ? 0 : result.lastIndex(where: { $0.id == anchor }).map { $0 + 1 } ?? result.endIndex
+            result.insert(item, at: position)
+        }
+        return result
+    }
 
     static func parse(_ object: [String: Any], turnID: String?) -> DesktopTimelineItem? {
         let type = object.string("type") ?? ""
@@ -1397,7 +1435,8 @@ struct DesktopTimelineItem: Identifiable, Hashable {
                 title: "You",
                 body: body,
                 attachments: attachments,
-                status: status
+                status: status,
+                providerPredecessor: object.string("veoAfter")
             )
 
         case "agentMessage":
@@ -1407,11 +1446,12 @@ struct DesktopTimelineItem: Identifiable, Hashable {
                 id: id,
                 turnID: turnID,
                 kind: .assistant,
-                title: "Codex",
+                title: object.string("veoProviderName") ?? "Codex",
                 body: object.string("text") ?? "",
                 status: status,
                 citations: citation?.entries ?? [],
-                asyncQuestions: DesktopAsyncQuestion.parseAgentMessage(object)
+                asyncQuestions: DesktopAsyncQuestion.parseAgentMessage(object),
+                providerPredecessor: object.string("veoAfter")
             )
 
         case "veoUserInputAnswer":
@@ -1483,7 +1523,9 @@ struct DesktopTimelineItem: Identifiable, Hashable {
                 body: error ?? result ?? status?.capitalized ?? "Working",
                 status: status,
                 toolMetadata: DesktopToolMetadata.parse(object),
-                artifacts: artifacts
+                artifacts: artifacts,
+                isResearch: object.bool("veoWildResearch") == true,
+                isRobloxTool: server.localizedCaseInsensitiveContains("roblox")
             )
 
         case "dynamicToolCall":
@@ -1558,7 +1600,9 @@ struct DesktopTimelineItem: Identifiable, Hashable {
             )
 
         case "webSearch":
-            return DesktopTimelineItem(id: id, turnID: turnID, kind: .activity, title: "Web search", body: object.string("query") ?? "Searching", status: status)
+            return DesktopTimelineItem(id: id, turnID: turnID, kind: .activity, title: "Web search",
+                                       body: object.string("query") ?? "Searching", status: status,
+                                       isResearch: object.bool("veoWildResearch") == true)
 
         case "imageView":
             let path = object.string("path") ?? "Image"
@@ -1579,9 +1623,12 @@ struct DesktopTimelineItem: Identifiable, Hashable {
                 turnID: turnID,
                 kind: .activity,
                 title: "Generated image",
-                body: object.string("result") ?? "Complete",
+                body: (object["failure"] as? [String: Any])?.string("message") ?? "",
                 status: status,
-                artifacts: DesktopToolArtifact.parseKnownItem(object).map { [$0] } ?? []
+                artifacts: DesktopToolArtifact.parseKnownItem(object).map { [$0] } ?? [],
+                isGeneratedImage: true,
+                isResearch: object.bool("veoWildResearch") == true
+                    || ["research", "reference"].contains(object.string("purpose")?.lowercased() ?? "")
             )
 
         case "enteredReviewMode":
@@ -2067,6 +2114,7 @@ private func visibleUserPromptText(_ source: String) -> String? {
         ("<recommended_plugins>", "</recommended_plugins>"),
         ("<goal_context>", "</goal_context>"),
         ("<user_action>", "</user_action>"),
+        ("<veo_provider_history>", "</veo_provider_history>"),
         ("<veo_vision_context>", "</veo_vision_context>"),
         ("<codex_internal_context", "</codex_internal_context>"),
     ]

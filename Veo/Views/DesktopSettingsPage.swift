@@ -21,7 +21,7 @@ struct DesktopSettingsSidebarView: View {
                 .font(.system(size: 18, weight: .semibold))
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, DesktopTheme.spaceL)
-                .padding(.top, DesktopTheme.sidebarTitlebarClearance + 4)
+                .padding(.top, DesktopTheme.spaceS)
                 .padding(.bottom, DesktopTheme.spaceM)
 
             ScrollView {
@@ -66,7 +66,6 @@ struct DesktopSettingsSidebarView: View {
             .accessibilityLabel("Back to workspace")
         }
         .desktopSidebarChrome(DesktopSidebarMaterial(rawValue: sidebarMaterialRaw) ?? .solid)
-        .ignoresSafeArea(.container, edges: .top)
     }
 
     private func goBackToWorkspace() {
@@ -190,7 +189,11 @@ struct DesktopSettingsPage: View {
     @State private var highlightedSettingsAnchor: DesktopSettingsAnchor?
     @State private var selectedChangelogTag: String?
     @State private var hoveredChangelogTag: String?
-    @State private var showsEnabledModels = false
+    private enum ProviderSection: String, CaseIterable {
+        case connections = "Connections"
+        case models = "Enabled models"
+    }
+    @State private var providerSection = ProviderSection.connections
     @State private var showsJevKeySettings = false
     @State private var isAddingProvider = false
     @State private var editingProvider: DesktopConnectedProvider?
@@ -431,8 +434,70 @@ struct DesktopSettingsPage: View {
         switch navigation.settingsCategory {
         case .keyboard:
             DesktopKeyboardSettingsView()
+        case .voice:
+            DesktopDictationSettingsView()
         case .projects:
             DesktopProjectSettingsView(store: store)
+        case .providers:
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack(spacing: 22) {
+                        ForEach(ProviderSection.allCases, id: \.self) { section in
+                            Button {
+                                providerSection = section
+                            } label: {
+                                Text(section.rawValue)
+                                    .font(.system(size: 13, weight: providerSection == section ? .semibold : .regular))
+                                    .foregroundStyle(providerSection == section ? .primary : .secondary)
+                                    .padding(.vertical, 9)
+                                    .overlay(alignment: .bottom) {
+                                        if providerSection == section { Capsule().fill(accentColor).frame(height: 2) }
+                                    }.contentShape(Rectangle())
+                            }.buttonStyle(.plain).accessibilityAddTraits(providerSection == section ? .isSelected : [])
+                        }
+                    }
+                    Divider()
+                }
+                if providerSection == .connections {
+                    DesktopProvidersView(store: store)
+                } else {
+                    DisclosureGroup("Model options") {
+                        SettingsPanel {
+                            SettingsRow(
+                                title: "Include GPT-5.6 models",
+                                detail: "Show the GPT-5.6 family and 5.6 Auto in the composer picker.",
+                                systemImage: "cube"
+                            ) {
+                                Toggle("Include GPT-5.6 models", isOn: Binding(
+                                    get: { store.includeGPT56Models },
+                                    set: { store.setIncludeGPT56Models($0) }
+                                ))
+                                .labelsHidden()
+                                .toggleStyle(.switch)
+                                .controlSize(.small)
+                                .disabled(store.includeGPT56Models && !store.canDisableGPT56Models)
+                            }
+
+                            SettingsPanelDivider()
+
+                            SettingsRow(
+                                title: "Include external models",
+                                detail: "Add API-key or OAuth providers (Kimi Code, Grok). Credentials stay in Veo and are not written to Codex.",
+                                systemImage: "arrow.triangle.branch"
+                            ) {
+                                Toggle("Include external models", isOn: Binding(
+                                    get: { store.includeExternalModels },
+                                    set: { store.setIncludeExternalModels($0) }
+                                ))
+                                .labelsHidden()
+                                .toggleStyle(.switch)
+                                .controlSize(.small)
+                            }
+                        }
+                    }.font(.callout)
+                    DesktopEnabledModelsPopover(store: store, embedded: true)
+                }
+            }
         case .general:
             VStack(alignment: .leading, spacing: 10) {
                 sectionTitle("Auto router")
@@ -570,12 +635,12 @@ struct DesktopSettingsPage: View {
 
                     SettingsRow(
                         title: "Default access",
-                        detail: store.accessMode.detail,
+                        detail: store.defaultAccessMode.detail,
                         systemImage: "shield"
                     ) {
                         Picker("Default access", selection: Binding(
-                            get: { store.accessMode },
-                            set: { store.updateAccessMode($0) }
+                            get: { store.defaultAccessMode },
+                            set: { store.updateDefaultAccessMode($0) }
                         )) {
                             ForEach(DesktopAccessMode.allCases) { mode in
                                 Text(mode.title)
@@ -629,110 +694,6 @@ struct DesktopSettingsPage: View {
                                 || store.appServer0153.memoryUpdatesInFlight.contains(store.selectedThreadID ?? "")
                         )
                     }
-                }
-
-                sectionTitle("Models")
-                    .padding(.top, 16)
-
-                SettingsPanel {
-                    Button {
-                        showsEnabledModels.toggle()
-                    } label: {
-                        SettingsRow(
-                            title: "Enabled models",
-                            detail: "Choose which models appear in the composer picker.",
-                            systemImage: "cube"
-                        ) {
-                            DesktopEnabledModelsSummary(
-                                enabledCount: store.enabledModelCount,
-                                totalCount: max(store.catalogModelCount, store.enabledModelCount)
-                            )
-                        }
-                    }
-                    .buttonStyle(.plain)
-                    .popover(isPresented: $showsEnabledModels, arrowEdge: .top) {
-                        DesktopEnabledModelsPopover(store: store)
-                    }
-                    .accessibilityLabel("Enabled models")
-                    .accessibilityValue("\(store.enabledModelCount) of \(max(store.catalogModelCount, store.enabledModelCount)) on")
-                    .accessibilityHint("Shows a list of switches for each model")
-
-                    SettingsPanelDivider()
-
-                    SettingsRow(
-                        title: "Include GPT-5.6 models",
-                        detail: "Show the GPT-5.6 family and 5.6 Auto in the composer picker.",
-                        systemImage: "cube"
-                    ) {
-                        Toggle("Include GPT-5.6 models", isOn: Binding(
-                            get: { store.includeGPT56Models },
-                            set: { store.setIncludeGPT56Models($0) }
-                        ))
-                        .labelsHidden()
-                        .toggleStyle(.switch)
-                        .controlSize(.small)
-                        .disabled(store.includeGPT56Models && !store.canDisableGPT56Models)
-                    }
-
-                    SettingsPanelDivider()
-
-                    SettingsRow(
-                        title: "Include external models",
-                        detail: "Add API-key or OAuth providers (Kimi Code, Grok). Credentials stay in Veo and are not written to Codex.",
-                        systemImage: "arrow.triangle.branch"
-                    ) {
-                        Toggle("Include external models", isOn: Binding(
-                            get: { store.includeExternalModels },
-                            set: { store.setIncludeExternalModels($0) }
-                        ))
-                        .labelsHidden()
-                        .toggleStyle(.switch)
-                        .controlSize(.small)
-                    }
-
-                    if store.includeExternalModels {
-                        let providers = store.connectedExternalProviders
-                        ForEach(Array(providers.enumerated()), id: \.element.id) { index, provider in
-                            SettingsRow(
-                                title: provider.name,
-                                detail: provider.enabledModels.isEmpty
-                                    ? "Connected · no models in the picker"
-                                    : "\(provider.enabledModels.count) model\(provider.enabledModels.count == 1 ? "" : "s") in the picker",
-                                systemImage: provider.preset?.systemImage ?? "plus.circle",
-                                nestDepth: 1,
-                                nestStyle: .branch
-                            ) {
-                                HStack(spacing: 6) {
-                                    Button("Edit") { editingProvider = provider }
-                                        .buttonStyle(.bordered)
-                                        .controlSize(.small)
-                                    Button("Remove", role: .destructive) {
-                                        store.removeExternalProvider(provider.id)
-                                    }
-                                    .buttonStyle(.bordered)
-                                    .controlSize(.small)
-                                }
-                            }
-                        }
-
-                        SettingsRow(
-                            title: "Add provider",
-                            detail: "Authenticate in Veo. The Codex CLI and Codex app are not changed.",
-                            systemImage: "plus",
-                            nestDepth: 1,
-                            nestStyle: .leaf
-                        ) {
-                            Button("Add…") { isAddingProvider = true }
-                                .buttonStyle(.bordered)
-                                .controlSize(.small)
-                        }
-                    }
-                }
-                .sheet(isPresented: $isAddingProvider) {
-                    DesktopExternalProviderSheet(store: store)
-                }
-                .sheet(item: $editingProvider) { provider in
-                    DesktopExternalProviderSheet(store: store, existing: provider)
                 }
 
                 sectionTitle("Background intelligence")
@@ -820,7 +781,7 @@ struct DesktopSettingsPage: View {
                             SettingsRow(
                                 title: "Codex",
                                 detail: "Always run in full-access yolo mode.",
-                                assetImage: "CodexMark",
+                                providerID: "codex",
                                 nestDepth: 2,
                                 nestStyle: .leaf
                             ) {
@@ -2887,7 +2848,7 @@ private struct AppearanceDiagonalSlash: Shape {
     }
 }
 
-private struct SettingsPanel<Content: View>: View {
+struct SettingsPanel<Content: View>: View {
     var lazy = false
     @ViewBuilder let content: () -> Content
 
@@ -3175,6 +3136,7 @@ private struct SettingsRow<Trailing: View>: View {
     let detail: String
     var systemImage: String? = nil
     var assetImage: String? = nil
+    var providerID: String? = nil
     var iconColor: Color = .secondary
     var detailFontDesign: Font.Design = .default
     var detailIsPath = false
@@ -3235,7 +3197,9 @@ private struct SettingsRow<Trailing: View>: View {
 
     @ViewBuilder
     private var settingsRowIcon: some View {
-        if let assetImage {
+        if let providerID {
+            DesktopProviderMark(id: providerID, size: 22)
+        } else if let assetImage {
             Image(assetImage)
                 .resizable()
                 .interpolation(.high)

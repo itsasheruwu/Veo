@@ -54,6 +54,7 @@ codesign \
   --deep \
   --sign - \
   --options runtime \
+  --entitlements "${project_root}/BuildSupport/Veo.entitlements" \
   --timestamp=none \
   "$signing_app_path"
 

@@ -16,6 +16,7 @@ struct ComposerTextView: NSViewRepresentable {
     var isEditable: Bool
     /// Increment to move keyboard focus into the field.
     var focusToken: Int
+    var selectionAfterUpdate: (text: String, offset: Int)? = nil
     /// Returns true when the Return keypress was consumed as a send; false inserts a newline.
     var onSubmit: () -> Bool
     /// Gives the send transition a weak reference for a snapshot before the draft clears.
@@ -98,7 +99,11 @@ struct ComposerTextView: NSViewRepresentable {
             let oldLength = (previousSource as NSString).length
             let shouldAdvance = selected.location == oldLength || (text as NSString).substring(to: min(selected.location, limit))
                 == (previousSource as NSString).substring(to: min(selected.location, oldLength))
-            let offset = shouldAdvance ? max(0, selected.location + limit - oldLength) : selected.location
+            let offset = if let selectionAfterUpdate, selectionAfterUpdate.text == text, previousSource != text {
+                selectionAfterUpdate.offset
+            } else {
+                shouldAdvance ? max(0, selected.location + limit - oldLength) : selected.location
+            }
             let rendered = ComposerNSTextView.render(text, font: desiredFont)
             textView.textStorage?.setAttributedString(rendered)
             textView.setSelectedRange(NSRange(location: textView.visibleOffset(min(offset, limit)), length: 0))

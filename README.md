@@ -25,6 +25,8 @@ There is no Veo cloud service between the app and Codex. Veo launches `codex app
 
 Veo has no hosted backend, subscription, relay, phone companion, or bundled credentials. It is an independent open-source project and is not an official OpenAI product.
 
+In onboarding or Settings → Providers, you can also connect an independently installed coding agent through the Agent Client Protocol (ACP). Install Node.js and the agent or its ACP adapter, sign in with that agent, then choose Connect. The provider picker to the left of the model picker changes which agent receives your message and conversation context. Each agent uses its own account and reports its available models. Veo launches the local executable inside the selected workspace sandbox.
+
 ## What Veo gives you
 
 ### One workspace across every project

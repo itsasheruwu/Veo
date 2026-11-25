@@ -6,14 +6,15 @@ struct DesktopInlineContext {
     let url: URL
     let source: String
 
-    private static let pattern = try! NSRegularExpression(pattern: #"\[([^\]\n]+)\]\((veo-(?:context|quote)://[^\s)]+)\)"#)
+    private static let pattern = try! NSRegularExpression(pattern: #"\[([^\]\n]+)\]\(((?:veo-(?:context|quote)|plugin)://[^\s)]+)\)"#)
 
     static func scan(_ draft: String) -> [Self] {
         let source = draft as NSString
         return pattern.matches(in: draft, range: NSRange(location: 0, length: source.length)).compactMap { match in
             guard let url = URL(string: source.substring(with: match.range(at: 2))) else { return nil }
-            return .init(range: match.range, label: source.substring(with: match.range(at: 1)),
-                         url: url, source: source.substring(with: match.range))
+            let text = source.substring(with: match.range(at: 1))
+            let label = url.scheme == "plugin" && !text.hasPrefix("@") ? "@" + text : text
+            return .init(range: match.range, label: label, url: url, source: source.substring(with: match.range))
         }
     }
 
@@ -35,6 +36,28 @@ struct DesktopInlineContext {
     static func line(in url: URL) -> Int? {
         URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
             .first { $0.name == "line" }?.value.flatMap(Int.init)
+    }
+
+    private static let pluginID = try! NSRegularExpression(pattern: #"^[a-zA-Z0-9_.-]+@[a-zA-Z0-9_.-]+$"#)
+
+    static func validPluginID(_ id: String) -> Bool {
+        pluginID.firstMatch(in: id, range: NSRange(location: 0, length: (id as NSString).length)) != nil
+    }
+
+    static func pluginProtocolText(_ source: String) -> String {
+        let result = NSMutableString(string: source)
+        for chip in scan(source).reversed() where chip.url.host == "plugin" {
+            guard let id = value(in: chip.url), validPluginID(id) else {
+                result.replaceCharacters(in: chip.range, with: chip.label)
+                continue
+            }
+            let label = chip.label.hasPrefix("@") ? String(chip.label.dropFirst()) : chip.label
+            result.replaceCharacters(in: chip.range, with: "[\(label)](plugin://\(id))")
+        }
+        return (result as String).replacingOccurrences(
+            of: "](plugin://browser@openai-bundled?browserFamily=chrome)",
+            with: "](plugin://chrome@openai-bundled)"
+        )
     }
 
     static func displayText(_ source: String) -> String {

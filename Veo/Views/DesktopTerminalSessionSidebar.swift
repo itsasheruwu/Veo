@@ -73,7 +73,6 @@ struct DesktopTerminalSessionSidebar: View {
             sidebarFooter
         }
         .desktopSidebarChrome(DesktopSidebarMaterial(rawValue: sidebarMaterialRaw) ?? .solid)
-        .ignoresSafeArea(.container, edges: .top)
     }
 
     private var primaryActions: some View {
@@ -99,7 +98,7 @@ struct DesktopTerminalSessionSidebar: View {
         .font(.system(size: 13.5, weight: .medium))
         .labelStyle(DesktopTerminalSidebarLabelStyle())
         .padding(.horizontal, 10)
-        .padding(.top, DesktopTheme.sidebarTitlebarClearance)
+        .padding(.top, DesktopTheme.spaceXS)
         .padding(.bottom, DesktopTheme.spaceL)
     }
 

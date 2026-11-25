@@ -263,6 +263,7 @@ struct DesktopPluginRecord: Identifiable, Hashable {
     let mustShowInstallationInterstitial: Bool
     let privacyPolicyURL: URL?
     let termsOfServiceURL: URL?
+    let brandColor: String?
     let capabilityLabels: [String]
 
     var canInstall: Bool {
@@ -321,6 +322,7 @@ struct DesktopPluginRecord: Identifiable, Hashable {
             termsOfServiceURL: interface
                 .flatMap { DesktopProtocolValue.string($0, "termsOfServiceUrl") }
                 .flatMap(URL.init(string:)),
+            brandColor: interface?.string("brandColor"),
             capabilityLabels: interface?["capabilities"] as? [String] ?? []
         )
     }
@@ -723,11 +725,20 @@ struct DesktopToolArtifact: Identifiable, Hashable {
                 displayName: URL(fileURLWithPath: path).lastPathComponent
             )
         case "imageGeneration":
-            guard let path = DesktopProtocolValue.string(item, "savedPath") else { return nil }
-            return DesktopToolArtifact(
-                id: id, kind: .localFile, source: path, mimeType: nil,
-                displayName: URL(fileURLWithPath: path).lastPathComponent
-            )
+            if let path = DesktopProtocolValue.string(item, "savedPath"), !path.isEmpty {
+                return DesktopToolArtifact(
+                    id: id, kind: .localFile, source: path, mimeType: nil,
+                    displayName: URL(fileURLWithPath: path).lastPathComponent
+                )
+            }
+            if let result = DesktopProtocolValue.string(item, "result"), result.count > 32 {
+                let data = result.hasPrefix("data:image/") ? result.split(separator: ",", maxSplits: 1).last.map(String.init) : result
+                if let data, data.count <= 12_000_000,
+                   data.utf8.prefix(256).allSatisfy({ (65...90).contains($0) || (97...122).contains($0) || (48...57).contains($0) || [43, 47, 61].contains($0) }) {
+                    return DesktopToolArtifact(id: id, kind: .inlineImage, source: data, mimeType: "image/png", displayName: "Generated image")
+                }
+            }
+            return nil
         default:
             return nil
         }

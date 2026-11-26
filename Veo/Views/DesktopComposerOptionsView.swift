@@ -56,7 +56,7 @@ struct DesktopComposerOptionsView: View {
                 Button(action: openProject) {
                     optionLabel(
                         title: "Open Project…",
-                        detail: "Choose a local folder for this chat.",
+                        detail: "Choose a local project folder.",
                         systemImage: "folder.badge.plus",
                         color: veoAccent
                     )
@@ -85,7 +85,7 @@ struct DesktopComposerOptionsView: View {
                 } label: {
                     optionLabel(
                         title: "Mention Project File…",
-                        detail: "Reference a sandbox-safe local path.",
+                        detail: "Reference a file in this project.",
                         systemImage: "doc.text.magnifyingglass",
                         color: .teal
                     )
@@ -115,7 +115,7 @@ struct DesktopComposerOptionsView: View {
 
             optionToggle(
                 title: "Wild",
-                detail: "Find existing implementations and design references.",
+                detail: "Find code and design references.",
                 systemImage: "veo.wild",
                 color: .pink,
                 isOn: Binding(get: { store.isWildEnabled }, set: { store.setWildEnabled($0) })
@@ -157,9 +157,13 @@ struct DesktopComposerOptionsView: View {
 
     private var goalDetail: String {
         if store.activeGoalObjective != nil {
-            return "Keep working on the active goal."
+            return "Continue the active goal."
         }
-        return "Use your next message as an active goal."
+        switch store.goalMode {
+        case .providerManaged: return "Use your next message as a goal."
+        case .loop: return "Your next message starts a Loop."
+        case .gauntlet: return "Your next message starts a Gauntlet."
+        }
     }
 
     private func optionToggle(
@@ -174,8 +178,7 @@ struct DesktopComposerOptionsView: View {
                 title: title,
                 detail: detail,
                 systemImage: systemImage,
-                color: color,
-                detailLines: 2
+                color: color
             )
         }
         .toggleStyle(.switch)
@@ -185,7 +188,8 @@ struct DesktopComposerOptionsView: View {
     }
 
     private func modeOptionLabel(_ mode: DesktopInteractionMode) -> some View {
-        HStack(alignment: .top, spacing: 9) {
+        let unavailable = store.modeUnavailableReason(mode)
+        return HStack(alignment: .top, spacing: 9) {
             DesktopModeGlyph(name: mode.systemImage)
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(modeColor(mode))
@@ -196,10 +200,11 @@ struct DesktopComposerOptionsView: View {
                     .font(.system(size: 12.5, weight: .semibold))
                     .foregroundStyle(.primary)
 
-                Text(store.modeUnavailableReason(mode) ?? mode.detail)
+                Text(unavailable ?? mode.composerMenuDetail)
                     .font(.system(size: 10.5))
                     .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .lineLimit(1)
+                    .help(unavailable ?? mode.composerMenuDetail)
             }
 
             Spacer(minLength: 8)
@@ -212,7 +217,7 @@ struct DesktopComposerOptionsView: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel(mode.title)
         .accessibilityValue(store.interactionMode == mode ? "Selected" : "Not selected")
-        .accessibilityHint(store.modeUnavailableReason(mode) ?? mode.detail)
+        .accessibilityHint(unavailable ?? mode.composerMenuDetail)
     }
 
     private func modeColor(_ mode: DesktopInteractionMode) -> Color {
@@ -229,8 +234,7 @@ struct DesktopComposerOptionsView: View {
         title: String,
         detail: String,
         systemImage: String,
-        color: Color,
-        detailLines: Int = 1
+        color: Color
     ) -> some View {
         HStack(alignment: .top, spacing: 9) {
             DesktopModeGlyph(name: systemImage)
@@ -246,13 +250,25 @@ struct DesktopComposerOptionsView: View {
                 Text(detail)
                     .font(.system(size: 10.5))
                     .foregroundStyle(.secondary)
-                    .lineLimit(detailLines)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .lineLimit(1)
+                    .help(detail)
             }
 
             Spacer(minLength: 8)
         }
         .contentShape(Rectangle())
+    }
+}
+
+private extension DesktopInteractionMode {
+    var composerMenuDetail: String {
+        switch self {
+        case .agentic: "Investigate and make changes."
+        case .plan: "Plan before making changes."
+        case .debug: "Diagnose bugs with evidence."
+        case .ask: "Answer with read-only access."
+        case .roblox: "Use the Roblox and Luau workflow."
+        }
     }
 }
 
@@ -268,24 +284,147 @@ struct DesktopComposerModePills: View {
                         title: mode.title,
                         systemImage: mode.systemImage,
                         color: mode == .plan ? .orange : mode == .debug ? .purple : mode == .roblox ? .red : .blue,
-                        onDismiss: { store.setInteractionMode(.agentic) }
+                        onPress: { store.setInteractionMode(.agentic) }
                     )
                 }
 
                 if store.isWildEnabled {
                     DesktopComposerModePill(title: "Wild", systemImage: "veo.wild", color: .pink,
-                                            onDismiss: { store.setWildEnabled(false) })
+                                            onPress: { store.setWildEnabled(false) })
                 }
 
                 if store.isGoalModeEnabled {
-                    DesktopComposerModePill(
-                        title: "Goal",
-                        systemImage: "target",
-                        color: .green,
-                        onDismiss: { store.setGoalModeEnabled(false) }
-                    )
+                    DesktopGoalModePicker(store: store)
                 }
             }
+        }
+    }
+}
+
+private struct DesktopGoalModePicker: View {
+    let store: DesktopCodexStore
+    @State private var isPresented = false
+
+    var body: some View {
+        DesktopComposerModePill(
+            title: "Goal", systemImage: "target", color: .green,
+            actionImage: "gearshape", actionLabel: "Goal settings", actionValue: store.goalMode.pickerTitle,
+            actionHint: "Choose how this chat works toward its goal", isActionActive: isPresented,
+            onPress: { isPresented.toggle() }
+        )
+        .accessibilityIdentifier("composer-goal-settings")
+        .popover(isPresented: $isPresented, arrowEdge: .top) {
+            VStack(alignment: .leading, spacing: 4) {
+                Label("Goal mode", systemImage: "target")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 7)
+                    .padding(.bottom, 2)
+                ForEach(DesktopGoalMode.allCases) { mode in
+                    modeChoice(mode)
+                }
+                if let status = store.goalModeStatus {
+                    Text(status)
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .help(status)
+                        .padding(.horizontal, 7)
+                }
+                if store.activeGoalObjective != nil {
+                    Text("Turn off Goal to switch modes.")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .padding(.horizontal, 7)
+                }
+                Divider().padding(.vertical, 2)
+                Button {
+                    isPresented = false
+                    store.setGoalModeEnabled(false)
+                } label: {
+                    Label("Turn off Goal", systemImage: "power")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .padding(7)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(10)
+            .frame(width: 268)
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Goal mode")
+        }
+        .onChange(of: store.selectedThreadID) { _, _ in isPresented = false }
+    }
+
+    private func modeChoice(_ mode: DesktopGoalMode) -> some View {
+        let selected = store.goalMode == mode
+        let unavailable = selected ? nil : store.goalModeUnavailableReason(mode)
+        let detail = store.activeGoalObjective == nil ? unavailable ?? mode.pickerDetail : mode.pickerDetail
+        return Button {
+            store.setGoalMode(mode)
+            isPresented = false
+        } label: {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: mode.pickerIcon)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(selected ? Color.green : .secondary)
+                    .frame(width: 17)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(mode.pickerTitle).font(.system(size: 12, weight: .medium))
+                    Text(detail)
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .help(detail)
+                }
+                Spacer(minLength: 6)
+                if selected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(.green)
+                        .accessibilityHidden(true)
+                }
+            }
+            .padding(7)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.green.opacity(selected ? 0.12 : 0), in: RoundedRectangle(cornerRadius: 7))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(mode.pickerTitle)
+        .accessibilityHint(detail)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .disabled(unavailable != nil)
+    }
+}
+
+private extension DesktopGoalMode {
+    var pickerTitle: String {
+        switch self {
+        case .providerManaged: "Provider-managed"
+        case .loop: "Loop"
+        case .gauntlet: "Gauntlet"
+        }
+    }
+
+    var pickerDetail: String {
+        switch self {
+        case .providerManaged: "Use the provider’s built-in goal."
+        case .loop: "Repeat until the goal is met."
+        case .gauntlet: "Build, compare, and revise."
+        }
+    }
+
+    var pickerIcon: String {
+        switch self {
+        case .providerManaged: "target"
+        case .loop: "arrow.clockwise"
+        case .gauntlet: "checkmark.shield"
         }
     }
 }
@@ -295,44 +434,65 @@ private struct DesktopComposerModePill: View {
     let title: String
     let systemImage: String
     let color: Color
-    let onDismiss: () -> Void
+    var actionImage = "xmark"
+    var actionLabel: String?
+    var actionValue: String?
+    var actionHint: String?
+    var isActionActive = false
+    let onPress: () -> Void
 
     @State private var isHovered = false
+    @FocusState private var isFocused: Bool
 
     var body: some View {
-        Button(action: onDismiss) {
+        if actionLabel != nil {
+            pill
+                .focusable(interactions: .activate)
+                .focused($isFocused)
+                .onKeyPress(keys: [.space, .return]) { _ in
+                    onPress()
+                    return .handled
+                }
+        } else {
+            pill
+        }
+    }
+
+    private var pill: some View {
+        let showsAction = isHovered || isActionActive || (actionLabel != nil && isFocused)
+        let spokenLabel = actionLabel ?? "Turn off \(title)"
+        return Button(action: onPress) {
             ZStack {
                 Label {
                     Text(title)
                 } icon: {
                     DesktopModeGlyph(name: systemImage)
                 }
-                    .blur(radius: isHovered ? 3.5 : 0)
-                    .opacity(isHovered ? 0.2 : 1)
+                    .blur(radius: showsAction ? 3.5 : 0)
+                    .opacity(showsAction ? 0.2 : 1)
 
-                Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .bold))
-                    .opacity(isHovered ? 1 : 0)
-                    .scaleEffect(isHovered ? 1 : 0.65)
+                Image(systemName: actionImage)
+                    .font(.system(size: actionLabel == nil ? 9 : 11, weight: .bold))
+                    .opacity(showsAction ? 1 : 0)
+                    .scaleEffect(showsAction ? 1 : 0.65)
+                    .accessibilityHidden(true)
             }
             .font(.system(size: 10.5, weight: .semibold))
             .foregroundStyle(color)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(color.opacity(isHovered ? 0.2 : 0.14), in: Capsule())
-            .overlay(Capsule().stroke(color.opacity(isHovered ? 0.42 : 0.28), lineWidth: 1).allowsHitTesting(false))
+            .background(color.opacity(showsAction ? 0.2 : 0.14), in: Capsule())
+            .overlay(Capsule().stroke(color.opacity(showsAction ? 0.42 : 0.28), lineWidth: 1).allowsHitTesting(false))
             .fixedSize()
             .contentShape(Capsule())
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: showsAction)
         }
         .buttonStyle(.plain)
-        .onHover { hovering in
-            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.16)) {
-                isHovered = hovering
-            }
-        }
-        .help("Turn off \(title)")
-        .accessibilityLabel("Turn off \(title)")
-        .accessibilityHint("Removes \(title) from this chat")
+        .onHover { isHovered = $0 }
+        .help(spokenLabel)
+        .accessibilityLabel(spokenLabel)
+        .accessibilityValue(actionValue ?? "")
+        .accessibilityHint(actionHint ?? "Removes \(title) from this chat")
     }
 }
 

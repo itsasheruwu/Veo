@@ -275,6 +275,7 @@ struct DesktopComposerPayload: Identifiable, Codable, Hashable {
     var autoRouterAllowsUltraReasoning: Bool = false
     var daybreakEnabled: Bool?
     var visionFallback: DesktopVisionFallbackContext?
+    var managedGoalID: String?
     let planHandoff: DesktopPlanHandoff?
 
     init(
@@ -328,6 +329,7 @@ struct DesktopComposerPayload: Identifiable, Codable, Hashable {
         case routingMode
         case autoRoutePlan
         case visionFallback
+        case managedGoalID
         case planHandoff
         case autoModelSelectionEnabled
         case autoRouterMode
@@ -370,6 +372,7 @@ struct DesktopComposerPayload: Identifiable, Codable, Hashable {
         routingMode = try container.decodeIfPresent(DesktopModelRoutingMode.self, forKey: .routingMode) ?? .direct
         autoRoutePlan = try container.decodeIfPresent(DesktopAutoRoutePlan.self, forKey: .autoRoutePlan)
         visionFallback = try container.decodeIfPresent(DesktopVisionFallbackContext.self, forKey: .visionFallback)
+        managedGoalID = try container.decodeIfPresent(String.self, forKey: .managedGoalID)
         planHandoff = try container.decodeIfPresent(DesktopPlanHandoff.self, forKey: .planHandoff)
     }
 
@@ -394,6 +397,7 @@ struct DesktopComposerPayload: Identifiable, Codable, Hashable {
         try container.encode(routingMode, forKey: .routingMode)
         try container.encodeIfPresent(autoRoutePlan, forKey: .autoRoutePlan)
         try container.encodeIfPresent(visionFallback, forKey: .visionFallback)
+        try container.encodeIfPresent(managedGoalID, forKey: .managedGoalID)
         try container.encodeIfPresent(planHandoff, forKey: .planHandoff)
     }
 

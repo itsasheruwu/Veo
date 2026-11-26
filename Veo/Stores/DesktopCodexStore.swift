@@ -381,6 +381,11 @@ final class DesktopCodexStore {
     private(set) var routingMode: DesktopModelRoutingMode = .direct
     var isGoalModeEnabled = false
     private(set) var activeGoalObjective: String?
+    private var goalSelections: [String: DesktopGoalSelection] = [:]
+    @ObservationIgnored private var goalTimer: Timer?
+    @ObservationIgnored private var goalReplies: [String: String] = [:]
+    @ObservationIgnored private var completedGoalDispatches: Set<String> = []
+    @ObservationIgnored private var pendingGoalDispatches: Set<String> = []
     private(set) var threadMinimapTopicStartIDs: Set<String>?
     private(set) var utilityModelPreferenceRevision = 0
     private(set) var runtimeNotices: [DesktopRuntimeNotice] = []
@@ -627,6 +632,7 @@ final class DesktopCodexStore {
         autoContinuationCoordinator.dueHandler = { [weak self] in
             self?.dispatchDueAutoContinuations()
         }
+        restoreManagedGoals()
 
         Task { await loadVeoThreadsFromStore() }
 
@@ -640,7 +646,9 @@ final class DesktopCodexStore {
             if self?.appServer0153.handleDynamicToolRequest(request, route: route, resolveContext: { runtimeID in
                 guard let self,
                       let thread = self.allKnownThreads.first(where: { $0.runtimeThreadID == runtimeID }) else { return nil }
-                return (thread.cwd, self.accessMode.rawValue)
+                let goal = self.goalSelections[thread.id]?.run
+                let mode = goal?.phase == .running ? (goal?.route.accessMode ?? .workspace) : self.accessMode
+                return (thread.cwd, mode.rawValue)
             }) == true { return true }
             return self?.captureServerRequest(request, route: route) ?? false
         }
@@ -655,6 +663,7 @@ final class DesktopCodexStore {
             self.flushPendingTimelineDeltas()
             self.flushInteractionSnapshotPersistence()
             self.runtimeState = .unavailable(message ?? "The local Codex runtime stopped.")
+            self.pauseInterruptedGoals()
             self.isSubmittingTurn = false
             self.isRunningTurn = false
             self.activeTurnID = nil
@@ -3429,6 +3438,7 @@ final class DesktopCodexStore {
     }
 
     func archiveThread(_ thread: DesktopThread) {
+        clearLocalGoal(thread.id, forgetMode: false)
         autoContinuationCoordinator.cancel(threadID: thread.id, detail: "Canceled because the chat was archived.")
         if thread.origin == .veo {
             let affectedThreadIDs = threadFamilyIDs(rootedAt: thread.id)
@@ -3500,6 +3510,7 @@ final class DesktopCodexStore {
     }
 
     func deleteThread(_ thread: DesktopThread) {
+        clearLocalGoal(thread.id, forgetMode: true)
         autoContinuationCoordinator.remove(threadID: thread.id)
         if thread.origin == .veo {
             let affectedThreadIDs = threadFamilyIDs(rootedAt: thread.id)
@@ -4109,8 +4120,7 @@ final class DesktopCodexStore {
         selectedReasoningEffort = defaults.string(forKey: "VeoDesktop.reasoningEffort")
         selectedServiceTier = defaults.string(forKey: "VeoDesktop.serviceTier")
         persistRoutingMode(routingMode, threadID: created.id)
-        isGoalModeEnabled = false
-        activeGoalObjective = nil
+        restoreGoalSelection(for: selectedThreadID)
         transientError = nil
         availableSkillSuggestions = []
         composerSuggestions = []
@@ -4218,8 +4228,7 @@ final class DesktopCodexStore {
         routingMode = availableRoutingMode(
             id.flatMap { routingModeByThreadID[$0] } ?? (id == nil ? defaultRoutingMode : .direct)
         )
-        isGoalModeEnabled = false
-        activeGoalObjective = nil
+        restoreGoalSelection(for: selectedThreadID)
         transientError = nil
         availableSkillSuggestions = []
         composerSuggestions = []
@@ -5596,9 +5605,55 @@ final class DesktopCodexStore {
         }
     }
 
+    var goalMode: DesktopGoalMode {
+        selectedThreadID.flatMap { goalSelections[$0]?.mode } ?? .providerManaged
+    }
+
+    var goalModeStatus: String? {
+        guard let threadID = selectedThreadID, let run = goalSelections[threadID]?.run else { return nil }
+        switch run.phase {
+        case .running: return goalMode == .loop ? "Checking goal…" : "Gauntlet in progress…"
+        case .scheduled: return run.nextCheck.map { "Next check at " + $0.formatted(date: .omitted, time: .shortened) }
+        case .waiting: return run.detail ?? "Waiting for your reply."
+        }
+    }
+
+    func goalModeUnavailableReason(_ mode: DesktopGoalMode) -> String? {
+        if mode != goalMode && (activeGoalObjective != nil || isSubmittingTurn) {
+            return "Turn off the current goal to change its mode."
+        }
+        if mode != .providerManaged && (activeAgent != nil || selectedThread?.origin != .veo) {
+            return "Choose a Veo chat using the local Codex runtime."
+        }
+        return nil
+    }
+
+    func setGoalMode(_ mode: DesktopGoalMode) {
+        guard let threadID = selectedThreadID, mode != goalMode, goalModeUnavailableReason(mode) == nil else { return }
+        updateGoalSelection(.init(mode: mode, armed: mode != .providerManaged && isGoalModeEnabled), for: threadID)
+    }
+
     func setGoalModeEnabled(_ enabled: Bool) {
         guard !enabled || hasExplicitWorkspace else { return }
         guard isGoalModeEnabled != enabled else { return }
+
+        if goalMode != .providerManaged, let threadID = selectedThreadID {
+            if enabled {
+                guard let reason = goalModeUnavailableReason(goalMode) else {
+                    var selection = goalSelections[threadID] ?? DesktopGoalSelection()
+                    selection.armed = true
+                    updateGoalSelection(selection, for: threadID)
+                    return
+                }
+                transientError = reason
+            } else {
+                let isRunningGoal = goalSelections[threadID]?.run?.phase == .running
+                let goalTurnID = goalSelections[threadID]?.run?.turnID
+                clearLocalGoal(threadID, forgetMode: false)
+                if isRunningGoal, let goalTurnID, activeTurnIDByThread[threadID] == goalTurnID { stopTurn() }
+            }
+            return
+        }
 
         if enabled {
             isGoalModeEnabled = true
@@ -5619,7 +5674,7 @@ final class DesktopCodexStore {
                     params: ["threadId": runtimeID]
                 )
             } catch {
-                guard selectedThreadID == threadID else { return }
+                guard selectedThreadID == threadID, goalMode == .providerManaged else { return }
                 isGoalModeEnabled = true
                 activeGoalObjective = previousObjective
                 transientError = "Goal could not be cleared: \(error.localizedDescription)"
@@ -5775,6 +5830,20 @@ final class DesktopCodexStore {
         guard !historyRevertInFlight, !isRestoringCheckpoint else {
             transientError = "Wait for the history change to finish before sending. Your draft is still here."
             return
+        }
+        var payload = payload
+        if let threadID = requestedThreadID, let selection = goalSelections[threadID],
+           selection.armed, selection.mode != .providerManaged {
+            guard !isBusyTurn, activeTurnIDByThread[threadID] == nil else {
+                transientError = "Wait for the current goal turn or stop it before sending a follow-up."
+                return
+            }
+            guard payload.interactionMode == .agentic || payload.interactionMode == .debug || payload.interactionMode == .roblox else {
+                transientError = "Switch to Agentic to send a Loop or Gauntlet goal."
+                return
+            }
+            guard let prepared = prepareManagedGoalPayload(payload, selection: selection, threadID: threadID) else { return }
+            payload = prepared
         }
         if let requestedThreadID {
             autoContinuationCoordinator.cancel(threadID: requestedThreadID, detail: "Canceled by new activity.")
@@ -6167,6 +6236,7 @@ final class DesktopCodexStore {
     func stopTurn() {
         if let id=selectedThreadID, agents.running.contains(id) { agents.stop(id); return }
         guard let threadID = selectedThreadID else { return }
+        if goalSelections[threadID]?.run != nil { clearLocalGoal(threadID, forgetMode: false) }
         if let routingTask = autoRoutingTasks[threadID] {
             routingTask.cancel()
             return
@@ -6367,6 +6437,7 @@ final class DesktopCodexStore {
             await loadSkills()
             await loadAccountResources()
             dispatchDueAutoContinuations()
+            scheduleGoalChecks()
             if realtimeVoiceEnabled { await loadRealtimeVoices() }
         } catch {
             runtimeState = .unavailable(error.localizedDescription)
@@ -8121,7 +8192,7 @@ final class DesktopCodexStore {
                 throw CodexAppServerClientError.invalidInput("Use a direct model and a Codex runtime that supports a read-only turn.")
             }
             let skill = payload.interactionMode == .roblox ? try await DesktopRobloxDevSkill.shared.resolve() : nil
-            let guidance = payload.interactionMode.turnGuidance(wild: payload.wild, skill: skill)
+            var guidance = payload.interactionMode.turnGuidance(wild: payload.wild, skill: skill)
             let uiThreadID: String
             if let originUIThreadID {
                 uiThreadID = originUIThreadID
@@ -8163,8 +8234,22 @@ final class DesktopCodexStore {
                     "Missing local chat metadata for \(uiThreadID)."
                 )
             }
+            if payload.managedGoalID != nil {
+                guard let run = managedGoal(for: payload, threadID: uiThreadID),
+                      let mode = goalSelections[uiThreadID]?.mode, run.workspace == thread.cwd,
+                      agents.choice(uiThreadID) == nil else { throw CancellationError() }
+                guidance = [guidance, mode.guidance(objective: run.objective, interval: run.interval)]
+                    .compactMap { $0 }.joined(separator: "\n\n")
+            }
 
-            if payload.autoModelSelectionEnabled || autoModelChoices[uiThreadID] != nil {
+            let frozenGoalRoute = isAutoContinuation ? managedGoal(for: payload, threadID: uiThreadID)?.resolvedRoute : nil
+            if let frozenGoalRoute {
+                deliveryModel = frozenGoalRoute.model
+                deliveryProviderID = frozenGoalRoute.providerID
+                deliveryEffort = frozenGoalRoute.effort
+                deliveryTier = frozenGoalRoute.tier
+                deliveryContextWindow = frozenGoalRoute.contextWindow
+            } else if payload.autoModelSelectionEnabled || autoModelChoices[uiThreadID] != nil {
                 if let lockedModel = autoModelChoices[uiThreadID] {
                     // The catalog can change, but an existing thread must never reroute.
                     deliveryModel = lockedModel
@@ -8252,17 +8337,17 @@ final class DesktopCodexStore {
 
             // Older persisted payloads predate this snapshot; use the model's
             // suggested window rather than a preference edited after enqueueing.
-            if deliveryContextWindow == nil {
+            if deliveryContextWindow == nil, frozenGoalRoute == nil {
                 deliveryContextWindow = requestedContextWindow(for: deliveryModel, usesAuto: true)
             }
 
-            let contextModelName = deliveryModel
-            if let variant = modelVariantRequest(for: deliveryTier) {
+            let contextModelName = frozenGoalRoute?.modelChoice ?? deliveryModel
+            if frozenGoalRoute == nil, let variant = modelVariantRequest(for: deliveryTier) {
                 deliveryModel = variant.model
                 deliveryProviderID = variant.providerID
                 deliveryTier = nil
             }
-            if deliveryProviderID == nil {
+            if deliveryProviderID == nil, frozenGoalRoute == nil {
                 deliveryProviderID = modelProviderID(for: deliveryModel)
             }
 
@@ -8339,7 +8424,7 @@ final class DesktopCodexStore {
             )
             rememberPresentationAttachments(for: payload, threadID: uiThreadID)
 
-            if selectedThreadID == uiThreadID, !isAutoContinuation, !protected {
+            if selectedThreadID == uiThreadID, payload.managedGoalID == nil, !isAutoContinuation, !protected {
                 try await prepareGoalIfNeeded(threadID: uiThreadID, objective: payload.trimmedText)
             }
 
@@ -8420,6 +8505,19 @@ final class DesktopCodexStore {
             }
             markProtectedTurn(protected, threadID: uiThreadID)
             requestedProtectedTurn = protected
+            if payload.managedGoalID != nil {
+                guard var selection = goalSelections[uiThreadID],
+                      var run = managedGoal(for: payload, threadID: uiThreadID) else { throw CancellationError() }
+                run.resolvedRoute = DesktopGoalRoute(model: deliveryModel, providerID: deliveryProviderID,
+                    modelChoice: contextModelName, effort: deliveryEffort, tier: deliveryTier, contextWindow: deliveryContextWindow)
+                selection.run = run
+                updateGoalSelection(selection, for: uiThreadID)
+                pendingGoalDispatches.insert(payload.id)
+            }
+            defer {
+                pendingGoalDispatches.remove(payload.id)
+                completedGoalDispatches.remove(payload.id)
+            }
             dispatchedComposerByThread[uiThreadID] = payload
             let response = try await client.request(
                 method: "turn/start",
@@ -8429,17 +8527,21 @@ final class DesktopCodexStore {
                 markAutoTurnStarted(threadID: uiThreadID)
             }
             let startedTurnID = (response["turn"] as? [String: Any])?.string("id")
-            if let turnID = startedTurnID {
+            if let turnID = startedTurnID, !completedGoalDispatches.contains(payload.id) {
                 if var checkpoint = workspaceCheckpoint {
                     checkpoint.turnID = turnID
                     DesktopCheckpointLibrary.shared.save(checkpoint)
                 }
                 activeTurnIDByThread[uiThreadID] = turnID
                 payloadByTurnID[turnID] = payload
+                bindManagedGoalTurn(turnID, threadID: uiThreadID, payload: payload)
                 if selectedThreadID == uiThreadID {
                     activeTurnID = turnID
                 }
-                if isAutoContinuation,
+                if payload.managedGoalID != nil, managedGoal(for: payload, threadID: uiThreadID) == nil {
+                    _ = try? await client.request(method: "turn/interrupt", params: ["threadId": runtimeID, "turnId": turnID])
+                }
+                if isAutoContinuation, payload.managedGoalID == nil,
                    let job = autoContinuationCoordinator.job(for: uiThreadID) {
                     autoContinuationCoordinator.update(job.id) {
                         $0.continuationTurnID = turnID
@@ -8448,6 +8550,9 @@ final class DesktopCodexStore {
                     }
                     appendAutoContinuationMarker(threadID: uiThreadID, turnID: turnID)
                 }
+            }
+            if startedTurnID == nil, managedGoal(for: payload, threadID: uiThreadID) != nil {
+                pauseManagedGoal(uiThreadID, detail: "The turn was not confirmed. Send a follow-up to continue.")
             }
             if let handoff = payload.planHandoff {
                 if selectedThreadID == uiThreadID {
@@ -8470,6 +8575,9 @@ final class DesktopCodexStore {
                 isSubmittingTurn = false
             }
         } catch {
+            if let threadID = targetUIThreadID, managedGoal(for: payload, threadID: threadID) != nil {
+                pauseManagedGoal(threadID, detail: "The goal turn could not be confirmed. Send a follow-up to continue.")
+            }
             if requestedProtectedTurn, let threadID = targetUIThreadID,
                case CodexAppServerClientError.rpc = error {
                 markProtectedTurn(false, threadID: threadID)
@@ -8493,6 +8601,7 @@ final class DesktopCodexStore {
             }
             isRunningTurn = false
             activeTurnID = nil
+            if error is CancellationError, payload.managedGoalID != nil { return }
             transientError = error.localizedDescription
             timeline.append(DesktopTimelineItem(
                 id: "error-\(UUID().uuidString)",
@@ -9165,7 +9274,217 @@ final class DesktopCodexStore {
         )
     }
 
+    private func restoreManagedGoals() {
+        if let data = defaults.data(forKey: "VeoDesktop.goalSelections"),
+           let persisted = try? JSONDecoder().decode([String: DesktopGoalSelection].self, from: data) {
+            goalSelections = persisted
+        }
+        pauseInterruptedGoals()
+        restoreGoalSelection(for: selectedThreadID)
+    }
+
+    private func restoreGoalSelection(for threadID: String?) {
+        let selection = threadID.flatMap { goalSelections[$0] }
+        isGoalModeEnabled = selection?.armed ?? false
+        activeGoalObjective = selection?.run?.objective
+    }
+
+    private func updateGoalSelection(_ selection: DesktopGoalSelection?, for threadID: String) {
+        goalSelections[threadID] = selection
+        if let data = try? JSONEncoder().encode(goalSelections) {
+            defaults.set(data, forKey: "VeoDesktop.goalSelections")
+        }
+        if selectedThreadID == threadID, selection?.mode != .providerManaged {
+            restoreGoalSelection(for: threadID)
+        }
+        scheduleGoalChecks()
+    }
+
+    private func clearLocalGoal(_ threadID: String, forgetMode: Bool) {
+        guard var selection = goalSelections[threadID] else { return }
+        goalReplies.removeValue(forKey: threadID)
+        selection.armed = false
+        selection.run = nil
+        updateGoalSelection(forgetMode ? nil : selection, for: threadID)
+    }
+
+    private func prepareManagedGoalPayload(
+        _ incoming: DesktopComposerPayload, selection: DesktopGoalSelection, threadID: String
+    ) -> DesktopComposerPayload? {
+        guard agents.choice(threadID) == nil, let thread = findThread(threadID) else {
+            transientError = "Choose the local Codex runtime to run this goal."
+            return nil
+        }
+        if let run = selection.run, run.workspace != thread.cwd {
+            transientError = "Turn off the goal and start it again in the new project folder."
+            return nil
+        }
+        guard !incoming.trimmedText.isEmpty || selection.run != nil else {
+            transientError = "Enter an objective before starting the goal."
+            return nil
+        }
+        var selection = selection
+        let objective = selection.run?.objective ?? incoming.trimmedText
+        let interval = selection.mode == .loop ? DesktopGoalDirective.interval(in: objective) : nil
+        let runID = selection.run?.id ?? UUID().uuidString
+        var payload = incoming
+        payload.managedGoalID = runID
+        var route = payload
+        route.text = ""
+        route.attachments = []
+        route.visionFallback = nil
+        selection.run = .init(id: runID, objective: objective, workspace: thread.cwd,
+                              interval: interval, route: route, clientID: payload.id)
+        goalReplies.removeValue(forKey: threadID)
+        updateGoalSelection(selection, for: threadID)
+        return payload
+    }
+
+    private func managedGoal(for payload: DesktopComposerPayload, threadID: String) -> DesktopManagedGoal? {
+        guard let id = payload.managedGoalID, let run = goalSelections[threadID]?.run,
+              run.id == id, run.clientID == payload.id, run.phase == .running else { return nil }
+        return run
+    }
+
+    private func pauseManagedGoal(_ threadID: String, detail: String) {
+        guard var selection = goalSelections[threadID], var run = selection.run else { return }
+        run.phase = .waiting
+        run.turnID = nil
+        run.nextCheck = nil
+        run.detail = detail
+        selection.run = run
+        goalReplies.removeValue(forKey: threadID)
+        updateGoalSelection(selection, for: threadID)
+    }
+
+    private func pauseInterruptedGoals() {
+        for (id, selection) in goalSelections where selection.run?.phase == .running {
+            pauseManagedGoal(id, detail: "The previous turn wasn’t confirmed. Send a follow-up to continue.")
+        }
+    }
+
+    private func bindManagedGoalTurn(_ turnID: String, threadID: String, payload: DesktopComposerPayload?) {
+        guard let payload, var selection = goalSelections[threadID], var run = managedGoal(for: payload, threadID: threadID),
+              run.turnID == nil else { return }
+        run.turnID = turnID
+        selection.run = run
+        updateGoalSelection(selection, for: threadID)
+    }
+
+    private func finishManagedGoalTurn(threadID: String, turnID: String, turn: [String: Any]?) {
+        guard var selection = goalSelections[threadID], var run = selection.run,
+              run.phase == .running, run.turnID == turnID else { return }
+        if pendingGoalDispatches.contains(run.clientID) { completedGoalDispatches.insert(run.clientID) }
+        let reply = goalReplies.removeValue(forKey: threadID)
+        let items = turn?["items"] as? [[String: Any]] ?? []
+        let final = items.last(where: { $0.string("type") == "agentMessage" && $0.string("phase") != "commentary" })?.string("text") ?? reply ?? ""
+        guard !(turn?["error"] is [String: Any]),
+              turn?.string("status")?.lowercased() == "completed" else {
+            pauseManagedGoal(threadID, detail: "The turn ended early. Send a follow-up to continue.")
+            return
+        }
+        switch DesktopGoalDirective.read(final) {
+        case .complete:
+            clearLocalGoal(threadID, forgetMode: false)
+        case let .repeatAfter(seconds):
+            run.phase = .scheduled
+            run.nextCheck = Date().addingTimeInterval(TimeInterval(run.interval ?? seconds))
+            run.turnID = nil
+            selection.run = run
+            updateGoalSelection(selection, for: threadID)
+        case .wait:
+            pauseManagedGoal(threadID, detail: "Waiting for your reply.")
+        case nil:
+            pauseManagedGoal(threadID, detail: "No next check was confirmed. Send a follow-up to continue.")
+        }
+    }
+
+    private func scheduleGoalChecks(minimumDelay: TimeInterval = 0.25) {
+        goalTimer?.invalidate()
+        goalTimer = nil
+        guard runtimeState.isReady,
+              let next = goalSelections.values.compactMap({ selection in
+                  selection.run?.phase == .scheduled ? selection.run?.nextCheck : nil
+              }).min() else { return }
+        goalTimer = Timer.scheduledTimer(withTimeInterval: max(minimumDelay, next.timeIntervalSinceNow), repeats: false) { [weak self] _ in
+            Task { @MainActor in self?.dispatchDueGoals() }
+        }
+    }
+
+    private func dispatchDueGoals() {
+        guard runtimeState.isReady else { return }
+        for (threadID, value) in goalSelections {
+            guard var run = value.run, run.phase == .scheduled,
+                  let next = run.nextCheck, next <= Date() else { continue }
+            guard !isThreadTurnActive(threadID), (queuedDraftsByThreadID[threadID] ?? []).isEmpty,
+                  !queuedDispatchingThreadIDs.contains(threadID), !historyRevertInFlight, !isRestoringCheckpoint else { continue }
+            guard let thread = findThread(threadID), thread.cwd == run.workspace, Self.workspaceExists(for: thread),
+                  agents.choice(threadID) == nil, !archivedThreads.contains(where: { $0.id == threadID }) else {
+                pauseManagedGoal(threadID, detail: "The original workspace or provider changed. Turn off the goal to start again.")
+                continue
+            }
+            let route = run.route
+            var payload = DesktopComposerPayload(
+                text: "Continue the current goal using the latest results from this chat.",
+                accessMode: route.accessMode, model: route.model, reasoningEffort: route.reasoningEffort,
+                serviceTier: route.serviceTier, contextWindow: route.contextWindow, interactionMode: route.interactionMode,
+                wild: route.wild, routingMode: route.routingMode, autoRoutePlan: route.autoRoutePlan,
+                daybreakEnabled: route.daybreakEnabled
+            )
+            payload.managedGoalID = run.id
+            payload.autoModelSelectionEnabled = route.autoModelSelectionEnabled
+            payload.autoRouterMode = route.autoRouterMode
+            payload.autoSpeedPolicy = route.autoSpeedPolicy
+            payload.autoRouterAllowsUltraReasoning = route.autoRouterAllowsUltraReasoning
+            run.phase = .running
+            run.clientID = payload.id
+            run.nextCheck = nil
+            var selection = value
+            selection.run = run
+            updateGoalSelection(selection, for: threadID)
+            if selectedThreadID == threadID { isSubmittingTurn = true }
+            Task { await resumeAndDispatchGoal(payload, threadID: threadID) }
+        }
+        scheduleGoalChecks(minimumDelay: 2)
+    }
+
+    private func resumeAndDispatchGoal(_ payload: DesktopComposerPayload, threadID: String) async {
+        defer { if selectedThreadID == threadID, !isRunningTurn { isSubmittingTurn = false } }
+        do {
+            guard let run = managedGoal(for: payload, threadID: threadID),
+                  let runtimeID = runtimeThreadID(forUIThreadID: threadID) else {
+                throw CodexAppServerClientError.invalidInput("The local goal session is unavailable.")
+            }
+            let access = payload.accessMode ?? .workspace
+            var params: [String: Any] = [
+                "threadId": runtimeID, "cwd": run.workspace, "excludeTurns": true,
+                "approvalPolicy": access.approvalPolicyValue, "sandbox": access.sandboxValue
+            ]
+            addApprovalsReviewer(access, to: &params)
+            if let route = run.resolvedRoute {
+                if let model = route.model { params["model"] = model }
+                if let providerID = route.providerID { params["modelProvider"] = providerID }
+                if let tier = route.tier { params["serviceTier"] = tier }
+                if let contextWindow = route.contextWindow { params["config"] = ["model_context_window": contextWindow] }
+            }
+            let metadata = try await client.request(method: "thread/read", params: ["threadId": runtimeID, "includeTurns": false])
+            let threadStatus = (metadata["thread"] as? [String: Any])?.displayString("status")?.lowercased()
+            guard threadStatus == "idle" || threadStatus == "notloaded" else {
+                throw CodexAppServerClientError.invalidInput("The chat already has an active turn.")
+            }
+            guard managedGoal(for: payload, threadID: threadID) != nil else { return }
+            _ = try await client.request(method: "thread/resume", params: params)
+            guard managedGoal(for: payload, threadID: threadID) != nil else { return }
+            await send(payload, to: threadID, isAutoContinuation: true)
+        } catch {
+            if managedGoal(for: payload, threadID: threadID) != nil {
+                pauseManagedGoal(threadID, detail: "The next check could not start. Send a follow-up to continue.")
+            }
+        }
+    }
+
     private func loadGoal(threadID: String) async {
+        guard (goalSelections[threadID]?.mode ?? .providerManaged) == .providerManaged else { return }
         guard let runtimeID = runtimeThreadID(forUIThreadID: threadID) else {
             if selectedThreadID == threadID {
                 isGoalModeEnabled = false
@@ -9178,17 +9497,17 @@ final class DesktopCodexStore {
                 method: "thread/goal/get",
                 params: ["threadId": runtimeID]
             )
-            guard selectedThreadID == threadID else { return }
+            guard selectedThreadID == threadID, goalMode == .providerManaged else { return }
             hydrateGoal(response["goal"] as? [String: Any])
         } catch {
-            guard selectedThreadID == threadID else { return }
+            guard selectedThreadID == threadID, goalMode == .providerManaged else { return }
             isGoalModeEnabled = false
             activeGoalObjective = nil
         }
     }
 
     private func prepareGoalIfNeeded(threadID: String, objective: String) async throws {
-        guard isGoalModeEnabled, activeGoalObjective == nil else { return }
+        guard goalMode == .providerManaged, isGoalModeEnabled, activeGoalObjective == nil else { return }
         guard let runtimeID = runtimeThreadID(forUIThreadID: threadID) else { return }
         let response = try await client.request(
             method: "thread/goal/set",
@@ -9198,7 +9517,7 @@ final class DesktopCodexStore {
                 "status": "active",
             ]
         )
-        guard selectedThreadID == threadID else { return }
+        guard selectedThreadID == threadID, goalMode == .providerManaged else { return }
         hydrateGoal(response["goal"] as? [String: Any])
     }
 
@@ -9713,6 +10032,7 @@ final class DesktopCodexStore {
                 liveTurnStartByThread[eventThreadID] = startedAt
                 if let turnID = turn?.string("id") ?? params.string("turnId") {
                     activeTurnIDByThread[eventThreadID] = turnID
+                    bindManagedGoalTurn(turnID, threadID: eventThreadID, payload: dispatchedComposerByThread[eventThreadID])
                     if turnPresentationsByThread[eventThreadID]?[turnID] == nil {
                         recordTurnPresentation(.init(id: turnID, startedAt: startedAt), threadID: eventThreadID)
                     }
@@ -9746,7 +10066,10 @@ final class DesktopCodexStore {
                     recordTurnPresentation(presentation, threadID: eventThreadID)
                 }
                 let hitUsageLimit = turnError.map(Self.isUsageLimitError) == true
-                if turnError != nil,
+                let isManagedGoalTurn = completedTurnID.map { id in
+                    goalSelections[eventThreadID]?.run?.turnID == id || payloadByTurnID[id]?.managedGoalID != nil
+                } ?? false
+                if turnError != nil, !isManagedGoalTurn,
                    hitUsageLimit,
                    let failedTurnID = completedTurnID,
                    let runtimeThreadID = runtimeEventThreadID {
@@ -9766,6 +10089,7 @@ final class DesktopCodexStore {
                 }
                 compactingThreadIDs.remove(eventThreadID)
                 expirePendingRequests(threadID: eventThreadID, turnID: completedTurnID)
+                if let completedTurnID { finishManagedGoalTurn(threadID: eventThreadID, turnID: completedTurnID, turn: turn) }
                 if !(turn?["error"] is [String: Any]) {
                     if let job = autoContinuationCoordinator.job(for: eventThreadID),
                        job.continuationTurnID == completedTurnID {
@@ -9803,6 +10127,11 @@ final class DesktopCodexStore {
                 updateTurnPlanState(params, threadID: eventThreadID)
             case "item/started", "item/completed":
                 if let item = params["item"] as? [String: Any] {
+                    if method == "item/completed", item.string("type") == "agentMessage",
+                       item.string("phase") != "commentary", let turnID = params.string("turnId"),
+                       goalSelections[eventThreadID]?.run?.turnID == turnID, let text = item.string("text") {
+                        goalReplies[eventThreadID] = text
+                    }
                     if item.string("type") == "contextCompaction" {
                         if method == "item/started" {
                             compactingThreadIDs.insert(eventThreadID)
@@ -9971,11 +10300,13 @@ final class DesktopCodexStore {
             )
 
         case "thread/goal/updated":
-            hydrateGoal(params["goal"] as? [String: Any])
+            if goalMode == .providerManaged { hydrateGoal(params["goal"] as? [String: Any]) }
 
         case "thread/goal/cleared":
-            isGoalModeEnabled = false
-            activeGoalObjective = nil
+            if goalMode == .providerManaged {
+                isGoalModeEnabled = false
+                activeGoalObjective = nil
+            }
 
         case "thread/settings/updated":
             if let settings = params["threadSettings"] as? [String: Any],
@@ -10045,7 +10376,7 @@ final class DesktopCodexStore {
     }
 
     private func upsert(item: [String: Any], turnID: String?, uiThreadID: String? = nil) {
-        let item = presentingWildItem(item, turnID: turnID, threadID: uiThreadID ?? selectedThreadID)
+        let item = presentingConversationItem(item, turnID: turnID, threadID: uiThreadID ?? selectedThreadID)
         guard let rawParsed = DesktopTimelineItem.parse(item, turnID: turnID) else { return }
         let parsed = applyingPresentationAttachments(rawParsed)
         mergeAgentStates(parsed.agentStates)
@@ -10061,6 +10392,16 @@ final class DesktopCodexStore {
         if let veoID, DesktopThreadSelection.parse(veoID).origin == .veo {
             persistVeoItemJSON(item, veoID: veoID, turnID: turnID)
         }
+    }
+
+    private func presentingConversationItem(_ item: [String: Any], turnID: String?, threadID: String?) -> [String: Any] {
+        if item.string("type") == "agentMessage", let turnID, let text = item.string("text"),
+           payloadByTurnID[turnID]?.managedGoalID != nil || threadID.flatMap({ goalSelections[$0]?.run?.turnID }) == turnID {
+            var displayed = item
+            displayed["text"] = DesktopGoalDirective.presentationText(text)
+            return displayed
+        }
+        return presentingWildItem(item, turnID: turnID, threadID: threadID)
     }
 
     private func presentingWildItem(_ item: [String: Any], turnID: String?, threadID: String?) -> [String: Any] {
@@ -10085,7 +10426,7 @@ final class DesktopCodexStore {
         turnID: String?,
         sortIndex: Int = 0
     ) {
-        let presented = presentingWildItem(item, turnID: turnID, threadID: veoID)
+        let presented = presentingConversationItem(item, turnID: turnID, threadID: veoID)
         Task {
             try? await threadStore.upsertItemJSON(
                 veoID: veoID,
@@ -10234,7 +10575,7 @@ final class DesktopCodexStore {
         var merged = incoming
         if merged.asyncQuestions.isEmpty { merged.asyncQuestions = existing.asyncQuestions }
         if merged.clientID == nil { merged.clientID = existing.clientID }
-        if merged.body.isEmpty
+        if (merged.body.isEmpty && DesktopGoalDirective.read(existing.body) == nil)
             || (merged.kind == .command && merged.body.hasPrefix("Running in ")) {
             merged.body = existing.body
         }

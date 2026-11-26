@@ -4430,7 +4430,7 @@ private struct DesktopComposerView: View {
                     .buttonStyle(.plain)
                     .help("Composer options")
                     .accessibilityLabel("Composer options")
-                    .popover(isPresented: $isOptionsPresented, arrowEdge: .bottom) {
+                    .popover(isPresented: $isOptionsPresented, arrowEdge: .top) {
                         DesktopComposerOptionsView(store: store, openProject: {
                             isOptionsPresented = false
                             DispatchQueue.main.async { store.chooseWorkspace() }

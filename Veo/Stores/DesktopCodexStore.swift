@@ -5064,31 +5064,36 @@ final class DesktopCodexStore {
                 return
             }
             Task {
-                do {
-                    let types = try target.resourceValues(forKeys: [.contentTypeKey, .fileSizeKey])
-                    let entry = DesktopWorkspaceFileEntry(
-                        url: target, relativePath: value, name: target.lastPathComponent,
-                        isDirectory: false, isSymbolicLink: false,
-                        contentType: types.contentType, byteCount: Int64(types.fileSize ?? 0)
-                    )
-                    let document = try await DesktopWorkspaceFileService().readText(entry, workspaceURL: workspace)
-                    let lines = document.text.components(separatedBy: .newlines)
-                    guard line <= lines.count else {
-                        NSWorkspace.shared.open(target)
-                        return
-                    }
-                    let lower = max(1, line - 8)
-                    let upper = min(lines.count, line + 8)
-                    let excerpt = (lower...upper).map { index in
-                        (index == line ? "› " : "  ") + "\(index)  " + lines[index - 1]
-                    }.joined(separator: "\n")
-                    showInlineContextPreview(title: "\(value):\(line)", text: excerpt)
-                } catch {
-                    transientError = "Couldn’t open the referenced line: \(error.localizedDescription)"
-                }
+                await previewWorkspaceContext(target, relativePath: value, line: line, workspace: workspace)
             }
         } else if url.host == "terminal" {
             showInlineContextPreview(title: "Captured terminal output", text: value)
+        }
+    }
+
+    private func previewWorkspaceContext(_ target: URL, relativePath: String, line: Int, workspace: URL) async {
+        do {
+            let types = try target.resourceValues(forKeys: [.contentTypeKey, .fileSizeKey])
+            let entry = DesktopWorkspaceFileEntry(
+                url: target, relativePath: relativePath, name: target.lastPathComponent,
+                isDirectory: false, isSymbolicLink: false,
+                contentType: types.contentType, byteCount: Int64(types.fileSize ?? 0)
+            )
+            let document = try await DesktopWorkspaceFileService().readText(entry, workspaceURL: workspace)
+            let lines = document.text.components(separatedBy: .newlines)
+            guard line <= lines.count else {
+                NSWorkspace.shared.open(target)
+                return
+            }
+            let lower = max(1, line - 8)
+            let upper = min(lines.count, line + 8)
+            let excerptLines = (lower...upper).map { index -> String in
+                let marker = index == line ? "› " : "  "
+                return "\(marker)\(index)  \(lines[index - 1])"
+            }
+            showInlineContextPreview(title: "\(relativePath):\(line)", text: excerptLines.joined(separator: "\n"))
+        } catch {
+            transientError = "Couldn’t open the referenced line: \(error.localizedDescription)"
         }
     }
 

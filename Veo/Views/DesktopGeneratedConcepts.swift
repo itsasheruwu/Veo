@@ -16,31 +16,7 @@ struct DesktopImageGenerationCard: View {
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(.secondary)
             if running {
-                TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion || !visible || windowState == .inactive)) { context in
-                    let progress = reduceMotion || !visible || windowState == .inactive ? 0.5 :
-                        (1 - cos(context.date.timeIntervalSinceReferenceDate * .pi / 4)) / 2
-                    Canvas { drawing, size in
-                        var grid = Path()
-                        for x in stride(from: 4.0, to: size.width, by: 8) {
-                            for y in stride(from: 4.0, to: size.height, by: 8) {
-                                grid.addEllipse(in: CGRect(x: x - 0.85, y: y - 0.85, width: 1.7, height: 1.7))
-                            }
-                        }
-                        drawing.fill(grid, with: .color(Color(red: 0.09, green: 0.25, blue: 0.39)))
-                        let center = CGPoint(x: size.width / 2 - 24 + progress * 56, y: size.height / 2 + 24 - 48 * progress)
-                        drawing.scaleBy(x: 1, y: 0.72)
-                        let stretch = CGAffineTransform(scaleX: 1, y: 1 / 0.72)
-                        drawing.opacity = 0.45 + 0.55 * progress
-                        drawing.fill(grid.applying(stretch), with: .radialGradient(
-                            Gradient(colors: [.cyan, .cyan.opacity(0.78), .clear]),
-                            center: center.applying(stretch), startRadius: 8, endRadius: size.width * 0.49
-                        ))
-                    }
-                }
-                .aspectRatio(4 / 3 as CGFloat, contentMode: .fit)
-                .background(Color(red: 0.03, green: 0.05, blue: 0.08), in: RoundedRectangle(cornerRadius: 8))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-                .accessibilityHidden(true)
+                generatingPreview
             } else if let artifact = item.artifacts.first {
                 DesktopConceptImage(artifact: artifact, workspaceURL: workspaceURL, label: "Generated image")
             } else if !item.body.isEmpty {
@@ -52,6 +28,41 @@ struct DesktopImageGenerationCard: View {
         .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 12))
         .trackingScrollVisibility { visible = $0 }
         .onDisappear { visible = false }
+    }
+
+    private var generatingPreview: some View {
+        let paused = reduceMotion || !visible || windowState == .inactive
+        return TimelineView(.animation(minimumInterval: 1.0 / 30, paused: paused)) { context in
+            let phase = context.date.timeIntervalSinceReferenceDate * Double.pi / 4
+            let progress: CGFloat = paused ? 0.5 : CGFloat((1 - cos(phase)) / 2)
+            Canvas { drawing, size in
+                drawGenerationPreview(&drawing, size: size, progress: progress)
+            }
+        }
+        .aspectRatio(4 / 3 as CGFloat, contentMode: .fit)
+        .background(Color(red: 0.03, green: 0.05, blue: 0.08), in: RoundedRectangle(cornerRadius: 8))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .accessibilityHidden(true)
+    }
+
+    private func drawGenerationPreview(_ drawing: inout GraphicsContext, size: CGSize, progress: CGFloat) {
+        var grid = Path()
+        for x in stride(from: CGFloat(4), to: size.width, by: 8) {
+            for y in stride(from: CGFloat(4), to: size.height, by: 8) {
+                grid.addEllipse(in: CGRect(x: x - 0.85, y: y - 0.85, width: 1.7, height: 1.7))
+            }
+        }
+        drawing.fill(grid, with: .color(Color(red: 0.09, green: 0.25, blue: 0.39)))
+        let centerX = size.width / 2 - 24 + progress * 56
+        let centerY = size.height / 2 + 24 - 48 * progress
+        let center = CGPoint(x: centerX, y: centerY)
+        drawing.scaleBy(x: 1, y: 0.72)
+        let stretch = CGAffineTransform(scaleX: 1, y: 1 / 0.72)
+        drawing.opacity = 0.45 + 0.55 * Double(progress)
+        drawing.fill(grid.applying(stretch), with: .radialGradient(
+            Gradient(colors: [.cyan, .cyan.opacity(0.78), .clear]),
+            center: center.applying(stretch), startRadius: 8, endRadius: size.width * 0.49
+        ))
     }
 
     private var title: String {

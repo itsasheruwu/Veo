@@ -1,6 +1,4 @@
-using System.Text.Json;
 using Microsoft.UI.Xaml;
-using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.Web.WebView2.Core;
 using Veo.Core;
@@ -19,28 +17,12 @@ public sealed partial class BrowserPanel : Grid, IAsyncDisposable
         CanReorderTabs = true,
         CanDragTabs = true
     };
-    readonly TextBox address = new()
-    {
-        PlaceholderText = "Search or address",
-        MinWidth = 0,
-        VerticalAlignment = VerticalAlignment.Center
-    };
-    readonly Button back, forward;
     readonly TextBlock progress = new()
     {
         FontSize = 11,
-        TextWrapping = TextWrapping.Wrap
-    };
-    readonly ComboBox viewport = new()
-    {
-        ItemsSource = new[]
-        {
-            "Responsive",
-            "Desktop",
-            "Tablet",
-            "Mobile"
-        },
-        SelectedIndex = 0
+        TextWrapping = TextWrapping.Wrap,
+        Margin = new Thickness(8),
+        Visibility = Visibility.Collapsed
     };
     readonly ToggleMenuFlyoutItem desktop = new()
     {
@@ -54,15 +36,16 @@ public sealed partial class BrowserPanel : Grid, IAsyncDisposable
     Task<CoreWebView2Environment>? environmentTask;
     string? scope;
     bool restoring, loaded, disposed, showingAddress;
-    sealed class Tab(string id, TabViewItem item, Grid content, WebView2 view, StackPanel start)
+    sealed class Tab(string id, TabViewItem item, Grid content, WebView2 view, BrowserStartPage start)
     {
         public readonly string Id = id;
         public readonly TabViewItem Item = item;
         public readonly Grid Content = content;
-        public readonly StackPanel Start = start;
+        public readonly BrowserStartPage Start = start;
         public WebView2 View = view;
         public string Address = "", OriginalAgent = "";
         public string? AddressDraft;
+        public ulong? LoadingNavigationId;
         public long Epoch, PreviewBytes;
         public string? PreviewRoot, PreviewHost;
         public bool Failed, Closed;
@@ -77,127 +60,20 @@ public sealed partial class BrowserPanel : Grid, IAsyncDisposable
         this.workspace = workspace;
         state = new(workspace.DataRoot);
         credentials = new(workspace.DataRoot);
-        AutomationProperties.SetName(address, "Browser address");
-        AutomationProperties.SetAutomationId(address, "BrowserAddress");
-        for (var i = 0; i < 4; i++)
-            RowDefinitions.Add(new() { Height = i == 1 ? new GridLength(1, GridUnitType.Star) : GridLength.Auto });
-        var leading = new StackPanel { Orientation = Orientation.Horizontal };
-        back = NavigationButton(Symbol.Back, "Back", "BrowserBack");
-        back.Click += (_, _) => Guard(() =>
+        BuildNavigation();
+        RowDefinitions.Add(new() { Height = GridLength.Auto });
+        RowDefinitions.Add(new() { Height = GridLength.Auto });
+        RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) });
+        RowDefinitions.Add(new() { Height = GridLength.Auto });
+        RowDefinitions.Add(new() { Height = GridLength.Auto });
+        var pageHost = new ContentControl
         {
-            if (Current?.View.CanGoBack == true)
-                Current.View.GoBack();
-            return Task.CompletedTask;
-        });
-        forward = NavigationButton(Symbol.Forward, "Forward", "BrowserForward");
-        forward.Click += (_, _) => Guard(() =>
-        {
-            if (Current?.View.CanGoForward == true)
-                Current.View.GoForward();
-            return Task.CompletedTask;
-        });
-        var reload = NavigationButton(Symbol.Refresh, "Reload", "BrowserReload");
-        reload.Click += (_, _) => Guard(ReloadAsync);
-        leading.Children.Add(back);
-        leading.Children.Add(forward);
-        leading.Children.Add(reload);
-        RefreshNavigationAvailability();
-
-        var passwords = new MenuFlyout();
-        AddMenu(passwords, "Fill saved password…", FillAsync);
-        AddMenu(passwords, "Remove saved password…", RemovePasswordAsync);
-        var passwordButton = NavigationButton(Symbol.Permissions, "Passwords", "BrowserPasswords");
-        passwordButton.Flyout = passwords;
-
-        var options = new MenuFlyout();
-        AddMenu(options, "Open in default browser", async () =>
-        {
-            if (Current is { PreviewRoot: null } tab && BrowserOrigin.IsWeb(tab.Address))
-                await Windows.System.Launcher.LaunchUriAsync(new(tab.Address));
-        });
-        AddMenu(options, "Developer tools", async () =>
-        {
-            if (Current is { } tab)
-            {
-                await EnsureAsync(tab);
-                tab.View.CoreWebView2.OpenDevToolsWindow();
-            }
-        });
-        AddMenu(options, "Console", () =>
-        {
-            consolePanel.Visibility = consolePanel.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
-            RefreshConsole();
-            return Task.CompletedTask;
-        });
-        AddMenu(options, "Downloads", () =>
-        {
-            downloadsPanel.Visibility = downloadsPanel.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
-            return Task.CompletedTask;
-        });
-        AddMenu(options, "Open workspace HTML…", ChoosePreviewAsync);
-        desktop.Click += (_, _) => Guard(async () =>
-        {
-            state.Value.DesktopSite = desktop.IsChecked == true;
-            await state.SaveAsync();
-            foreach (var tab in browsers.Values)
-                if (tab.View.CoreWebView2 is { } core)
-                    ApplyPreferences(tab, core);
-        });
-        options.Items.Add(desktop);
-        AddMenu(options, "Clear website data…", async () =>
-        {
-            if (Current is not { } tab)
-                return;
-            var dialog = new ContentDialog
-            {
-                Title = "Clear website data?",
-                Content = "Clear cookies, cache and site storage in this Veo profile. Saved Veo passwords are managed separately.",
-                PrimaryButtonText = "Clear data",
-                CloseButtonText = "Cancel",
-                DefaultButton = ContentDialogButton.Close
-            };
-            if (await ShowAsync(dialog) == ContentDialogResult.Primary)
-            {
-                await EnsureAsync(tab);
-                await tab.View.CoreWebView2.Profile.ClearBrowsingDataAsync();
-                progress.Text = "Website data cleared.";
-            }
-        });
-        var more = NavigationButton(Symbol.More, "Browser options", "BrowserOptions");
-        more.Flyout = options;
-        var go = NavigationButton(Symbol.Go, "Navigate browser address", "BrowserGo");
-        go.Click += (_, _) => Guard(NavigateAddressAsync);
-        var trailing = new StackPanel { Orientation = Orientation.Horizontal };
-        trailing.Children.Add(go);
-        trailing.Children.Add(passwordButton);
-        trailing.Children.Add(more);
-
-        var navigation = new Grid { ColumnSpacing = 4, Padding = new Thickness(6, 2, 6, 2) };
-        navigation.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        navigation.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
-        navigation.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        navigation.Children.Add(leading);
-        SetColumn(address, 1);
-        navigation.Children.Add(address);
-        SetColumn(trailing, 2);
-        navigation.Children.Add(trailing);
-        Children.Add(navigation);
-        address.TextChanging += (_, _) =>
-        {
-            if (!showingAddress && Current is { } tab)
-                tab.AddressDraft = address.Text;
-        };
-        address.KeyDown += (_, e) =>
-        {
-            if (e.Key == Windows.System.VirtualKey.Enter)
-            {
-                e.Handled = true;
-                Guard(NavigateAddressAsync);
-            }
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            VerticalContentAlignment = VerticalAlignment.Stretch
         };
         tabs.AddTabButtonClick += (_, _) => Guard(async () =>
         {
-            await AddTabAsync();
+            await AddTabAsync(focusStartPage: true);
             await PersistAsync();
         });
         tabs.TabCloseRequested += (_, e) =>
@@ -207,6 +83,7 @@ public sealed partial class BrowserPanel : Grid, IAsyncDisposable
         };
         tabs.SelectionChanged += (_, _) =>
         {
+            pageHost.Content = Current?.Content;
             RefreshNavigationAvailability();
             if (Current is { } tab)
             {
@@ -218,33 +95,23 @@ public sealed partial class BrowserPanel : Grid, IAsyncDisposable
             Guard(PersistAsync);
         };
         tabs.TabItemsChanged += (_, _) => Guard(PersistAsync);
-        SetRow(tabs, 1);
         Children.Add(tabs);
+        SetRow(navigation, 1);
+        Children.Add(navigation);
+        SetRow(pageHost, 2);
+        Children.Add(pageHost);
         var lower = new StackPanel
         {
             Spacing = 6,
             Margin = new Thickness(8, 0, 8, 0)
         };
-        var layout = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Spacing = 8
-        };
-        layout.Children.Add(new TextBlock { Text = "Viewport", VerticalAlignment = VerticalAlignment.Center });
-        layout.Children.Add(viewport);
-        lower.Children.Add(layout);
-        viewport.SelectionChanged += (_, _) =>
-        {
-            if (Current is { } tab)
-                ApplyViewport(tab);
-            Guard(PersistAsync);
-        };
         BuildConsole(lower);
         BuildDownloads(lower);
-        SetRow(lower, 2);
+        SetRow(lower, 3);
         Children.Add(lower);
-        SetRow(progress, 3);
-        progress.Margin = new Thickness(8);
+        progress.RegisterPropertyChangedCallback(TextBlock.TextProperty, (_, _) =>
+            progress.Visibility = string.IsNullOrEmpty(progress.Text) ? Visibility.Collapsed : Visibility.Visible);
+        SetRow(progress, 4);
         Children.Add(progress);
     }
 
@@ -266,8 +133,11 @@ public sealed partial class BrowserPanel : Grid, IAsyncDisposable
             if (scope == key)
             {
                 foreach (var tab in browsers.Values)
+                {
+                    tab.Start.RefreshSearchEngine();
                     if (tab.View.CoreWebView2 is { } core)
                         ApplyPreferences(tab, core);
+                }
                 return;
             }
 
@@ -282,7 +152,7 @@ public sealed partial class BrowserPanel : Grid, IAsyncDisposable
             var saved = states.GetValueOrDefault(key) ?? state.Restore(key, workspace.Preferences.RestoreBrowserTabs);
             if (saved is null && workspace.Preferences.RestoreBrowserTabs && workspace.Preferences.BrowserTabs.TryGetValue(session.Record.Cwd, out var old))
                 saved = new(old.Where(t => BrowserOrigin.IsWeb(t.Url)).Select(t => new NativeBrowserTab(t.Id, t.Url, t.Title)).Take(32).ToArray(), old.FirstOrDefault()?.Id);
-            viewport.SelectedItem = BrowserStateStore.NormalizeViewport(saved?.Viewport);
+            SetViewport(saved?.Viewport);
             if (saved is not null)
                 foreach (var tab in saved.Tabs)
                     await AddTabAsync(tab.Url, tab.Id, tab.Title);
@@ -304,6 +174,7 @@ public sealed partial class BrowserPanel : Grid, IAsyncDisposable
         showingAddress = true;
         try { address.Text = tab.AddressDraft ?? tab.Address; }
         finally { showingAddress = previous; }
+        RefreshAddressSubmit();
     }
 
     Task NavigateAddressAsync() => NavigateAsync(address.Text, consumeAddressDraft: true);
@@ -321,7 +192,11 @@ public sealed partial class BrowserPanel : Grid, IAsyncDisposable
         ApplyPreferences(tab, tab.View.CoreWebView2);
         tab.PreviewRoot = tab.PreviewHost = null;
         if (consumeAddressDraft && tab.AddressDraft == submittedDraft)
+        {
             tab.AddressDraft = null;
+            if (Current == tab)
+                RefreshAddressSubmit();
+        }
         ShowPage(tab);
         tab.View.Source = destination;
     }
@@ -330,6 +205,11 @@ public sealed partial class BrowserPanel : Grid, IAsyncDisposable
     {
         if (Current is not { } tab)
             return;
+        if (tab.LoadingNavigationId is not null && tab.View.CoreWebView2 is { } loading)
+        {
+            loading.Stop();
+            return;
+        }
         if (!tab.Failed)
         {
             tab.View.Reload();
@@ -339,6 +219,7 @@ public sealed partial class BrowserPanel : Grid, IAsyncDisposable
         tab.View.Close();
         tab.Content.Children.Remove(tab.View);
         tab.View = new WebView2();
+        ApplyViewport(tab);
         tab.Content.Children.Insert(0, tab.View);
         tab.Initialization = null;
         tab.Failed = false;
@@ -382,6 +263,8 @@ public sealed partial class BrowserPanel : Grid, IAsyncDisposable
         };
         core.NavigationStarting += (_, e) =>
         {
+            if (tab.Closed || tab.View != view)
+                return;
             tab.Epoch++;
             tab.PreviewBytes = 0;
             if ((!BrowserOrigin.IsWeb(e.Uri) && e.Uri != "about:blank") || (tab.PreviewHost is not null && (!Uri.TryCreate(e.Uri, UriKind.Absolute, out var local) || local.Host != tab.PreviewHost)))
@@ -391,22 +274,27 @@ public sealed partial class BrowserPanel : Grid, IAsyncDisposable
                 return;
             }
 
+            tab.LoadingNavigationId = e.NavigationId;
             tab.Address = e.Uri;
             if (Current == tab)
             {
                 ShowAddress(tab);
-                progress.Text = "Loading…";
+                RefreshNavigationAvailability();
+                progress.Text = "";
             }
         };
         core.NavigationCompleted += (_, e) => Guard(async () =>
         {
-            if (tab.Closed || tab.View != view)
+            if (tab.Closed || tab.View != view || tab.LoadingNavigationId != e.NavigationId)
                 return;
+            tab.LoadingNavigationId = null;
             tab.Address = core.Source;
             if (Current == tab)
             {
                 ShowAddress(tab);
-                progress.Text = e.IsSuccess ? "" : "Page failed: " + e.WebErrorStatus;
+                RefreshNavigationAvailability();
+                if (!e.IsSuccess && e.WebErrorStatus != CoreWebView2WebErrorStatus.OperationCanceled)
+                    progress.Text = "Page failed: " + e.WebErrorStatus;
             }
 
             await PersistAsync();
@@ -444,9 +332,10 @@ public sealed partial class BrowserPanel : Grid, IAsyncDisposable
         core.WindowCloseRequested += (_, _) => Guard(() => CloseAsync(tab.Item));
         core.ProcessFailed += (_, e) =>
         {
-            if (!tab.Closed)
+            if (!tab.Closed && tab.View == view)
             {
                 tab.Failed = true;
+                tab.LoadingNavigationId = null;
                 if (Current == tab)
                     RefreshNavigationAvailability();
                 progress.Text = "Browser process stopped: " + e.ProcessFailedKind + ". Reload this tab to recover.";
@@ -469,7 +358,7 @@ public sealed partial class BrowserPanel : Grid, IAsyncDisposable
         core.Settings.UserAgent = state.Value.DesktopSite ? tab.OriginalAgent : tab.OriginalAgent.Replace("Windows NT 10.0; Win64; x64", "Linux; Android 14; Mobile");
     }
 
-    async Task<Tab> AddTabAsync(string? url = null, string? id = null, string? title = null)
+    async Task<Tab> AddTabAsync(string? url = null, string? id = null, string? title = null, bool focusStartPage = false)
     {
         if (browsers.Count >= 32)
             throw new InvalidOperationException("Close a tab before opening another (32 maximum).");
@@ -484,45 +373,26 @@ public sealed partial class BrowserPanel : Grid, IAsyncDisposable
             Visibility = Visibility.Collapsed
         };
         content.Children.Add(view);
-        var start = new StackPanel
-        {
-            Spacing = 12,
-            Margin = new Thickness(24),
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        start.Children.Add(new TextBlock { Text = "Search the web", FontSize = 22, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
-        var search = new TextBox
-        {
-            PlaceholderText = "Search"
-        };
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(search, "BrowserStartSearch");
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(search, "Start page search");
-        start.Children.Add(search);
+        var start = new BrowserStartPage(() => workspace.Preferences.SearchEngine);
         content.Children.Add(start);
-        item.Content = content;
         var tab = new Tab(Guid.TryParse(id, out _) ? id! : Guid.NewGuid().ToString("N"), item, content, view, start);
         browsers[item] = tab;
         tabs.TabItems.Add(item);
         tabs.SelectedItem = item;
         ApplyViewport(tab);
-        search.KeyDown += (_, e) =>
+        start.Submit += query => Guard(async () =>
         {
-            if (e.Key == Windows.System.VirtualKey.Enter)
-            {
-                e.Handled = true;
-                Guard(async () =>
-                {
-                    tabs.SelectedItem = item;
-                    await NavigateAsync(search.Text);
-                });
-            }
-        };
+            tabs.SelectedItem = item;
+            await NavigateAsync(query);
+        });
         var menu = new MenuFlyout();
         AddMenu(menu, "Move tab left", () => MoveAsync(tab, -1));
         AddMenu(menu, "Move tab right", () => MoveAsync(tab, 1));
         item.ContextFlyout = menu;
         if (url is not null && BrowserOrigin.IsWeb(url))
             await NavigateAsync(url);
+        else if (focusStartPage)
+            start.FocusSearch();
         return tab;
     }
 
@@ -576,7 +446,7 @@ public sealed partial class BrowserPanel : Grid, IAsyncDisposable
 
     void ApplyViewport(Tab tab)
     {
-        var width = viewport.SelectedItem?.ToString() switch
+        var width = viewportMode switch
         {
             "Desktop" => 1280,
             "Tablet" => 834,
@@ -591,7 +461,7 @@ public sealed partial class BrowserPanel : Grid, IAsyncDisposable
     {
         if (restoring || disposed || scope is null)
             return;
-        var snapshot = new NativeBrowserWorkspace(tabs.TabItems.OfType<TabViewItem>().Where(browsers.ContainsKey).Select(t => new NativeBrowserTab(browsers[t].Id, browsers[t].PreviewRoot is null ? browsers[t].Address : "", t.Header?.ToString() ?? "")).ToArray(), Current?.Id, BrowserStateStore.NormalizeViewport(viewport.SelectedItem?.ToString()));
+        var snapshot = new NativeBrowserWorkspace(tabs.TabItems.OfType<TabViewItem>().Where(browsers.ContainsKey).Select(t => new NativeBrowserTab(browsers[t].Id, browsers[t].PreviewRoot is null ? browsers[t].Address : "", t.Header?.ToString() ?? "")).ToArray(), Current?.Id, viewportMode);
         states[scope] = snapshot;
         await state.SaveWorkspaceAsync(scope, snapshot, workspace.Preferences.RestoreBrowserTabs);
     }
@@ -624,41 +494,6 @@ public sealed partial class BrowserPanel : Grid, IAsyncDisposable
             if (!disposed)
                 progress.Text = error.Message;
         }
-    }
-
-    void RefreshNavigationAvailability()
-    {
-        var core = Current is { Failed: false, Closed: false } tab ? tab.View.CoreWebView2 : null;
-        back.IsEnabled = core?.CanGoBack == true;
-        forward.IsEnabled = core?.CanGoForward == true;
-    }
-
-    static Button NavigationButton(Symbol symbol, string title, string automationId)
-    {
-        var button = new Button
-        {
-            Content = new SymbolIcon(symbol),
-            Width = 28,
-            Height = 32,
-            Padding = new Thickness(0),
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        if (Application.Current.Resources.TryGetValue("SubtleButtonStyle", out var style) && style is Style subtle)
-            button.Style = subtle;
-        AutomationProperties.SetName(button, title);
-        AutomationProperties.SetAutomationId(button, automationId);
-        ToolTipService.SetToolTip(button, title);
-        return button;
-    }
-
-    void AddMenu(MenuFlyout menu, string title, Func<Task> action)
-    {
-        var item = new MenuFlyoutItem
-        {
-            Text = title
-        };
-        item.Click += (_, _) => Guard(action);
-        menu.Items.Add(item);
     }
 
     public async ValueTask DisposeAsync()

@@ -8,15 +8,20 @@ In onboarding or Settings → Providers, you can also connect an independently i
 
 ## Windows beta
 
-Download the x64 ZIP from [GitHub Releases](https://github.com/itsasheruwu/Veo/releases). Extract the entire archive and run `Veo.Windows.exe` in the `Veo` folder. Use Windows 11 24H2 or later and install and authenticate the Codex CLI locally. The optional browser requires WebView2 Runtime.
+Run the Windows x64 `Setup.exe` from [GitHub Releases](https://github.com/itsasheruwu/Veo/releases), then launch Veo from the Start menu. Use Windows 11 24H2 or later and install and authenticate the Codex CLI locally. The optional browser requires WebView2 Runtime.
 
-The portable build bundles .NET and Windows App SDK. It is unsigned, and quiet wake requires a packaged build. Download future beta builds manually.
+The installer and portable ZIP bundle .NET and Windows App SDK. They share the same release profile, including chats and settings. For portable use, extract the full ZIP and run `Veo.Windows.exe`. Portable builds update manually. Quiet wake requires an MSIX package.
 
-Build the portable ZIP from the repository root with:
+Installed builds check at launch and every six hours. Settings → Updates also lets you check manually, download an update, or restart to apply it. If you enable automatic installation, Veo downloads updates in the background and applies them on quit.
+
+Build the Windows beta assets from the repository root. Omit `-Installer` for a portable ZIP alone.
 
 ```powershell
-.\windows\scripts\package-beta.ps1 -Version 2.4.1-beta.1
+dotnet tool install -g vpk --version 1.2.161
+.\windows\scripts\package-beta.ps1 -Version 2.6.1-beta.1 -Installer
 ```
+
+Publish the Setup executable, ZIP, generated `*-full.nupkg`, `releases.win-x64-beta.json`, and `SHA256SUMS-windows.txt` together on the same GitHub prerelease. Keep the feed and package filenames exact. The Windows beta channel is independent of the Mac updater. For signed Windows releases, use Velopack’s Authenticode signing configuration during packaging.
 
 ## Development
 

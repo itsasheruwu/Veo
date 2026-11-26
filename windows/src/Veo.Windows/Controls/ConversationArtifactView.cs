@@ -22,13 +22,16 @@ public sealed class ConversationArtifactView : StackPanel
     InMemoryRandomAccessStream? mediaStream;
     bool busy;
     bool allowOutside;
-    public ConversationArtifactView(ThreadSession session, ConversationArtifact artifact, bool? expanded = null)
+    readonly bool galleryThumbnail;
+    public ConversationArtifactView(ThreadSession session, ConversationArtifact artifact, bool? expanded = null, bool galleryThumbnail = false)
     {
-        this.session = session; this.artifact = artifact; Spacing = 6;
+        this.session = session; this.artifact = artifact; this.galleryThumbnail = galleryThumbnail; Spacing = 6;
         AutomationProperties.SetName(this, artifact.Name); expander.Header = artifact.Name; expander.Content = preview;
         expander.IsExpanded = expanded ?? App.Workspace.Preferences.ViewedImages == "Expanded";
         preview.Children.Add(new TextBlock { Text = artifact.Kind.StartsWith("inline", StringComparison.Ordinal) || artifact.Kind.StartsWith("data", StringComparison.Ordinal) ? artifact.MimeType ?? "Inline media" : artifact.Source, TextWrapping = TextWrapping.Wrap, FontSize = 11, IsTextSelectionEnabled = true });
-        preview.Children.Add(notice); Children.Add(expander);
+        preview.Children.Add(notice);
+        Children.Add(galleryThumbnail ? preview : expander);
+        if (galleryThumbnail) preview.Children.RemoveAt(0);
         if (artifact.UnavailableReason is not null || artifact.Kind is "unknown" or "storedFile") { notice.Message = artifact.UnavailableReason ?? "This artifact has no supported native representation. Its identity remains in local history."; notice.Severity = InfoBarSeverity.Warning; notice.IsOpen = true; return; }
         if (artifact.Kind is "remoteImage" or "remoteAudio" || artifact.Kind == "resource" && IntegrationCoordinator.SecureUri(artifact.Source) is not null)
         {
@@ -50,8 +53,20 @@ public sealed class ConversationArtifactView : StackPanel
                 using var stream = await Stream(loaded.Bytes); var decoder = await Windows.Graphics.Imaging.BitmapDecoder.CreateAsync(stream);
                 if ((ulong)decoder.PixelWidth * decoder.PixelHeight > 32_000_000) throw new InvalidDataException("This image exceeds the 32 megapixel native preview limit."); stream.Seek(0);
                 var bitmap = new BitmapImage { DecodePixelWidth = 1000 }; await bitmap.SetSourceAsync(stream);
-                var image = new Image { Source = bitmap, MaxHeight = 320, Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform }; AutomationProperties.SetName(image, artifact.Name); preview.Children.Add(image);
-                var view = new Button { Content = "View image" }; view.Click += async (_, _) => await Run(async () => { using var fullStream = await Stream(loaded.Bytes); var fullBitmap = new BitmapImage(); await fullBitmap.SetSourceAsync(fullStream); await new ContentDialog { Title = artifact.Name, Content = new ScrollViewer { Content = new Image { Source = fullBitmap, Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform, MaxHeight = 700, MaxWidth = 1000 }, ZoomMode = ZoomMode.Enabled, MinZoomFactor = .25f, MaxZoomFactor = 5 }, CloseButtonText = "Done", XamlRoot = XamlRoot }.ShowAsync(); }); preview.Children.Add(view);
+                var image = new Image { Source = bitmap, MaxHeight = 320, Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform };
+                AutomationProperties.SetName(image, artifact.Name);
+                var view = new Button { Content = "View image" };
+                if (galleryThumbnail)
+                {
+                    view.Content = image;
+                    view.HorizontalAlignment = view.HorizontalContentAlignment = HorizontalAlignment.Stretch;
+                    view.Padding = new(0);
+                    AutomationProperties.SetName(view, "Open " + artifact.Name);
+                }
+                else preview.Children.Add(image);
+                view.Click += async (_, _) => await Run(() => ShowImageAsync(loaded.Bytes));
+                preview.Children.Add(view);
+                if (galleryThumbnail) return;
             }
             else if (loaded.MimeType.StartsWith("audio/", StringComparison.OrdinalIgnoreCase))
             {
@@ -68,6 +83,15 @@ public sealed class ConversationArtifactView : StackPanel
         }
         catch (Exception error) { loaded = null; notice.Message = DiagnosticRedactor.Redact(error.Message); notice.Severity = InfoBarSeverity.Warning; notice.IsOpen = true; }
         finally { busy = false; }
+    }
+    async Task ShowImageAsync(byte[] bytes)
+    {
+        using var fullStream = await Stream(bytes);
+        var bitmap = new BitmapImage();
+        await bitmap.SetSourceAsync(fullStream);
+        var image = new Image { Source = bitmap, Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform, MaxHeight = 700, MaxWidth = 1000 };
+        var viewer = new ScrollViewer { Content = image, ZoomMode = ZoomMode.Enabled, MinZoomFactor = .25f, MaxZoomFactor = 5 };
+        await new ContentDialog { Title = artifact.Name, Content = viewer, CloseButtonText = "Done", XamlRoot = XamlRoot }.ShowAsync();
     }
     async Task SaveAsync()
     {

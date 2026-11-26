@@ -6,6 +6,7 @@ namespace Veo_Windows;
 public partial class App : Application
 {
     public static WorkspaceCoordinator Workspace { get; } = new(ProfileRoot());
+    internal static Services.WindowsAppUpdates Updates { get; } = new();
     public static PlanCoordinator Plans { get; } = new(Workspace);
     public static QuestionCoordinator Questions { get; } = new(Workspace);
     public static WorkspaceContinuationService Continuation { get; } = new(Workspace);
@@ -89,6 +90,7 @@ public partial class App : Application
         Main = new MainWindow(); Services.StartupDiagnostics.Record("MainWindow constructed"); Main.Activate();
         Services.StartupDiagnostics.Record("MainWindow activated");
         Main.PendingActivation = args.Arguments;
+        _ = Updates.MonitorAsync(Workspace.Preferences);
         Main.AppWindow.Closing += (sender, closing) =>
         {
             if (allowingClose) return;
@@ -112,11 +114,11 @@ public partial class App : Application
             else if (command == Veo.Platform.Windows.Shell.TrayCommand.Settings) await window.ShowSettingsAsync();
         });
     }
-    public static Task ShutdownAsync()
+    public static Task ShutdownAsync(bool restartForUpdate = false)
     {
-        var app = (App)Current; return app.shutdown ??= app.ShutdownCoreAsync();
+        var app = (App)Current; return app.shutdown ??= app.ShutdownCoreAsync(restartForUpdate);
     }
-    async Task ShutdownCoreAsync()
+    async Task ShutdownCoreAsync(bool restartForUpdate)
     {
         async Task Release(Func<Task> action)
         {
@@ -131,6 +133,7 @@ public partial class App : Application
                 catch { /* A logging failure must not skip disposal of owned processes. */ }
             }
         }
+        Updates.Stop();
         await Release(() => Main?.DisposeSurfacesAsync() ?? Task.CompletedTask);
         tray?.Dispose(); tray = null;
         await Release(async () => await Notifications.DisposeAsync()); NotificationPlatform.Dispose();
@@ -145,7 +148,16 @@ public partial class App : Application
         await Release(async () => await Questions.DisposeAsync());
         await Release(async () => await Plans.DisposeAsync());
         Queue.Dispose();
+        var applyUpdate = restartForUpdate || (Workspace.Preferences.CheckForAppUpdates && Workspace.Preferences.InstallAppUpdatesAutomatically);
         await Release(async () => await Workspace.DisposeAsync());
+        if (applyUpdate)
+        {
+            await Release(() =>
+            {
+                Updates.ApplyOnExit(restartForUpdate);
+                return Task.CompletedTask;
+            });
+        }
         allowingClose = true; Main?.Close(); Exit();
     }
     static string ProfileRoot()

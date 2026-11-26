@@ -3,7 +3,14 @@ using System.Text.Json.Nodes;
 
 namespace Veo.Core;
 
-public sealed record TimelineItem(string Id, string? TurnId, string Kind, string Text, string Status, JsonElement Raw, long Order);
+public sealed record TimelineItem(string Id, string? TurnId, string Kind, string Text, string Status, JsonElement Raw, long Order)
+{
+    public bool HasSameContent(TimelineItem other) => this == other
+        || (this with { Raw = other.Raw }) == other
+            && Raw.ValueKind != JsonValueKind.Undefined
+            && other.Raw.ValueKind != JsonValueKind.Undefined
+            && JsonElement.DeepEquals(Raw, other.Raw);
+}
 
 /// <summary>Thread-scoped, synchronized item reduction. Completion never creates or reopens an artificial row.</summary>
 public sealed partial class TimelineReducer
@@ -105,7 +112,8 @@ public sealed partial class TimelineReducer
             var turns = authoritative.Select(x => x.TurnId).OfType<string>().Concat(retainedTurnIds ?? []).ToHashSet(StringComparer.Ordinal);
             foreach (var item in items.Values.ToArray())
             {
-                var localArtifact = item.Kind is "veoUserInputAnswer" or "veoPlanArtifact";
+                var localArtifact = item.Kind is "veoUserInputAnswer" or "veoPlanArtifact"
+                    || item.Kind == "imageGeneration" && !TimelinePresentation.IsInProgress(item);
                 if (ids.Contains(item.Id) || (localArtifact && item.TurnId is { } turn && turns.Contains(turn))) continue;
                 items.Remove(item.Id); removedItems.Add(item.Id);
             }

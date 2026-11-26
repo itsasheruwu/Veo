@@ -33,6 +33,13 @@ public sealed partial class MainPage
 
     Flyout? composerOptionsFlyout;
 
+    static double ComposerMenuHeight(FrameworkElement anchor, double maximum)
+    {
+        if (anchor.XamlRoot?.Content is not UIElement root) return maximum;
+        var top = anchor.TransformToVisual(root).TransformPoint(new(0, 0)).Y;
+        return Math.Clamp(top - ModelPickerVisuals.PointerHeight - 12, 84, maximum);
+    }
+
     void ComposerOptions_Click(object sender, RoutedEventArgs e)
     {
         if (composerOptionsFlyout is { } open) { open.Hide(); return; }
@@ -43,10 +50,9 @@ public sealed partial class MainPage
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
             VerticalContentAlignment = VerticalAlignment.Top
         };
-        var maxHeight = Math.Clamp((XamlRoot?.Size.Height ?? 760) * .55, 200, 430);
         var scroll = new ScrollViewer
         {
-            Width = ComposerOptionsMetrics.Width, MaxHeight = maxHeight, Content = pageHost,
+            Width = ComposerOptionsMetrics.Width, MaxHeight = ComposerMenuHeight(ComposerOptionsButton, 520), Content = pageHost,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             HorizontalContentAlignment = HorizontalAlignment.Stretch
         };
@@ -62,7 +68,7 @@ public sealed partial class MainPage
                 ModelPickerVisuals.PickerPointer(surface)
             } },
             Placement = FlyoutPlacementMode.Top,
-            ShouldConstrainToRootBounds = false,
+            ShouldConstrainToRootBounds = true,
             AreOpenCloseAnimationsEnabled = ModelPickerVisuals.MotionEnabled,
             FlyoutPresenterStyle = (Style)Resources["ModelPickerFlyoutPresenter"]
         };
@@ -106,18 +112,18 @@ public sealed partial class MainPage
 
         if (session is null)
         {
-            var project = Row("Open Project…", "Choose a local folder for this chat.", ComposerOptionsIcon("\uE8DA", accent),
+            var project = Row("Open Project…", "Choose a project folder.", ComposerOptionsIcon("\uE8DA", accent),
                 "ComposerOpenProject", "Open project");
             project.Click += async (_, _) => { flyout.Hide(); await Run(OpenProjectAsync); };
             options.Children.Add(project);
         }
         else
         {
-            var attach = Row("Attach Image or Audio…", "Add local media to this message.", ComposerOptionsIcon("\uE723", blue),
+            var attach = Row("Attach Image or Audio…", "Add media to your message.", ComposerOptionsIcon("\uE723", blue),
                 "ComposerAttachMedia");
             attach.Click += async (_, _) => await Run(PickComposerAttachmentsAsync);
             options.Children.Add(attach);
-            var mention = Row("Mention Project File…", "Reference a sandbox-safe local path.", ComposerOutlineIcon(
+            var mention = Row("Mention Project File…", "Reference a project file.", ComposerOutlineIcon(
                 "M8,14 H3 Q2,14 2,13 V2 Q2,1 3,1 H11 Q12,1 12,2 V6 M4.5,4 H9.5 M4.5,7 H8 "
                 + "M14,10.5 A2.5,2.5 0 1 1 9,10.5 A2.5,2.5 0 1 1 14,10.5 Z M13.25,12.25 L15,14", teal),
                 "ComposerMentionFile");
@@ -126,7 +132,34 @@ public sealed partial class MainPage
         }
         options.Children.Add(ComposerOptionsDivider());
 
-        var save = Row("Save draft for later", "Keep this prompt and its attachments.", ComposerTrayIcon(neutral, "\uE74B"), "ComposerSaveDraft");
+        var plugins = Row("Plugins", "Mention an enabled plugin.", ComposerOptionsIcon("\uE74C", accent), "ComposerPlugins");
+        plugins.IsEnabled = session is not null && workspace.Runtime.RuntimeState == CodexRuntimeState.Ready;
+        plugins.Click += async (_, _) => await Run(async () =>
+        {
+            if (session is null || !ReferenceEquals(current, session)) return;
+            var available = await App.Integrations.RefreshMentionablePluginsAsync(IntegrationContext.For(session));
+            if (!ReferenceEquals(current, session)) return;
+            var list = new StackPanel { Spacing = 6 };
+            var back = new Button { Content = "Back to options" };
+            back.Click += (_, _) => ShowOptions();
+            list.Children.Add(back);
+            foreach (var suggestion in ComposerSuggestionService.PluginSuggestions(available))
+            {
+                var item = Row(suggestion.Title, suggestion.Description, ComposerPluginIcon(suggestion, accent), "ComposerPlugin");
+                item.Click += async (_, _) => await Run(async () =>
+                {
+                    if (!ReferenceEquals(current, session)) return;
+                    flyout.Hide();
+                    await InsertPluginMentionAsync(suggestion);
+                });
+                list.Children.Add(item);
+            }
+            if (list.Children.Count == 1) list.Children.Add(ComposerOptionDetail("No enabled plugins."));
+            flyout.Content = new ScrollViewer { Content = list, MaxHeight = 320 };
+        });
+        options.Children.Add(plugins);
+
+        var save = Row("Save draft for later", "Keep this draft and attachments.", ComposerTrayIcon(neutral, "\uE74B"), "ComposerSaveDraft");
         bool HasDraft() => session is not null && ReferenceEquals(current, session)
             && (!string.IsNullOrWhiteSpace(Composer.Text) || typedComposerAttachments.Count > 0);
         save.IsEnabled = HasDraft();
@@ -139,10 +172,17 @@ public sealed partial class MainPage
         };
         options.Children.Add(save);
 
-        var prompts = Row("Saved prompts", "Restore a prompt into this draft.", ComposerTrayIcon(neutral), "ComposerSavedPrompts");
+        var prompts = Row("Saved prompts", "Restore a saved prompt.", ComposerTrayIcon(neutral), "ComposerSavedPrompts");
         prompts.Click += async (_, _) => await ShowSavedPromptsAsync();
         options.Children.Add(prompts);
         options.Children.Add(ComposerOptionsDivider());
+        var rose = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 218, 100, 152));
+        var wildRow = ComposerOptionsRow("Wild", "Find code and design references.", ModelPickerVisuals.WildIcon(rose));
+        var wildSwitch = new ToggleSwitch { IsOn = composerWild, OnContent = "", OffContent = "" };
+        AutomationProperties.SetName(wildSwitch, "Wild");
+        wildSwitch.Toggled += async (_, _) => { if (ReferenceEquals(current, session)) await Run(() => SetComposerWildAsync(wildSwitch.IsOn)); };
+        AddComposerOptionsTrailing(wildRow, wildSwitch, 52);
+        options.Children.Add(wildRow);
         options.Children.Add(new TextBlock
         {
             Text = "Mode", FontSize = ComposerOptionsMetrics.Detail, Height = 13, LineHeight = 13,
@@ -186,12 +226,21 @@ public sealed partial class MainPage
             modes.Children.Add(button);
             return button;
         }
-        Mode("Agentic", "Let Codex investigate and implement changes normally.", ModelPickerVisuals.SparklesIcon(accent), accent);
-        var plan = Mode("Plan", "Plan the approach before implementation.", ComposerOutlineIcon(
+        Mode("Agentic", "Work through the request.", ModelPickerVisuals.SparklesIcon(accent), accent);
+        var plan = Mode("Plan", "Plan before making changes.", ComposerOutlineIcon(
             "M5,3 H3 Q2,3 2,4 V14 Q2,15 3,15 H12 Q13,15 13,14 V4 Q13,3 12,3 H10 "
             + "M5,2.5 H6 Q6,1 7.5,1 Q9,1 9,2.5 H10 V5 H5 Z "
             + "M4.5,8 H5.2 M7.2,8 H10.5 M4.5,10.5 H5.2 M7.2,10.5 H10.5 M4.5,13 H5.2 M7.2,13 H10.5", orange), orange);
-        var debug = Mode("Debug", "Diagnose defects with an evidence-first workflow.", ComposerOptionsIcon("\uEBE8", purple), purple);
+        var debug = Mode("Debug", "Diagnose and fix issues.", ComposerOptionsIcon("\uEBE8", purple), purple);
+        var ready = session is not null && ActiveAgent is null && workspace.Runtime.RuntimeState == CodexRuntimeState.Ready;
+        var canAsk = ready && workspace.CanUseReadOnlyTurns && routingMode == "Direct";
+        var ask = Mode("Ask", canAsk ? "Investigate with read-only access."
+            : "Choose a direct Codex model.",
+            ComposerOptionsIcon("\uE897", accent), accent);
+        ask.IsEnabled = canAsk;
+        var roblox = Mode("Roblox", ready ? "Work with Roblox and Luau."
+            : "Connect Codex for Roblox.", ModelPickerVisuals.RobloxIcon(rose), rose);
+        roblox.IsEnabled = ready;
         plan.IsEnabled = false;
         debug.IsEnabled = session is not null && workspace.Runtime.RuntimeState == CodexRuntimeState.Ready
             && workspace.Runtime.Capabilities.Availability("collaborationMode/list") != CapabilityAvailability.Unavailable;
@@ -242,7 +291,7 @@ public sealed partial class MainPage
                 if (!ReferenceEquals(composerOptionsFlyout, flyout) || !ReferenceEquals(pageHost.Content, page)) return;
                 if (saved.Count == 0)
                 {
-                    var empty = ComposerOptionsRow("No saved prompts", "Save a draft for later from the previous menu.", ComposerTrayIcon(neutral));
+                    var empty = ComposerOptionsRow("No saved prompts", "Save a draft to reuse it here.", ComposerTrayIcon(neutral));
                     empty.Margin = new(0, 8, 0, 8);
                     page.Children.Add(empty);
                     return;
@@ -256,7 +305,7 @@ public sealed partial class MainPage
                 };
                 page.Children.Add(items);
                 page.Children.Add(ComposerOptionsDivider());
-                page.Children.Add(new TextBlock { Text = "Choose a prompt to add it to your draft.", FontSize = ComposerOptionsMetrics.Detail, Foreground = neutral });
+                page.Children.Add(ComposerOptionDetail("Choose a prompt to add."));
                 foreach (var item in saved)
                 {
                     var detail = ProjectFolderName(item.WorkspacePath);
@@ -306,13 +355,13 @@ public sealed partial class MainPage
 
     Grid ComposerGoalOption(ThreadSession? session, Brush color)
     {
-        var active = session is not null && App.ThreadSettings.ActiveGoal(session) is not null;
-        var row = ComposerOptionsRow("Goal", active ? "Keep working on the active goal." : "Use your next message as an active goal.",
+        var active = session is not null && App.ThreadSettings.HasActiveComposerGoal(session);
+        var row = ComposerOptionsRow("Goal", active ? "Keep working on this goal." : "Use the next message as a goal.",
             ModelPickerVisuals.GoalIcon(color));
         var toggle = new ToggleSwitch
         {
             IsOn = session is not null && App.ThreadSettings.ComposerGoalEnabled(session),
-            IsEnabled = session is not null && App.ThreadSettings.Available("thread/goal/set"),
+            IsEnabled = session is not null && (ActiveAgent is null || App.ThreadSettings.ComposerGoalEnabled(session)),
             MinWidth = 0, Width = 44, Height = 30, Padding = new(0),
             OnContent = "", OffContent = "", VerticalAlignment = VerticalAlignment.Center
         };
@@ -338,6 +387,18 @@ public sealed partial class MainPage
         return row;
     }
 
+    TextBlock ComposerOptionDetail(string text)
+    {
+        var label = new TextBlock
+        {
+            Text = text.ReplaceLineEndings(" "), FontSize = ComposerOptionsMetrics.Detail, LineHeight = 13,
+            Foreground = ComposerKeyHints.Foreground, TextTrimming = TextTrimming.CharacterEllipsis,
+            MaxLines = 1, TextWrapping = TextWrapping.NoWrap
+        };
+        label.IsTextTrimmedChanged += (_, _) => ToolTipService.SetToolTip(label, label.IsTextTrimmed ? text : null);
+        return label;
+    }
+
     Grid ComposerOptionsRow(string title, string detail, FrameworkElement icon, int titleLines = 1)
     {
         var row = new Grid { ColumnSpacing = ComposerOptionsMetrics.LabelGap };
@@ -357,12 +418,7 @@ public sealed partial class MainPage
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis,
             MaxLines = titleLines, TextWrapping = titleLines > 1 ? TextWrapping.Wrap : TextWrapping.NoWrap
         });
-        if (detail.Length > 0)
-            labels.Children.Add(new TextBlock
-            {
-                Text = detail, FontSize = ComposerOptionsMetrics.Detail, LineHeight = 13,
-                Foreground = ComposerKeyHints.Foreground, TextTrimming = TextTrimming.CharacterEllipsis
-            });
+        if (detail.Length > 0) labels.Children.Add(ComposerOptionDetail(detail));
         Grid.SetColumn(labels, 1);
         row.Children.Add(labels);
         return row;
@@ -389,6 +445,20 @@ public sealed partial class MainPage
     }
 
     Border ComposerOptionsDivider() => new() { Height = 1, Background = ComposerPanel.BorderBrush };
+
+    static FontIcon ComposerPluginIcon(ComposerSuggestion suggestion, Brush fallback)
+    {
+        var chrome = suggestion.Source.StartsWith("chrome@", StringComparison.OrdinalIgnoreCase);
+        var color = suggestion.BrandColor ?? (chrome ? "#4285F4" : null);
+        var brush = color is { Length: 7 } && color[0] == '#' && uint.TryParse(color.AsSpan(1),
+            System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture, out var rgb)
+            && !new AccessibilitySettings().HighContrast
+            ? new SolidColorBrush(Color.FromArgb(222, (byte)(rgb >> 16), (byte)(rgb >> 8), (byte)rgb))
+            : fallback;
+        var icon = ComposerOptionsIcon(chrome ? "\uE774" : "\uE74C", brush, 13);
+        icon.IsHitTestVisible = false;
+        return icon;
+    }
 
     static FontIcon ComposerOptionsIcon(string glyph, Brush foreground, double size = 13) => new()
     {

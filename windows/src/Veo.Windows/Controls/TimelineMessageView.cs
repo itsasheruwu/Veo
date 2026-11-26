@@ -12,7 +12,7 @@ using Windows.ApplicationModel.DataTransfer;
 namespace Veo_Windows.Controls;
 
 /// <summary>Native item presentation: plan documents keep their editor while ordinary messages remain selectable Markdown.</summary>
-public sealed class TimelineMessageView : UserControl
+public sealed partial class TimelineMessageView : UserControl
 {
     public static readonly DependencyProperty RowProperty = DependencyProperty.Register(nameof(Row), typeof(MessageRow), typeof(TimelineMessageView), new PropertyMetadata(null, RowChanged));
     public static readonly DependencyProperty PromptBackgroundProperty = DependencyProperty.Register(nameof(PromptBackground), typeof(Brush), typeof(TimelineMessageView), new PropertyMetadata(null));
@@ -69,6 +69,7 @@ public sealed class TimelineMessageView : UserControl
         }
         liveActivity = null;
         if (Row is not { } row) { Content = null; presentationKey = null; return; }
+        if (!InlineRobloxTool && RenderSpecialActivity(row)) return;
         if (row.Item.Kind is "veoTurnWork" or "veoTurnContinuation" or "veoTurnDiff")
         {
             RenderConversationStatus(row);
@@ -79,7 +80,7 @@ public sealed class TimelineMessageView : UserControl
         if (presentationKey != key)
         {
             presentationKey = key; plan = null; markdown = null; artifacts = null; commandOutput = null; artifactSignature = null;
-            activityTitle = null; activityMark = null; updateActivityName = null;
+            activityTitle = null; activityMark = null; updateActivityName = null; robloxTitle = null; robloxResult = null;
             if (row.Item.Kind == "plan")
             {
                 plan = new PlanPanel(App.Plans, row.Session, row.Item, () => Snapshot(row.Session));
@@ -91,7 +92,8 @@ public sealed class TimelineMessageView : UserControl
             {
                 var column = new StackPanel { Spacing = 7 };
                 if (!shown.IsActivity && row.Item.Kind != "userMessage") column.Children.Add(Caption(shown.Title));
-                if (row.Item.Kind == "commandExecution")
+                if (InlineRobloxTool) BuildRobloxToolStep(column);
+                else if (row.Item.Kind == "commandExecution")
                 {
                     commandOutput = new TextBox { IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.NoWrap, FontFamily = new("Cascadia Mono"), FontSize = 12, MaxHeight = 350, BorderThickness = new(0) };
                     AutomationProperties.SetName(commandOutput, "Command output");
@@ -107,7 +109,7 @@ public sealed class TimelineMessageView : UserControl
                 }
                 artifacts = new StackPanel { Spacing = 8, Visibility = Visibility.Collapsed };
                 column.Children.Add(artifacts);
-                Content = row.Item.Kind == "userMessage" ? PromptBubble(column) : shown.IsActivity ? ActivityDisclosure(column) : column;
+                Content = row.Item.Kind == "userMessage" ? PromptBubble(column) : shown.IsActivity && !InlineRobloxTool ? ActivityDisclosure(column) : column;
             }
         }
         if (plan is not null) plan.Update(row.Item);
@@ -115,7 +117,7 @@ public sealed class TimelineMessageView : UserControl
         if (markdown is not null)
         {
             markdown.IsStreaming = row.Session.Timeline.IsRunning && row.Item.Status is not ("completed" or "failed" or "interrupted");
-            markdown.Markdown = row.Item.Kind is "agentMessage" or "userMessage" or "reasoning" ? ParagraphStreaming.Visible(row.Item, row.Session.Timeline.IsRunning, App.Workspace.Preferences.Streaming) : shown.Body;
+            markdown.Markdown = row.Item.Kind is "agentMessage" or "userMessage" or "reasoning" ? VisibleMessage(row) : shown.Body;
             markdown.Visibility = markdown.Markdown.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         }
         if (activityTitle is not null && activityMark is not null)
@@ -129,7 +131,9 @@ public sealed class TimelineMessageView : UserControl
             activityMark.Glyph = failed ? "\uE783" : running ? "\uE823" : interrupted ? "\uE71A" : "\uE73E";
             updateActivityName?.Invoke();
         }
-        RenderArtifacts(row, shown);
+        if (InlineRobloxTool) UpdateRobloxToolStep(row, shown);
+        var generated = TimelinePresentation.GeneratedConcepts(row.Item);
+        RenderArtifacts(row, shown with { Artifacts = shown.Artifacts.Concat(generated).ToArray() }, generated);
     }
 
     void RenderConversationStatus(MessageRow row)
@@ -270,14 +274,16 @@ public sealed class TimelineMessageView : UserControl
         var fallback = App.Workspace.Models.FirstOrDefault();
         return ComposerDraft.Snapshot(session, includeInput: false, defaults: new(Guid.NewGuid().ToString("N"), "", fallback?.Id, fallback?.DefaultEffort, null, App.Workspace.Preferences.DefaultAccess, "Agentic", []));
     }
-    void RenderArtifacts(MessageRow row, TimelineItemPresentation presentation)
+    void RenderArtifacts(MessageRow row, TimelineItemPresentation presentation, ConversationArtifact[] generated)
     {
         if (artifacts is null) return;
         var signature = string.Join("|", presentation.Artifacts.Select(x => x.Id + x.Kind + x.Source.GetHashCode(StringComparison.Ordinal)));
         signature += string.Join("|", presentation.Sources.Select(x => x.Id + x.Target)) + string.Join("|", presentation.Agents.Select(x => x.ThreadId + x.Status + x.Message));
         if (signature == artifactSignature) return; artifactSignature = signature; artifacts.Children.Clear();
         artifacts.Visibility = signature.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
-        foreach (var artifact in presentation.Artifacts) artifacts.Children.Add(new ConversationArtifactView(row.Session, artifact));
+        if (generated.Length >= 2)
+            artifacts.Children.Add(new GeneratedConceptsView(row.Session, generated, row.AddConceptFeedback));
+        foreach (var artifact in presentation.Artifacts.Where(artifact => generated.Length < 2 || !generated.Contains(artifact))) artifacts.Children.Add(new ConversationArtifactView(row.Session, artifact));
         foreach (var source in presentation.Sources)
         {
             var button = new Button { Content = "Source · " + source.Label }; button.Click += async (_, _) => { try { if (IntegrationCoordinator.SecureUri(source.Target) is { } uri && App.Main is { } main) await main.NavigateBrowserAsync(uri); else await new ContentDialog { Title = source.Label, Content = new ConversationSourceView(row.Session, source), CloseButtonText = "Done", XamlRoot = XamlRoot }.ShowAsync(); } catch (Exception error) { artifacts.Children.Add(new TextBlock { Text = Veo.Protocol.DiagnosticRedactor.Redact(error.Message), TextWrapping = TextWrapping.Wrap }); } }; artifacts.Children.Add(button);
@@ -297,7 +303,7 @@ public sealed class TimelineMessageView : UserControl
         var selection = "";
         menu.Opening += (_, _) => { selection = SelectedText(view); copy.IsEnabled = quote.IsEnabled = selection.Length > 0; };
         copy.Click += (_, _) => Copy(selection);
-        copyMarkdown.Click += (_, _) => Copy(ParagraphStreaming.Visible(row.Item, row.Session.Timeline.IsRunning, App.Workspace.Preferences.Streaming));
+        copyMarkdown.Click += (_, _) => Copy(VisibleMessage(row));
         quote.Click += async (_, _) =>
         {
             if (selection.Length == 0 || App.Main is not { } main) return;
@@ -308,6 +314,11 @@ public sealed class TimelineMessageView : UserControl
         foreach (var child in MarkdownView.Descendants(view).OfType<FrameworkElement>()) child.ContextFlyout = menu;
     }
     static string SelectedText(MarkdownView view) => view.SelectedText();
+    static string VisibleMessage(MessageRow row)
+    {
+        var text = ParagraphStreaming.Visible(row.Item, row.Session.Timeline.IsRunning, App.Workspace.Preferences.Streaming);
+        return row.Item.Kind == "agentMessage" && row.Session.IsManagedGoalTurn(row.Item.TurnId) ? ComposerGoals.VisibleReply(text) : text;
+    }
     static void Copy(string value) { var package = new DataPackage(); package.SetText(value); Clipboard.SetContent(package); }
     static async void Navigate(ThreadSession session) { if (App.Main is { } main) await main.NavigateToThreadAsync(session); }
 }

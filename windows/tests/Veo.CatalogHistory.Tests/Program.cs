@@ -46,6 +46,24 @@ await using (var f = await Fixture.Create())
     Check(catalog.Options.ManualOrder!.SequenceEqual(["b", "hidden", "a"]), "manual visible reorder preserves hidden rows in master positions");
     var reopened = new ThreadCatalogCoordinator(f.Workspace, rpc); await reopened.InitializeAsync();
     Check(reopened.Options.ManualOrder!.SequenceEqual(catalog.Options.ManualOrder!) && reopened.Group(next.Veo).Single().Label == "Project label", "sort/manual/project labels/collapse persist in SQLite");
+    CatalogEntry Projectless(string id, string kind, CatalogOrigin origin, string cwd) =>
+        new(id, origin, f.Record with { VeoId = id, Cwd = cwd, WorkspaceKind = kind });
+    var scratchDirectory = Path.Combine(f.Record.Cwd, "scratch");
+    var scratch = Projectless("scratch", "scratch", CatalogOrigin.Veo, scratchDirectory);
+    var temporary = Projectless("temporary", "temporary", CatalogOrigin.Veo, Path.Combine(f.Record.Cwd, "temporary"));
+    var cli = Projectless("cli-scratch", "scratch", CatalogOrigin.Codex, scratchDirectory);
+    var project = Projectless("alongside", "project", CatalogOrigin.Veo, scratchDirectory);
+    var grouped = reopened.Group([scratch, temporary, cli, project]);
+    var groupedVeo = grouped.Single(group => group.IsProjectless && group.Entries.All(entry => entry.Origin == CatalogOrigin.Veo));
+    var groupedCli = grouped.Single(group => group.IsProjectless && group.Entries.All(entry => entry.Origin == CatalogOrigin.Codex));
+    Check(groupedVeo.Label == "Projectless Chats" && groupedVeo.Entries.Select(entry => entry.Key).ToHashSet().SetEquals([scratch.Key, temporary.Key]), "scratch and temporary chats share one projectless heading across working directories");
+    Check(groupedCli.CollapseKey != groupedVeo.CollapseKey && grouped.Single(group => !group.IsProjectless).Entries.Single() == project, "CLI projectless chats and real projects keep their own sections");
+    await reopened.SaveOptionsAsync(reopened.Options with { CollapsedProjects = [.. reopened.Options.CollapsedProjects!, groupedVeo.CollapseKey] });
+    await reopened.InitializeAsync();
+    var regrouped = reopened.Group([temporary, cli, project]);
+    Check(regrouped.Single(group => group.CollapseKey == groupedVeo.CollapseKey).IsCollapsed
+        && !regrouped.Single(group => group.CollapseKey == groupedCli.CollapseKey).IsCollapsed,
+        "projectless collapse survives membership changes and SQLite reload without collapsing the CLI section");
     rpc.Calls.Clear(); await catalog.RenameAsync(next.Veo.Single(), "local renamed");
     Check(rpc.Calls.Count == 0 && (await f.Workspace.Threads.ListThreadsAsync()).Single().Title == "local renamed", "Veo-owned rename changes only its local catalog");
     await catalog.ArchiveAsync(next.Veo.Single() with { Thread = f.Session.Record }, true);

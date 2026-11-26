@@ -6,7 +6,7 @@ using Veo.Protocol;
 namespace Veo.Core;
 
 public sealed record ModelOption(string Id, string Name, string Description, string DefaultEffort, string[] Efforts, string[] Tiers);
-public sealed record ComposerSnapshot(string ClientId, string Text, string? Model, string? Effort, string? Tier, string Access, string Mode, string[] Attachments, bool PreserveDraft = false, long? ContextTokens = null, string RoutingMode = "Direct", AutoRouterPolicy? RouterPolicy = null, FamilyAutoPlan? FamilyPlan = null, VisionFallbackContext? VisionFallback = null, string? CatalogModelId = null, ComposerAttachment[]? StructuredAttachments = null, string? DraftOptionsJson = null, bool? Daybreak = null, bool StartGoal = false)
+public sealed record ComposerSnapshot(string ClientId, string Text, string? Model, string? Effort, string? Tier, string Access, string Mode, string[] Attachments, bool PreserveDraft = false, long? ContextTokens = null, string RoutingMode = "Direct", AutoRouterPolicy? RouterPolicy = null, FamilyAutoPlan? FamilyPlan = null, VisionFallbackContext? VisionFallback = null, string? CatalogModelId = null, ComposerAttachment[]? StructuredAttachments = null, string? DraftOptionsJson = null, bool? Daybreak = null, bool StartGoal = false, bool Wild = false, ComposerGoalMode GoalMode = ComposerGoalMode.ProviderManaged)
 {
     public ComposerSnapshot Freeze() => this with
     {
@@ -36,8 +36,17 @@ public sealed class ThreadSession(PersistedThread record)
     internal void RestoreQueue(IEnumerable<ComposerSnapshot> snapshots) { lock (queueSync) { queue.Clear(); queue.AddRange(snapshots.Select(x => x.Freeze())); } }
     public string? DispatchWarning { get; internal set; }
     public string EffectiveAccess { get; internal set; } = "Workspace";
+    public bool ProtectedTurn { get; internal set; }
+    internal string? WildPrompt { get; set; }
     public bool IsSubmitting { get; internal set; }
     public bool ComposerGoalArmed { get; internal set; }
+    internal ComposerGoalState GoalState { get; set; } = new();
+    public ComposerGoalMode GoalMode => GoalState.Mode;
+    public bool HasManagedGoal => GoalState.Run is not null;
+    public string? ManagedGoalStatus => GoalState.Run is { } run ? run.PausedReason
+        ?? (run.NextRun is { } next ? $"Next pass at {next.ToLocalTime():t}" : "Working toward your goal.") : null;
+    public bool IsManagedGoalTurn(string? id) => id is not null && GoalState.ManagedTurns?.Contains(id, StringComparer.Ordinal) == true;
+    public string? LatestManagedGoalTurn => GoalState.ManagedTurns?.LastOrDefault();
     public bool CanToggleTemporaryChat => Record.WorkspaceKind is "scratch" or "temporary"
         && Record.CodexThreadId is null && !IsSubmitting && !Timeline.IsRunning && Timeline.Items.Count == 0;
 }
@@ -51,6 +60,8 @@ public sealed class WorkspaceCoordinator : IAsyncDisposable
     readonly PreferencesStore preferences;
     readonly Func<VeoPreferences, CodexRuntimeService>? runtimeFactory;
     readonly DynamicToolBridge dynamicTools;
+    internal ManagedGoalCoordinator ManagedGoals { get; }
+    Task? managedGoalWorker;
     Task? events;
     string? runtimeExecutableOverride;
     int changedPending;
@@ -87,6 +98,7 @@ public sealed class WorkspaceCoordinator : IAsyncDisposable
         DataRoot = dataRoot; Directory.CreateDirectory(dataRoot);
         Threads = new(Path.Combine(dataRoot, "Threads", "veo.sqlite")); preferences = new(dataRoot);
         Runtime = new();
+        ManagedGoals = new(this, lifetime.Token);
         dynamicTools = new(id => sessions.Values.FirstOrDefault(x => x.Record.CodexThreadId == id) is { } thread ? new(thread.Record.Cwd, thread.EffectiveAccess, id) : null, ListBackgroundTerminalsAsync);
     }
     bool preferencesLoaded;
@@ -121,6 +133,7 @@ public sealed class WorkspaceCoordinator : IAsyncDisposable
         events = ConsumeEventsAsync();
         try { await ConnectAsync(); }
         catch (Exception e) { Status = "Codex unavailable: " + DiagnosticRedactor.Redact(e.Message); ScheduleChanged(); }
+        managedGoalWorker = ManagedGoals.RunAsync();
     }
     CodexRuntimeService CreateRuntime() => runtimeFactory?.Invoke(Preferences) ?? new(new CodexRuntimeOptions
     {
@@ -210,6 +223,56 @@ public sealed class WorkspaceCoordinator : IAsyncDisposable
     }
     public Task SavePreferencesAsync() => preferences.SaveAsync(Preferences);
     public async Task<IReadOnlyList<PersistedThread>> CatalogAsync(string? search = null) => await Threads.ListThreadsAsync(Preferences.ShowArchived, search, 10000);
+    public async Task MoveChatAsync(ThreadSession session, string destination)
+    {
+        if (!await session.DispatchGate.WaitAsync(0, lifetime.Token))
+            throw new InvalidOperationException("Wait for active work before moving this chat.");
+        try
+        {
+            if (session.IsSubmitting || session.Timeline.IsRunning || session.Queue.Count != 0 || session.DispatchWarning is not null)
+                throw new InvalidOperationException("Wait for active, queued, or unresolved work before moving this chat.");
+            foreach (var key in new[] { "dispatch", "queue-steer", "history-revert" })
+            {
+                if (await Threads.ReadStateAsync(session.Record.VeoId, key, lifetime.Token) is not { } pending) continue;
+                using var operation = JsonDocument.Parse(pending);
+                if (operation.RootElement.Str("state") == "pending")
+                    throw new InvalidOperationException("Reconcile the previous operation before moving this chat.");
+            }
+            var previous = session.Record;
+            var path = Path.TrimEndingDirectorySeparator(Path.GetFullPath(destination));
+            var projects = await Threads.ListThreadsAsync(limit: 10000, cancellationToken: lifetime.Token);
+            if (!Directory.Exists(path) || !projects.Any(thread => thread.WorkspaceKind == "project"
+                && string.Equals(Path.TrimEndingDirectorySeparator(thread.Cwd), path, StringComparison.OrdinalIgnoreCase)))
+                throw new InvalidOperationException("Choose an existing Veo project folder.");
+            if (string.Equals(previous.Cwd, path, StringComparison.OrdinalIgnoreCase)) return;
+            string? runtimeId = null;
+            if (previous.CodexThreadId is { } oldId)
+            {
+                var permission = ComposerPermission.Get(session.EffectiveAccess);
+                var parameters = new Dictionary<string, object?>
+                {
+                    ["threadId"] = oldId, ["cwd"] = path, ["excludeTurns"] = true,
+                    ["sandbox"] = permission.Sandbox, ["approvalPolicy"] = permission.Policy
+                };
+                AddApprovalsReviewer(parameters, permission.Id);
+                var reply = await Runtime.RequestAsync("thread/fork", parameters, lifetime.Token);
+                if (reply.TryGetProperty("thread", out var movedThread) && movedThread.Str("cwd") is { } actual
+                    && string.Equals(Path.TrimEndingDirectorySeparator(actual), path, StringComparison.OrdinalIgnoreCase))
+                    runtimeId = movedThread.Str("id");
+                if (runtimeId is null) throw new InvalidOperationException("Codex could not reopen the chat in the destination folder.");
+            }
+            var metadata = System.Text.Json.Nodes.JsonNode.Parse(previous.MetaJson)?.AsObject();
+            foreach (var property in new[] { "branch", "worktree", "worktreePath", "headRef", "gitBranch" }) metadata?.Remove(property);
+            var moved = previous with { Cwd = path, WorkspaceKind = "project", CodexThreadId = runtimeId,
+                MetaJson = metadata?.ToJsonString() ?? "{}" };
+            await Threads.MoveThreadAsync(previous, moved, lifetime.Token);
+            session.Record = moved;
+            session.ContextUsage = null;
+            ScheduleChanged();
+        }
+        finally { session.DispatchGate.Release(); }
+    }
+
     public async Task<ThreadSession> CreateAsync(string? directory = null)
     {
         var id = Guid.NewGuid().ToString("N");
@@ -234,6 +297,7 @@ public sealed class WorkspaceCoordinator : IAsyncDisposable
         session.Timeline.Reconcile(cached.Select(i => new TimelineItem(i.ItemId, i.TurnId, i.Type ?? "unknown", TextFromRaw(i.RawJson), i.Status ?? "completed", JsonSerializer.Deserialize<JsonElement>(i.RawJson), i.SortIndex)), false, null);
         var queue = await Threads.ReadStateAsync(record.VeoId, "queue");
         if (queue is not null) session.RestoreQueue(JsonSerializer.Deserialize<List<ComposerSnapshot>>(queue) ?? []);
+        await ManagedGoals.LoadAsync(session);
         var pending = await Threads.ReadStateAsync(record.VeoId, "dispatch");
         if (pending is not null)
         {
@@ -250,6 +314,19 @@ public sealed class WorkspaceCoordinator : IAsyncDisposable
     {
         if (session.Record.CodexThreadId is not { } runtimeId) return;
         var stateVersion = session.Timeline.StateVersion;
+        if (session.Record.Status == "running" || session.DispatchWarning is not null)
+        {
+            var routeJson = await Threads.ReadStateAsync(session.Record.VeoId, "model-route", lifetime.Token);
+            if (routeJson is not null)
+            {
+                using var route = JsonDocument.Parse(routeJson);
+                if (route.RootElement.TryGetProperty("payload", out var saved) && saved.Deserialize<ComposerSnapshot>() is { } previous)
+                {
+                    session.ProtectedTurn = ComposerModePolicy.IsProtected(previous);
+                    session.WildPrompt = previous.Wild ? previous.Text : null;
+                }
+            }
+        }
         var response = await Runtime.RequestAsync("thread/resume", new { threadId = runtimeId, cwd = session.Record.Cwd }, lifetime.Token);
         var thread = response.GetProperty("thread");
         var history = new List<TimelineItem>(); string? active = null;
@@ -265,6 +342,11 @@ public sealed class WorkspaceCoordinator : IAsyncDisposable
                     if (item.Str("id") is { } id) history.Add(new(id, turnId, item.Str("type") ?? "unknown", TimelineReducer.ExtractText(item), item.Str("status") ?? "completed", item.Clone(), history.Count));
             }
         session.Timeline.Reconcile(history, running, active, stateVersion);
+        if (!session.Timeline.IsRunning && session.DispatchWarning is null)
+        {
+            session.ProtectedTurn = false;
+            session.WildPrompt = null;
+        }
         if (session.DispatchWarning is not null)
         {
             var dispatchJson = await Threads.ReadStateAsync(session.Record.VeoId, "dispatch");
@@ -321,12 +403,15 @@ public sealed class WorkspaceCoordinator : IAsyncDisposable
     }
     public async Task DeleteAsync(ThreadSession session)
     {
-        if (session.Timeline.IsRunning) throw new InvalidOperationException("Stop the active turn first.");
+        if (session.Timeline.IsRunning || session.HasManagedGoal) throw new InvalidOperationException("Stop the active turn or goal first.");
         await Threads.DeleteThreadAsync(session.Record.VeoId); sessions.TryRemove(session.Record.VeoId, out _); ScheduleChanged();
     }
     public async Task SubmitAsync(ThreadSession session, ComposerSnapshot payload)
     {
         payload = payload.Freeze();
+        if (ComposerModePolicy.IsProtected(payload) && (session.HasManagedGoal || payload is { StartGoal: true, GoalMode: not ComposerGoalMode.ProviderManaged }))
+            throw new InvalidOperationException("Switch out of read-only mode to continue this goal.");
+        if (ComposerModePolicy.IsProtected(payload)) payload = payload with { StartGoal = false };
         await session.DispatchGate.WaitAsync(lifetime.Token);
         session.IsSubmitting = true; ScheduleChanged();
         try
@@ -348,6 +433,13 @@ public sealed class WorkspaceCoordinator : IAsyncDisposable
         }
         finally { session.IsSubmitting = false; session.DispatchGate.Release(); ScheduleChanged(); }
     }
+    internal async Task RunManagedGoalTurnAsync(ThreadSession session, ComposerSnapshot payload)
+    {
+        session.IsSubmitting = true; ScheduleChanged();
+        try { await DispatchAsync(session, payload); }
+        finally { session.IsSubmitting = false; ScheduleChanged(); }
+    }
+
     async Task<string> DispatchAsync(ThreadSession session, ComposerSnapshot payload, bool fromQueue = false, bool isContinuation = false)
     {
         foreach (var domain in new[] { "history-revert", "queue-steer" })
@@ -358,9 +450,21 @@ public sealed class WorkspaceCoordinator : IAsyncDisposable
         }
         if (session.DispatchWarning is not null) throw new InvalidOperationException(session.DispatchWarning);
         if (Runtime.RuntimeState != CodexRuntimeState.Ready) throw new InvalidOperationException("Connect Codex in Runtime settings first. Your draft has been kept.");
+        if (!isContinuation) await ManagedGoals.ObserveCompletionAsync(session);
+        var activeGoal = isContinuation ? null : session.GoalState.Run;
+        if (activeGoal is { } saved)
+            payload = saved.Settings with { ClientId = payload.ClientId, Text = payload.Text, Attachments = payload.Attachments,
+                StructuredAttachments = payload.StructuredAttachments, PreserveDraft = payload.PreserveDraft, StartGoal = false };
+        var protectedTurn = ComposerModePolicy.IsProtected(payload);
+        if (protectedTurn && !CanUseReadOnlyTurns)
+            throw new InvalidOperationException("Connect a Codex runtime that supports read-only turns.");
+        if (payload.Mode == "Ask" && payload.RoutingMode != "Direct")
+            throw new InvalidOperationException("Select a direct Codex model for read-only Ask.");
+        var guidance = await ComposerModePolicy.GuidanceAsync(payload, DataRoot, lifetime.Token);
+        if (protectedTurn) payload = payload with { Access = "Read only", Daybreak = null, StartGoal = false };
         ValidateComposerPermission(payload.Access);
         _ = DaybreakProgram(payload);
-        if (PreparePayloadAsync is { } preparePayload && !isContinuation) payload = await preparePayload(session, payload, lifetime.Token);
+        if (PreparePayloadAsync is { } preparePayload && !isContinuation && activeGoal is null) payload = await preparePayload(session, payload, lifetime.Token);
         _ = DaybreakProgram(payload);
         await Threads.SaveStateAsync(session.Record.VeoId, "model-route", JsonSerializer.Serialize(new { routingMode = payload.RoutingMode == "Direct" ? "direct" : payload.RoutingMode, payload = payload.Freeze() }), lifetime.Token);
         if (BeforeDispatchAsync is { } beforeDispatch) await beforeDispatch(session, payload, isContinuation);
@@ -371,21 +475,31 @@ public sealed class WorkspaceCoordinator : IAsyncDisposable
         await CheckpointRestoreGate.WaitAsync(lifetime.Token);
         try
         {
-            if (payload.StartGoal && !isContinuation)
+            if (payload.StartGoal && !isContinuation && payload.GoalMode == ComposerGoalMode.ProviderManaged)
             {
                 if (PrepareComposerGoalAsync is not { } prepareGoal) throw new InvalidOperationException("Goals are unavailable in this workspace.");
                 await prepareGoal(session, payload.Text.Trim(), lifetime.Token);
             }
-            return await StartTurnAsync(session, payload, fromQueue);
+            var localGoal = isContinuation ? null : await ManagedGoals.PrepareAsync(session, payload);
+            if (localGoal is not null)
+                guidance = string.Join("\n\n", new[] { guidance, ComposerGoals.Guidance(localGoal.Mode, localGoal.Objective, firstTurn: activeGoal is null) }.OfType<string>());
+            var turn = await StartTurnAsync(session, payload, fromQueue, guidance);
+            if (localGoal is not null) await ManagedGoals.AcknowledgeAsync(session, payload.ClientId, turn);
+            return turn;
         }
         finally { CheckpointRestoreGate.Release(); }
     }
-    async Task<string> StartTurnAsync(ThreadSession session, ComposerSnapshot payload, bool fromQueue)
+    public bool CanUseReadOnlyTurns => Runtime.RuntimeState == CodexRuntimeState.Ready
+        && Runtime.Capabilities.Availability("turn/start") != CapabilityAvailability.Unavailable;
+
+    async Task<string> StartTurnAsync(ThreadSession session, ComposerSnapshot payload, bool fromQueue, string? guidance)
     {
         var daybreak = DaybreakProgram(payload);
         if (CaptureTurnCheckpointAsync is { } captureCheckpoint) await captureCheckpoint(session, payload, lifetime.Token);
         await Threads.SaveStateAsync(session.Record.VeoId, "dispatch", JsonSerializer.Serialize(new { state = "pending", payload }));
         session.EffectiveAccess = payload.Access;
+        session.ProtectedTurn = ComposerModePolicy.IsProtected(payload);
+        session.WildPrompt = payload.Wild ? payload.Text : null;
         if (fromQueue) { session.RemoveQueued(payload.ClientId); await SaveQueueAsync(session); }
         session.Timeline.AddLocal(payload.ClientId, "userMessage", payload.Text, status: "pending");
         await PersistTimelineAsync(session); var dispatchVersion = session.Timeline.BeginPending(); ScheduleChanged();
@@ -402,15 +516,19 @@ public sealed class WorkspaceCoordinator : IAsyncDisposable
         var request = new Dictionary<string, object?>
         {
             ["threadId"] = session.Record.CodexThreadId, ["clientUserMessageId"] = payload.ClientId,
-            ["input"] = input, ["cwd"] = session.Record.Cwd, ["approvalPolicy"] = ComposerPermission.Get(payload.Access).Policy,
+            ["input"] = input, ["cwd"] = session.Record.Cwd, ["approvalPolicy"] = session.ProtectedTurn ? "never" : ComposerPermission.Get(payload.Access).Policy,
             ["sandboxPolicy"] = ComposerProtocol.SandboxPolicy(payload.Access, session.Record.Cwd), ["model"] = payload.Model,
             ["effort"] = payload.Effort, ["serviceTier"] = payload.Tier,
         };
         AddApprovalsReviewer(request, payload.Access);
         if (daybreak is not null) request["cyberAccessProgram"] = daybreak;
         var familyInstructions = payload.FamilyPlan is { } familyPlan ? FamilyAutoRouting.Instructions(familyPlan, payload.Mode) : null;
-        if ((payload.Mode == "Plan" || familyInstructions is not null) && payload.Model is not null)
-            request["collaborationMode"] = new { mode = payload.Mode == "Plan" ? "plan" : "default", settings = new { model = payload.Model, reasoning_effort = payload.Effort, developer_instructions = familyInstructions } };
+        var instructions = string.Join("\n\n", new[] { familyInstructions, guidance }.OfType<string>());
+        if ((payload.Mode == "Plan" || instructions.Length > 0) && payload.Model is not null
+            && Runtime.Capabilities.Availability("collaborationMode/list") != CapabilityAvailability.Unavailable)
+            request["collaborationMode"] = new { mode = payload.Mode == "Plan" ? "plan" : "default", settings = new { model = payload.Model, reasoning_effort = payload.Effort, developer_instructions = instructions.Length > 0 ? instructions : null } };
+        else if (guidance is not null)
+            request["input"] = new object[] { new { type = "text", text = guidance } }.Concat(input).ToArray();
         if (payload.Mode == "Debug") request["additionalContext"] = new { veo_debug = new { kind = "application", name = "Veo Debug", value = "Investigate with evidence before changing code. Reproduce, form hypotheses, inspect relevant state, make a focused fix, and verify the result." } };
         try
         {
@@ -429,13 +547,19 @@ public sealed class WorkspaceCoordinator : IAsyncDisposable
             return turnId ?? throw new InvalidDataException("Codex accepted the turn without returning its identity.");
         }
         catch (CodexRpcException)
-        { session.Timeline.End(null); await Threads.SaveStateAsync(session.Record.VeoId, "dispatch", "{\"state\":\"rejected\"}"); throw; }
+        { session.Timeline.End(null); session.ProtectedTurn = false; await Threads.SaveStateAsync(session.Record.VeoId, "dispatch", "{\"state\":\"rejected\"}"); throw; }
         catch
         { session.DispatchWarning = "Send outcome is uncertain. Reconnect and inspect history before sending again."; throw; }
         finally { ScheduleChanged(); }
     }
     public async Task StopAsync(ThreadSession session)
     {
+        if (session.HasManagedGoal)
+        {
+            await session.DispatchGate.WaitAsync(lifetime.Token);
+            try { await ManagedGoals.StopAsync(session, lifetime.Token); }
+            finally { session.DispatchGate.Release(); }
+        }
         var runtimeId = session.Record.CodexThreadId ?? throw new InvalidOperationException("No runtime thread.");
         var turnId = session.Timeline.ActiveTurnId;
         if (turnId is null)
@@ -497,7 +621,7 @@ public sealed class WorkspaceCoordinator : IAsyncDisposable
         var parameters = new Dictionary<string, object?>
         {
             ["cwd"] = session.Record.Cwd, ["model"] = payload.Model, ["sandbox"] = permission.Sandbox,
-            ["approvalPolicy"] = permission.Policy, ["ephemeral"] = session.Record.WorkspaceKind == "temporary",
+            ["approvalPolicy"] = ComposerModePolicy.IsProtected(payload) ? "never" : permission.Policy, ["ephemeral"] = session.Record.WorkspaceKind == "temporary",
             ["dynamicTools"] = DynamicToolBridge.Specifications
         };
         AddApprovalsReviewer(parameters, payload.Access);
@@ -506,6 +630,25 @@ public sealed class WorkspaceCoordinator : IAsyncDisposable
         session.Record = session.Record with { CodexThreadId = created.GetProperty("thread").Str("id") };
         await Threads.UpsertThreadAsync(session.Record, cancellationToken);
     }
+    async Task<bool> DeclineProtectedRequestAsync(RuntimeEvent message)
+    {
+        var id = message.Parameters.Str("threadId");
+        var protectedTurn = sessions.Values.Any(session => session.ProtectedTurn
+            && (id is null || session.Record.CodexThreadId == id));
+        if (!protectedTurn || message.Id is not { } requestId) return false;
+        object? reply = message.Method switch
+        {
+            "item/tool/call" => new { success = false, contentItems = Array.Empty<object>() },
+            "item/permissions/requestApproval" => new { permissions = new Dictionary<string, object>(), scope = "turn" },
+            "item/commandExecution/requestApproval" or "item/fileChange/requestApproval" => new { decision = "decline" },
+            "mcpServer/elicitation/request" => new { action = "decline" },
+            _ => null
+        };
+        if (reply is null) return false;
+        await Runtime.RespondAsync(message, reply, lifetime.Token);
+        return true;
+    }
+
     async Task ConsumeEventsAsync()
     {
         try
@@ -513,6 +656,7 @@ public sealed class WorkspaceCoordinator : IAsyncDisposable
             await foreach (var message in Runtime.ReadEventsAsync(lifetime.Token))
             {
                 if (message.Generation != Runtime.Generation) continue;
+                if (message.IsServerRequest && await DeclineProtectedRequestAsync(message)) continue;
                 RuntimeEventReceived?.Invoke(message);
                 if (TryHandleRuntimeEvent?.Invoke(message) == true) continue;
                 if (!message.IsServerRequest) RuntimeNotificationReceived?.Invoke(message);
@@ -549,11 +693,14 @@ public sealed class WorkspaceCoordinator : IAsyncDisposable
                         }
                     }
                 }
+                if (session?.WildPrompt is { } wildPrompt)
+                    p = TimelinePresentation.MarkResearch(p, message.Method, wildPrompt);
                 if (session is not null && session.Timeline.Apply(message.Method ?? "", p))
                 {
                     RuntimeEventApplied?.Invoke(session, message);
                     if (message.Method is "turn/started" or "turn/completed" or "turn/aborted")
                     {
+                        if (!session.Timeline.IsRunning) { session.ProtectedTurn = false; session.WildPrompt = null; }
                         session.Record = session.Record with { Status = session.Timeline.IsRunning ? "running" : "idle" };
                         await Threads.UpsertThreadAsync(session.Record);
                     }
@@ -682,6 +829,7 @@ public sealed class WorkspaceCoordinator : IAsyncDisposable
     {
         lifetime.Cancel(); await Runtime.DisposeAsync();
         if (events is not null) await events;
+        if (managedGoalWorker is not null) await managedGoalWorker;
         await Threads.DisposeAsync(); lifetime.Dispose();
     }
 }

@@ -16,7 +16,7 @@ public sealed partial class MainPage
     void UpdateConversationRows(ThreadSession session)
     {
         var items = ConversationRows(session);
-        var signature = session.Record.VeoId + ":" + session.Timeline.IsRunning + ":" + workspace.Preferences.Streaming;
+        var signature = session.Record.VeoId + ":" + session.Timeline.IsRunning + ":" + workspace.Preferences.Streaming + ":" + session.LatestManagedGoalTurn;
         var refreshPresentation = presentationSignature != signature;
         presentationSignature = signature;
         if (messages.Count > 0 && !ReferenceEquals(messages[0].Session, session)) messages.Clear();
@@ -29,11 +29,12 @@ public sealed partial class MainPage
             var item = items[index];
             if (!existing.TryGetValue(item.Id, out var row))
             {
-                messages.Insert(index, new(session, item) { ToggleWork = ToggleWorkTurn, ReviewTurn = ReviewConversationTurnAsync });
+                messages.Insert(index, new(session, item) { ToggleWork = ToggleWorkTurn, ReviewTurn = ReviewConversationTurnAsync,
+                    AddConceptFeedback = (images, text) => AddConceptFeedbackAsync(session, images, text) });
                 continue;
             }
             if (messages[index] != row) messages.Move(messages.IndexOf(row), index);
-            if (row.Item != item) row.Update(item);
+            if (!row.Item.HasSameContent(item)) row.Update(item);
             else if (refreshPresentation) row.RefreshPresentation();
         }
     }
@@ -93,7 +94,18 @@ public sealed partial class MainPage
                 rows.Add(new("turn-diff-" + turn.Id, turn.Id, "veoTurnDiff", patch, "", default, item.Order));
         }
         if (session.Timeline.IsRunning) rows.Add(ActiveStatus(session, items, liveTurnId));
-        return rows;
+        return TimelinePresentation.ProjectSpecialRows(rows);
+    }
+
+    async Task AddConceptFeedbackAsync(ThreadSession session, IReadOnlyList<(int Number, ConversationArtifact Artifact)> images, string feedback)
+    {
+        if (!ReferenceEquals(current, session)) return;
+        var references = images.Select(image => $"- Concept {image.Number} ({(image.Artifact.Kind == "localImage" ? image.Artifact.Source : image.Artifact.Id)})");
+        Composer.Text += (Composer.Text.Length > 0 ? "\n\n" : "") + "Feedback for generated concepts\n"
+            + string.Join("\n", references) + "\n\n" + feedback;
+        Composer.SelectionStart = Composer.Text.Length;
+        Composer.Focus(FocusState.Programmatic);
+        await SaveTypedComposerAsync();
     }
 
     TimelineItem ActiveStatus(ThreadSession session, IReadOnlyList<TimelineItem> items, string? turnId)
@@ -127,7 +139,7 @@ public sealed partial class MainPage
     }
 
     static bool IsFoldableWork(TimelineItem item) => TimelinePresentation.IsActivity(item.Kind)
-        && item.Kind is not ("veoUserInputAnswer" or "plan" or "error") && item.Raw.Str("type") != "contextCompaction";
+        && !TimelinePresentation.IsRoblox(item) && !TimelinePresentation.IsResearch(item) && item.Kind is not ("veoUserInputAnswer" or "plan" or "error") && item.Raw.Str("type") != "contextCompaction";
     static bool IsFailedWork(TimelineItem item) => item.Status is "failed" or "error"
         || item.Raw.ValueKind == System.Text.Json.JsonValueKind.Object && item.Raw.TryGetProperty("exitCode", out var exit) && exit.TryGetInt32(out var code) && code != 0;
 

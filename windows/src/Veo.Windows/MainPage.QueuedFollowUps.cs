@@ -14,11 +14,12 @@ public sealed partial class MainPage
     bool showEntireQueue;
 
     bool CanSteer(ThreadSession session) => session.Timeline.IsRunning
+        && !session.ProtectedTurn && !session.HasManagedGoal
         && session.Record.CodexThreadId is not null && workspace.Runtime.Capabilities.Availability("turn/steer") != CapabilityAvailability.Unavailable;
 
     bool SendsSteer(ThreadSession session) => CanSteer(session) && workspace.Preferences.SteerFollowUps
         && !(session.ComposerGoalArmed && App.ThreadSettings.ActiveGoal(session) is null)
-        && ComposerDefaults().Daybreak is null;
+        && composerDaybreak is null && !composerWild && composerMode is not ("Ask" or "Roblox");
 
     Storyboard? queueDismissal;
     bool queueRenderedExpanded;
@@ -91,7 +92,7 @@ public sealed partial class MainPage
                 actions.Children.Add(button);
             }
 
-            if (CanSteer(session) && !queued.StartGoal && queued.Daybreak is null)
+            if (CanSteer(session) && !queued.StartGoal && queued.Daybreak is null && !ComposerModePolicy.RequiresNewTurn(queued))
                 Add("Steer now", () => App.Queue.SteerAsync(session, queued));
             else if (!session.Timeline.IsRunning && queued.ClientId == queue[0].ClientId)
                 Add("Send now", () => workspace.DispatchNextQueuedAsync(session));
@@ -194,8 +195,12 @@ public sealed partial class MainPage
     {
         var active = session.Timeline.IsRunning;
         var steer = SendsSteer(session);
-        var label = !active ? "Send" : steer ? "Steer current turn" : "Queue next message";
+        var submitting = session.IsSubmitting;
+        var label = submitting ? "Preparing to send" : !active ? "Send" : steer ? "Steer current turn" : "Queue next message";
         SendGlyph.Glyph = !active ? "\uE74A" : steer ? "\uE7AD" : "\uE8FD";
+        SendGlyph.Visibility = submitting ? Visibility.Collapsed : Visibility.Visible;
+        SendProgress.Visibility = submitting ? Visibility.Visible : Visibility.Collapsed;
+        SendProgress.IsActive = submitting;
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(SendButton, label);
         ToolTipService.SetToolTip(SendButton, label);
         if (active && SendButton.ContextFlyout is null)

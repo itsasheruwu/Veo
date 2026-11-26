@@ -115,7 +115,22 @@ public sealed class ThreadSettingsCoordinator : IAsyncDisposable
         && !goal.Status.Equals("complete", StringComparison.OrdinalIgnoreCase) ? goal : null;
 
     public bool ComposerGoalEnabled(ThreadSession session) =>
-        session.ComposerGoalArmed || ActiveGoal(session) is not null || session.Queue.Any(submission => submission.StartGoal);
+        session.ComposerGoalArmed || HasActiveComposerGoal(session);
+
+    public bool HasActiveComposerGoal(ThreadSession session) =>
+        session.HasManagedGoal || ActiveGoal(session) is not null || session.Queue.Any(submission => submission.StartGoal);
+
+    public async Task SelectComposerGoalModeAsync(ThreadSession session, ComposerGoalMode mode, CancellationToken cancellation = default)
+    {
+        await session.DispatchGate.WaitAsync(cancellation);
+        try
+        {
+            if (HasActiveComposerGoal(session)) throw new InvalidOperationException("Stop the active goal before changing its mode.");
+            await workspace.ManagedGoals.SelectAsync(session, mode, cancellation);
+            Changed?.Invoke();
+        }
+        finally { session.DispatchGate.Release(); }
+    }
 
     public async Task SetComposerGoalModeAsync(ThreadSession session, bool enabled, CancellationToken cancellation = default)
     {
@@ -124,12 +139,12 @@ public sealed class ThreadSettingsCoordinator : IAsyncDisposable
         {
             if (enabled)
             {
-                if (!Available("thread/goal/set")) throw new InvalidOperationException("The selected Codex runtime does not support goals.");
                 if (!ComposerGoalEnabled(session)) session.ComposerGoalArmed = true;
             }
             else
             {
                 if (ActiveGoal(session) is not null) await ClearGoalAsync(session, cancellation);
+                await workspace.ManagedGoals.StopAsync(session, cancellation);
                 await workspace.ClearQueuedComposerGoalsAsync(session);
                 session.ComposerGoalArmed = false;
             }

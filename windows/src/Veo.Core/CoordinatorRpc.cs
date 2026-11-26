@@ -25,7 +25,7 @@ public static class ComposerProtocol
     };
     public static object[] Input(ComposerSnapshot payload)
     {
-        var input = new List<object> { new { type = "text", text = payload.Text + (payload.VisionFallback is null ? "" : "\n\n" + payload.VisionFallback.ProtocolText) } };
+        var input = new List<object> { new { type = "text", text = InlineChatContext.PluginProtocolText(payload.Text) + (payload.VisionFallback is null ? "" : "\n\n" + payload.VisionFallback.ProtocolText) } };
         foreach (var attachment in Attachments(payload))
         {
             if (payload.VisionFallback is not null && attachment.Kind is ComposerAttachmentKind.LocalImage or ComposerAttachmentKind.Image) continue;

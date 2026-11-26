@@ -490,3 +490,54 @@ On Astra-PC, confirmed that the Provider, Model, and Permissions pills rendered 
 ### Veo 2.6.0 portable beta
 
 Extracted the Windows x64 ZIP on Astra-PC and launched the packaged executable in a fresh profile. Verified the first-run welcome, project, appearance, and provider steps. Skipping the remaining tour opened the native workspace with the Provider, Model, Permissions, Dictate, and Send controls. The Voice settings showed the transcription picker. The executable reported version 2.6.0-beta.1, and the ZIP checksum matched the generated digest.
+
+### Ask, Roblox, Wild, generated concepts, plugin mentions, and chat moves
+
+Verified on Astra-PC from the Windows-native checkout at `C:\Codex\Veo-Windows`, based on `codex/windows-beta` at `f79810a`. The checked-in x64 Debug build used the local Codex 0.169.0 executable and the process-scoped `ValidateExecutableReferencesMatchSelfContained=false` override for the existing continuation-helper reference. The packaged development runner returned registration error `0x80070005`. GUI checks used the locally built portable WinUI executable with a separate `VEO_PROFILE_ROOT`.
+
+- Composer, Integrations, and CatalogHistory passed 120 checks. The added checks cover Ask and Wild draft round-trips, protected turn classification, current and legacy Chrome mention serialization, and generated concept restoration when runtime history omits image tool rows.
+- The isolated Codex CLI read an existing file and rejected a write in read-only sandbox mode. The real app-server returned read-only plus approval policy never, forked and resumed into the selected workspace, then recorded that directory for the next turn with no cwd override. Inference used a loopback fixture.
+- In the isolated native UI, the Wild switch kept its flyout open and added its composer pill. Ask appeared beside Send when selected. The Roblox disclosure showed both Studio tool labels in order. The two stored test images rendered inside the assistant reply, and selecting both changed the action to Show all concepts while retaining the numbered tiles. The restored draft displayed the Chrome chip.
+- The Core and TurnLifecycle suites failed at the same history-reload assertions on pristine `f79810a`. Live provider image generation, live Roblox Studio integration, and disabled-animation behavior remain outside this acceptance run.
+- The final portable build displayed the moving 360-DIP dot grid and resolved the live fixture into a two-concept gallery. Its local QA archive SHA-256 is `158d5a21f48b7687c53615d891c259b450538d3d717bf6e12e85f09c6a93ab96`.
+- An Ask turn from the native composer sent `readOnly` and approval `never`. Veo declined the test command approval, rejected the dynamic tool request, and returned an empty grant for a requested permission escalation.
+- The sidebar move picker reopened the same chat under Workspace B. SQLite retained its Veo ID, the exact Chrome-containing draft, and all six transcript items. In a 760-pixel light window, pressing Space on Ask selected it and showed its pill while the menu remained open.
+- Typing @chrome opened the installed Chrome suggestion with its description. Selecting it produced a Chrome chip, and SQLite retained the full plugin ID in the draft.
+
+### Windows installer and fork feature integration
+
+Built the self-contained x64 `2.6.1-beta.1` installer on Astra-PC after integrating the fork changes into the Windows beta. The Setup executable SHA-256 is `1bc09f83b2030f93e4b2f01489a9f0d4732e64798380b535b1042cc16c763f5e`. Verified the per-user installation, Start menu shortcut, uninstall entry, and that Settings → Updates can check the public GitHub feed. The production shortcut opened Veo with Ask and Roblox enabled.
+
+- The installed app restored Ask and Wild from a saved draft, displayed and compared two generated concept tiles, and expanded two grouped Roblox Studio calls in a fixture timeline. The Move to project action changed the working directory while retaining the Veo ID, exact Chrome plugin draft, and all six timeline items in SQLite.
+- A separate install upgraded from `2.6.0-beta.99` to `2.6.1-beta.1` using a loopback feed. A manual check found the update. Enabling automatic installation downloaded it, and quitting applied it. Launching from Start after the update reopened the workspace with the same appearance and update settings. An immediate direct launch of the executable during the test did not open a window.
+- The 46 composer checks passed. The Integrations deprecation and CatalogHistory queue mirroring assertions failed at the same points on the unmodified Windows beta. Live Roblox Studio and live image generation were not part of this installer run.
+
+### Roblox tool activity disclosure
+
+Verified the x64 `2.6.1-beta.2` build in Astra-PC’s interactive desktop with a local app-server fixture using the configured `Roblox_Studio` server name. Space opened the compact Roblox row while a call was running. It stayed open as a second call arrived, displayed the first result and duration inline, and marked the second call and the group as failed when Studio returned an MCP error result. A pointer click collapsed the group. Captured frames showed the live highlight moving. The 47 composer checks passed. The same build was installed and reopened from Start. Live Roblox Studio was not exercised.
+
+### Goal modes
+
+x64 `2.6.1-beta.3` passed the native Goal fixture on Astra-PC. The keyboard opened the Goal pill menu with Provider-managed selected by default and exposed Loop and Gauntlet. Loop dispatched a second pass on the explicit cadence, hid its control footer, and ended on completion. Gauntlet waited for a benchmark choice and completed after a simulated independent review. Stop Goal canceled the next scheduled pass. The 47 composer checks also passed. The native test used a simulated Codex app server and review result. The same verified build was installed and reopened from Start.
+
+Loop follows the local recurrence behavior in Cursor. Gauntlet follows Matt Shumer’s technique as packaged by Jay E at RoboNuggets. [Cursor `/loop`](https://cursor.com/changelog/shared-canvases) · [Gauntlet Loop](https://github.com/robonuggets/gauntlet-loop)
+
+### Upward composer and Goal menus
+
+Native x64 `2.6.1-beta.4` opened both menus above their controls on Astra-PC at 1180×840 and 640×610 window pixels. The composer menu’s bottom was 13 pixels above its anchor at both sizes, and the Goal menu had the same gap. Native text bounds and width checks confirmed one visible line for each predefined description at both sizes. At the narrow size, scrolling exposed the bottom composer rows while keeping the menu above its anchor.
+
+### Windows sidebar and send preparation
+
+Isolated x64 native checks on Astra-PC verified one Projectless Chats section for three scratch and temporary workspaces, separate Veo project and Codex CLI sections, and collapse persistence across relaunch. The sidebar actions stayed aligned at 1080×780 and 640×600. At 1380×820 the utility panel stayed docked and resizable. At 680×610 it filled the conversation area and preserved the Browser view when switching widths. Review, Files, Browser, Side chat, and Back to chat were exercised.
+
+The 49 composer checks passed, including stable projected Roblox activity rows and skipping Git inspection for runtime history that cannot use a checkpoint. The catalog queue-mirroring and project command-count failures also occurred on earlier Windows code. Installed x64 `2.6.1-beta.5` and reopened it from Start. The production sidebar showed one Projectless Chats section and the local runtime was ready. Setup SHA-256 is `b2eada9f99621888dcdb0538fdbeaada0b0f80cb37e344ffcc64112ee02347c1`.
+
+### Left sidebar grouping and layout
+
+An isolated x64 WinUI build on Astra-PC displayed one Projectless Chats heading for three chats with distinct working directories. The named project and Codex CLI project remained separate. Collapsing the heading persisted through a full relaunch and expanding it restored the same group. Sidebar commands remained aligned at 1080×780 and 640×600 window pixels. Three focused catalog checks passed. The broader CatalogHistory suite still stops at the existing server-queue identity-mirroring assertion.
+
+### Windows browser layout
+
+Native x64 `2.6.1-beta.6` showed a centered new-tab search and a full-height WebView2 page in dark and light themes on Astra-PC. The address field grew from 92 to 208 pixels at the minimum dock width, and the wider dock exposed Forward and Reload beside Back. The Viewport submenu saved Mobile and then restored Responsive. A selected WebView2 tab survived resizing the window from 1380×820 to 680×610 and back.
+
+With a loopback fixture, a pointer click on the new-tab search button preserved the separate address draft, and Enter in the address field navigated the tab. Back, Forward, Reload, and Stop loading worked with real WebView2 requests. All 25 browser harness checks passed. The exact checked build was installed and reopened from Start. The installed assembly hash matched the one used for the native test. The setup SHA-256 is `6874cd6c1c9c96f48d8e88bfc99698ee02a8541d9d313ba831a2e8410f676fe6`. This records partial acceptance for B01, B02, and B09.

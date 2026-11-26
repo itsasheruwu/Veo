@@ -17,6 +17,7 @@ internal sealed class LiveActivityView : UserControl
     readonly FontIcon icon = new() { Width = 14, FontSize = 11, VerticalAlignment = VerticalAlignment.Center };
     readonly TextBlock label = new() { FontSize = 12, MaxLines = 1, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center };
     readonly Grid labelHost = new();
+    readonly FrameworkElement activityIcon;
     readonly DispatcherTimer statusTimer = new() { Interval = TimeSpan.FromSeconds(1) };
     const double SweepPeriod = 1.8;
     const double RevealDuration = .24;
@@ -28,15 +29,17 @@ internal sealed class LiveActivityView : UserControl
     double lastFrame;
     TimelineItem? step;
     DateTimeOffset? startedAt;
+    bool isWorking = true;
 
-    public LiveActivityView()
+    public LiveActivityView(FrameworkElement? leadingIcon = null)
     {
         HorizontalContentAlignment = HorizontalAlignment.Stretch;
-        AutomationProperties.SetAccessibilityView(icon, AccessibilityView.Raw);
+        activityIcon = leadingIcon ?? icon;
+        AutomationProperties.SetAccessibilityView(activityIcon, AccessibilityView.Raw);
         var row = new Grid { ColumnSpacing = 8, MinHeight = 16 };
         row.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         row.ColumnDefinitions.Add(new());
-        row.Children.Add(icon);
+        row.Children.Add(activityIcon);
         Grid.SetColumn(labelHost, 1);
         labelHost.Children.Add(label);
         row.Children.Add(labelHost);
@@ -50,7 +53,7 @@ internal sealed class LiveActivityView : UserControl
         Loaded += (_, _) =>
         {
             RefreshMotion();
-            statusTimer.Start();
+            if (isWorking) statusTimer.Start();
         };
         Unloaded += (_, _) =>
         {
@@ -60,10 +63,11 @@ internal sealed class LiveActivityView : UserControl
         ActualThemeChanged += (_, _) => RefreshMotion();
     }
 
-    public void Update(TimelineItem item, DateTimeOffset? turnStartedAt)
+    public void Update(TimelineItem item, DateTimeOffset? turnStartedAt, bool working = true)
     {
         var switched = step is not null && (step.Order != item.Order || step.Status != item.Status);
-        var motionChanged = step?.Status == "waitingForInput" || item.Status == "waitingForInput";
+        var motionChanged = isWorking != working || step?.Status == "waitingForInput" || item.Status == "waitingForInput";
+        isWorking = working;
         step = item;
         startedAt = turnStartedAt;
         icon.Glyph = item.Status switch
@@ -79,7 +83,12 @@ internal sealed class LiveActivityView : UserControl
         UpdateLabel();
         if (!IsLoaded) return;
 
-        if (switched && motionChanged) RefreshMotion();
+        if (motionChanged)
+        {
+            if (isWorking) statusTimer.Start();
+            else statusTimer.Stop();
+            RefreshMotion();
+        }
         if (switched && rendering)
         {
             revealStartedAt = Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency;
@@ -95,7 +104,7 @@ internal sealed class LiveActivityView : UserControl
         if (label.Text != text) label.Text = text;
     }
 
-    bool CanAnimate => motion.AnimationsEnabled && !accessibility.HighContrast && step?.Status != "waitingForInput";
+    bool CanAnimate => isWorking && motion.AnimationsEnabled && !accessibility.HighContrast && step?.Status != "waitingForInput";
 
     void RefreshMotion()
     {

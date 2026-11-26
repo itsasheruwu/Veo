@@ -26,7 +26,7 @@ public sealed class GitProjectRepositoryIdentity : IProjectRepositoryIdentity
     {
         try
         {
-            var snapshot = await git.SnapshotAsync(path, token); var common = new WorkspacePathPolicy(snapshot.CommonDirectory).RootPath;
+            var common = await git.CommonDirectoryAsync(path, token);
             if (!OperatingSystem.IsWindows()) return common + ":" + Directory.GetCreationTimeUtc(common).Ticks;
             using var handle = CreateFileW(common.StartsWith("\\\\", StringComparison.Ordinal) ? "\\\\?\\UNC\\" + common[2..] : "\\\\?\\" + common, 0, 7, IntPtr.Zero, 3, 0x02000000, IntPtr.Zero);
             if (handle.IsInvalid || !GetFileInformationByHandle(handle, out var info)) throw new IOException("The repository directory identity could not be verified.");

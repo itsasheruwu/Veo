@@ -60,6 +60,14 @@ public sealed class IntegrationCoordinator : IAsyncDisposable
     }
     public async Task<SkillIntegration[]> RefreshSkillsAsync(IntegrationContext context, CancellationToken cancellation = default)
     { var skills = await ReadSkillsAsync(context, false, cancellation); snapshots[context.Key] = Snapshot(context) with { Skills = skills }; Changed?.Invoke(); return skills; }
+    public async Task<IReadOnlyList<PluginIntegration>> RefreshMentionablePluginsAsync(IntegrationContext context, CancellationToken cancellation = default)
+    {
+        if (workspace.Runtime.Capabilities.Availability("plugin/list") == CapabilityAvailability.Unavailable) return [];
+        var current = await ReadPluginsAsync(context, false, cancellation);
+        snapshots[context.Key] = Snapshot(context) with { Marketplaces = current };
+        return current.SelectMany(marketplace => marketplace.Plugins).ToArray();
+    }
+
     async Task<MarketplaceIntegration[]> ReadPluginsAsync(IntegrationContext context, bool force, CancellationToken cancellation)
     {
         var response = await RequestAsync("plugin/list", new { cwds = context.Cwd is null ? Array.Empty<string>() : new[] { context.Cwd }, forceRefetch = force }, cancellation);

@@ -34,6 +34,8 @@ public sealed partial class MainPage
     bool composerControlsReady;
     string? skillCacheKey;
     DateTimeOffset skillCacheAt;
+    string? pluginCacheKey;
+    DateTimeOffset pluginCacheAt;
 
     void InitializeComposerControls()
     {
@@ -62,7 +64,7 @@ public sealed partial class MainPage
     ComposerSnapshot ComposerDefaults() => new(Guid.NewGuid().ToString("N"), "", model, effort, tier,
         composerAccess, composerMode, [],
         ContextTokens: contextTokens, RoutingMode: routingMode, RouterPolicy: routerPolicy, FamilyPlan: familyPlan,
-        CatalogModelId: modelCatalogId, Daybreak: composerDaybreak);
+        CatalogModelId: modelCatalogId, Daybreak: composerDaybreak, Wild: composerWild);
     ComposerDraft CaptureComposerDraft(ThreadSession session)
     {
         var saved = ComposerDraft.Read(session.Draft);
@@ -132,7 +134,8 @@ public sealed partial class MainPage
             var snapshot = outgoing.Snapshot(defaults: ComposerDefaults()) with
             {
                 PreserveDraft = true,
-                StartGoal = session.ComposerGoalArmed && App.ThreadSettings.ActiveGoal(session) is null
+                StartGoal = session.ComposerGoalArmed && !App.ThreadSettings.HasActiveComposerGoal(session),
+                GoalMode = session.GoalMode
             };
             await SaveCompleteDraftAsync(session, captured);
             async Task ClearAcceptedDraftAsync()
@@ -155,13 +158,16 @@ public sealed partial class MainPage
             var agentDraftHandled = false;
             if (ActiveAgent is { } agent)
             {
-                if (!snapshot.Mode.Equals("Agentic", StringComparison.OrdinalIgnoreCase) || snapshot.StartGoal) throw new InvalidOperationException("Switch to Agentic and turn off Goal to send to this provider.");
+                if (!snapshot.Mode.Equals("Agentic", StringComparison.OrdinalIgnoreCase) || snapshot.StartGoal || session.HasManagedGoal || snapshot.Wild)
+                    throw new InvalidOperationException("Switch to Agentic and turn off Goal and Wild to send to this provider.");
                 if (outgoing.Attachments.Length != 0) throw new InvalidOperationException("Remove attachments to send a text turn to this agent.");
                 if (session.Timeline.IsRunning) throw new InvalidOperationException("Wait for the current turn to finish.");
                 await SendAgentAsync(agent, session, captured.Text, ClearAcceptedDraftAsync);
                 agentDraftHandled = true;
             }
-            else if (SendsSteer(session) && snapshot.Access == session.EffectiveAccess && snapshot.Daybreak is null && !snapshot.StartGoal) await App.Queue.SteerAsync(session, snapshot);
+            else if (SendsSteer(session) && snapshot.Access == session.EffectiveAccess && snapshot.Daybreak is null
+                && !snapshot.StartGoal && !ComposerModePolicy.RequiresNewTurn(snapshot) && !session.ProtectedTurn)
+                await App.Queue.SteerAsync(session, snapshot);
             else await workspace.SubmitAsync(session, snapshot);
             if (!agentDraftHandled) await ClearAcceptedDraftAsync();
             CloseCompletions(); Render(); await RefreshCatalogAsync();
@@ -223,7 +229,15 @@ public sealed partial class MainPage
             await Task.Delay(140, cancellation.Token); var context = IntegrationContext.For(session); var skills = App.Integrations.Snapshot(context).Skills;
             var skillKey = context.Key + "|" + workspace.Runtime.Generation;
             if (token.Trigger == '$' && (skillCacheKey != skillKey || DateTimeOffset.UtcNow - skillCacheAt > TimeSpan.FromSeconds(15))) { skills = await App.Integrations.RefreshSkillsAsync(context, cancellation.Token); skillCacheKey = skillKey; skillCacheAt = DateTimeOffset.UtcNow; }
-            var suggestions = await suggestionService.QueryAsync(session, token, skills, cancellation.Token);
+            var plugins = App.Integrations.Snapshot(context).Marketplaces.SelectMany(market => market.Plugins).ToArray();
+            if (token.Trigger == '@' && (pluginCacheKey != skillKey || DateTimeOffset.UtcNow - pluginCacheAt > TimeSpan.FromSeconds(15)))
+            {
+                try { plugins = (await App.Integrations.RefreshMentionablePluginsAsync(context, cancellation.Token)).ToArray(); }
+                catch (Exception error) when (error is CodexRpcException or IOException or NotSupportedException) { plugins = []; }
+                pluginCacheKey = skillKey;
+                pluginCacheAt = DateTimeOffset.UtcNow;
+            }
+            var suggestions = await suggestionService.QueryAsync(session, token, skills, cancellation.Token, plugins);
             if (cancellation.IsCancellationRequested || current?.Record.VeoId != session.Record.VeoId || Composer.Text != token.Text || imeComposing) return;
             displayedCompletion = token; composerSuggestions.Items.Clear(); var index = 0;
             foreach (var suggestion in suggestions)
@@ -235,7 +249,13 @@ public sealed partial class MainPage
                     content.Children.Add(new TextBlock { Text = suggestion.Description, TextWrapping = TextWrapping.Wrap, FontSize = 10.5, Opacity = .72 });
                 var button = new Button
                 {
-                    Content = content,
+                    Content = suggestion.Kind == ComposerSuggestionKind.Plugin
+                        ? new StackPanel
+                        {
+                            Orientation = Orientation.Horizontal, Spacing = 9,
+                            Children = { ComposerPluginIcon(suggestion, ComposerKeyHints.Foreground), content }
+                        }
+                        : content,
                     Style = (Style)Resources["ComposerChromeButton"],
                     Padding = new Thickness(9, 4, 9, 4),
                     HorizontalAlignment = HorizontalAlignment.Stretch,
@@ -263,6 +283,15 @@ public sealed partial class MainPage
         if (current is not { } session || !ReferenceEquals(displayedCompletion, token) || Composer.Text != token.Text || imeComposing) return;
         if (suggestion.Kind == ComposerSuggestionKind.Command)
         { var invocation = suggestion.Command?.SlashName is { } slash ? "/" + slash : throw new InvalidOperationException("This command suggestion is unavailable."); if (await ExecuteCommandAsync(invocation) && current?.Record.VeoId == session.Record.VeoId && Composer.Text == token.Text) { Composer.Text = ""; await SaveTypedComposerAsync(); } CloseCompletions(); return; }
+        if (suggestion.Kind == ComposerSuggestionKind.Plugin)
+        {
+            var plugins = App.Integrations.Snapshot(IntegrationContext.For(session)).Marketplaces.SelectMany(market => market.Plugins);
+            if (!ComposerSuggestionService.PluginSuggestions(plugins).Any(item => item.Source == suggestion.Source)) return;
+            Composer.Text = token.RemoveFrom(Composer.Text);
+            Composer.SelectionStart = token.Start;
+            await InsertPluginMentionAsync(suggestion);
+            return;
+        }
         var skills = suggestion.Kind == ComposerSuggestionKind.Skill ? await App.Integrations.RefreshSkillsAsync(IntegrationContext.For(session)) : App.Integrations.Snapshot(IntegrationContext.For(session)).Skills;
         if (current?.Record.VeoId != session.Record.VeoId || !ReferenceEquals(displayedCompletion, token) || Composer.Text != token.Text || imeComposing) return;
         var attachment = ComposerSuggestionService.ValidateAttachment(session, suggestion, skills); var text = token.RemoveFrom(Composer.Text);
@@ -277,6 +306,14 @@ public sealed partial class MainPage
         Composer.Focus(FocusState.Programmatic);
         await SaveTypedComposerAsync();
     }
+    async Task InsertPluginMentionAsync(ComposerSuggestion suggestion)
+    {
+        InsertAtComposerCaret(InlineChatContext.Link("@" + suggestion.Title, "plugin", suggestion.Source));
+        CloseCompletions();
+        Composer.Focus(FocusState.Programmatic);
+        await SaveTypedComposerAsync();
+    }
+
     async Task<bool> HandleCompletionKeyAsync(VirtualKey key)
     {
         if (imeComposing || displayedCompletion is not { } token || composerSuggestions.Visibility != Visibility.Visible || composerSuggestions.Items.Count == 0) return false;

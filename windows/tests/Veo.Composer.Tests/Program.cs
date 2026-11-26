@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Veo.Core;
+using Veo.Infrastructure.Projects;
 using Veo.Infrastructure.PromptLibrary;
 using Veo.Infrastructure.Storage;
 
@@ -105,6 +106,62 @@ await using (var repository = new ThreadRepository(Path.Combine(root, "suggestio
         new(ComposerSuggestionKind.File, "checkpoint", "", gitReference))), "acceptance rejects a stale Git metadata suggestion");
     using var cancelled = new CancellationTokenSource(); cancelled.Cancel(); await Refuses(() => fuzzy.QueryAsync(session, fileToken, cancellation: cancelled.Token), "cancelled autocomplete does not publish a stale query");
 }
+var chrome = InlineChatContext.Link("@Chrome", "plugin", "chrome@openai-bundled");
+var ask = ComposerDraft.Read(ComposerDraft.FromSnapshot(frozen with
+{
+    Mode = "Ask", Wild = true, RoutingMode = "Direct", Text = "Use " + chrome
+}).Persisted()).Snapshot(includeInput: true);
+Check(ask.Wild && ComposerModePolicy.IsProtected(ask) && ComposerModePolicy.RequiresNewTurn(ask),
+    "Ask and independent Wild survive draft round-trip and require a protected new turn");
+Check(ComposerModePolicy.IsProtected(ask with { Mode = "Plan" }) && !ComposerModePolicy.IsProtected(ask with { Mode = "Roblox" }),
+    "Wild preserves the selected mode permission policy");
+Check(E(ComposerProtocol.Input(ask))[0].Str("text") == "Use [Chrome](plugin://chrome@openai-bundled)"
+    && InlineChatContext.Scan(ask.Text).Single().Label == "@Chrome",
+    "plugin chip survives draft persistence and sends the full Codex plugin ID");
+const string legacyChrome = "[Chrome](plugin://browser@openai-bundled?browserFamily=chrome)";
+Check(InlineChatContext.Scan(legacyChrome).Single().Label == "@Chrome"
+    && InlineChatContext.PluginProtocolText(legacyChrome) == "[Chrome](plugin://chrome@openai-bundled)",
+    "legacy Chrome protocol mentions reopen as chips and normalize for dispatch");
+
+var renderedTimeline = new TimelineReducer();
+TimelineItem Row(string id, string kind, int order, object raw) =>
+    new(id, "concepts", kind, id, "completed", E(raw), order);
+var imageOne = Row("image-one", "imageGeneration", 0, new { id = "image-one", type = "imageGeneration", status = "completed", savedPath = image });
+var imageTwo = Row("image-two", "imageGeneration", 1, new { id = "image-two", type = "imageGeneration", status = "completed", savedPath = Path.Combine(root, "second.png") });
+var reply = Row("assistant", "agentMessage", 2, new { id = "assistant", type = "agentMessage" });
+renderedTimeline.Reconcile([imageOne, imageTwo, reply], false, null);
+renderedTimeline.ReplaceHistory([reply], false, null, ["concepts"]);
+var concepts = TimelinePresentation.ProjectSpecialRows(renderedTimeline.Items);
+Check(concepts.Count == 1 && TimelinePresentation.GeneratedConcepts(concepts[0]).Length == 2,
+    "a retained reply recovers its two delivered concepts when authoritative history omits tool rows");
+
+var studioFirst = Row("studio-first", "mcpToolCall", 0, new { server = "Roblox_Studio", tool = "get_selection" });
+var studioSecond = Row("studio-second", "mcpToolCall", 1, new { server = "Roblox_Studio", tool = "list_descendants", result = new { isError = true } });
+var studioPending = TimelinePresentation.ProjectSpecialRows([studioFirst with { Status = "inProgress" }]).Single();
+var studioFinished = TimelinePresentation.ProjectSpecialRows([studioFirst, studioSecond]).Single();
+Check(studioPending.Id == studioFinished.Id && studioFinished.Text == "Roblox ×2 · Failed"
+    && studioFinished.Raw.Deserialize<TimelineItem[]>()?.Select(item => item.Id).SequenceEqual([studioFirst.Id, studioSecond.Id]) == true,
+    "the Roblox trace retains its identity and ordered calls as it grows, including MCP result errors");
+Check(studioFinished.HasSameContent(TimelinePresentation.ProjectSpecialRows([studioFirst, studioSecond]).Single())
+    && !studioFinished.HasSameContent(studioPending),
+    "equivalent projected tool traces stay stable across redraws while real tool updates change the row");
+
+var noGit = Directory.CreateDirectory(Path.Combine(root, "legacy history fixture")).FullName;
+await using (var workspace = new WorkspaceCoordinator(Path.Combine(root, "legacy-checkpoint-profile")))
+{
+    var session = new ThreadSession(new PersistedThread("legacy-fixture", "runtime-legacy", noGit, "Legacy checkpoint fixture"));
+    var readHistory = false;
+    var rpc = new FakeRpc { Handler = (method, _) =>
+    {
+        readHistory = method == "thread/read";
+        return J("{\"thread\":{\"historyMode\":\"legacy\"}}");
+    } };
+    var checkpoints = new CheckpointCoordinator(workspace, new ProjectPreferencesService(workspace.Threads), rpc);
+    await checkpoints.BeforeDispatchAsync(session, frozen);
+    Check(readHistory && checkpoints.Warning(session) is null && (await checkpoints.EntriesAsync(session)).Count == 0,
+        "legacy runtime history short-circuits automatic checkpoint capture");
+}
+
 Console.WriteLine($"{count} typed composer/draft/mentions checks passed; no remote media or model request was sent.");
 
 sealed class FakeRpc : ICoordinatorRpc

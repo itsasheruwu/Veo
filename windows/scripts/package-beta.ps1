@@ -2,7 +2,9 @@ param(
     [Parameter(Mandatory = $true)]
     [ValidatePattern('^\d+\.\d+\.\d+-beta\.\d+$')]
     [string]$Version,
-    [string]$OutputDirectory
+    [string]$OutputDirectory,
+    [switch]$Installer,
+    [string]$Vpk = 'vpk'
 )
 $ErrorActionPreference = 'Stop'
 
@@ -13,7 +15,12 @@ $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
 $stage = Join-Path $OutputDirectory ([Guid]::NewGuid().ToString('N'))
 $payload = Join-Path $stage 'Veo'
 $archive = Join-Path $OutputDirectory "Veo-${Version}-Windows-x64.zip"
+$setup = Join-Path $OutputDirectory "Veo-${Version}-Windows-x64-Setup.exe"
 if (Test-Path -LiteralPath $archive) { throw "Release ZIP already exists at $archive" }
+if ($Installer) {
+    if (Test-Path -LiteralPath $setup) { throw "Release installer already exists at $setup" }
+    if (!(Get-Command $Vpk -ErrorAction SilentlyContinue)) { throw 'Install vpk version 1.2.161 or supply it with -Vpk.' }
+}
 New-Item -ItemType Directory -Path $payload | Out-Null
 
 $project = Join-Path $windowsRoot 'src\Veo.Windows\Veo.Windows.csproj'
@@ -52,19 +59,47 @@ The optional in-app browser uses Microsoft Edge WebView2 Runtime.
 
 Extract the entire ZIP, then open Veo.Windows.exe in the Veo folder.
 This portable build is unsigned. Package-based quiet wake is unavailable.
-Beta updates are downloaded manually from GitHub Releases.
+Download future portable builds from GitHub Releases, or use the installer to receive in-app updates.
 '@
     $intro | Set-Content -LiteralPath (Join-Path $payload 'READ-ME.txt') -Encoding UTF8
 
     $archiveStage = Join-Path $stage 'beta.zip'
     tar.exe -a -cf $archiveStage -C $stage Veo
     if ($LASTEXITCODE -ne 0) { throw 'Could not create the beta ZIP.' }
+    $releaseFiles = @($archive)
+    if ($Installer) {
+        $channel = 'win-x64-beta'
+        $installerStage = Join-Path $stage 'Installer'
+        $icon = Join-Path $assets 'AppIcon.ico'
+        & $Vpk pack --packId Veo.Windows --packVersion $Version --channel $channel --packDir $payload `
+            --mainExe Veo.Windows.exe --packTitle Veo --packAuthors Veo --runtime win-x64 --icon $icon `
+            --shortcuts StartMenuRoot --delta None --noPortable --outputDir $installerStage
+        if ($LASTEXITCODE -ne 0) { throw 'Could not create the Windows installer and update assets.' }
+        $generatedSetup = @(Get-ChildItem -LiteralPath $installerStage -Filter '*-Setup.exe' -File)
+        $updatePackage = @(Get-ChildItem -LiteralPath $installerStage -Filter '*-full.nupkg' -File)
+        $feed = Join-Path $installerStage "releases.$channel.json"
+        if ($generatedSetup.Count -ne 1 -or $updatePackage.Count -ne 1 -or !(Test-Path -LiteralPath $feed -PathType Leaf)) {
+            throw 'The Windows installer, update package, or channel manifest is missing.'
+        }
+        Move-Item -LiteralPath $generatedSetup[0].FullName -Destination $setup
+        $releaseFiles += $setup
+        foreach ($asset in @($updatePackage[0].FullName, $feed)) {
+            $destination = Join-Path $OutputDirectory ([IO.Path]::GetFileName($asset))
+            Move-Item -LiteralPath $asset -Destination $destination -Force
+            $releaseFiles += $destination
+        }
+        Write-Output "BETA_SETUP=$setup"
+    }
     Move-Item -LiteralPath $archiveStage -Destination $archive
-    $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
-    "$hash  $([IO.Path]::GetFileName($archive))" |
+
+    $checksums = foreach ($file in $releaseFiles) {
+        $hash = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
+        "$hash  $([IO.Path]::GetFileName($file))"
+    }
+    $checksums |
         Set-Content -LiteralPath (Join-Path $OutputDirectory 'SHA256SUMS-windows.txt') -Encoding ASCII
     Write-Output "BETA_ARCHIVE=$archive"
-    Write-Output "BETA_SHA256=$hash"
+    Write-Output "BETA_SHA256=$($checksums[0].Split(' ')[0])"
 } finally {
     Pop-Location
 }

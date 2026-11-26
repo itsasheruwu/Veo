@@ -16,6 +16,8 @@ public sealed record VeoPreferences
     public bool ModelPickerUpgradeApplied { get; set; }
     public bool ModelPickerUpgradeNoticePending { get; set; }
     public string Streaming { get; set; } = "Token";
+    public bool CheckForAppUpdates { get; set; } = true;
+    public bool InstallAppUpdatesAutomatically { get; set; }
     public string DictationModel { get; set; } = "Windows Speech";
     public string DictationLanguage { get; set; } = "";
     public bool DictationLive { get; set; } = true;

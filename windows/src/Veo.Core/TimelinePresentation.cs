@@ -11,7 +11,7 @@ public sealed record ConversationAgent(string ThreadId, string Name, string Stat
 public sealed record TimelineItemPresentation(string Title, string Body, ConversationArtifact[] Artifacts, ConversationSource[] Sources, ConversationAgent[] Agents, bool IsActivity);
 
 /// <summary>Presentation derives from immutable item snapshots. Grouping never mutates the timeline or replaces item identities.</summary>
-public static class TimelinePresentation
+public static partial class TimelinePresentation
 {
     static readonly HashSet<string> ActivityKinds = new(["reasoning", "commandExecution", "fileChange", "mcpToolCall", "dynamicToolCall", "collabAgentToolCall", "subAgentActivity", "webSearch", "sleep", "enteredReviewMode", "contextCompaction", "planUpdate"], StringComparer.Ordinal);
     public static bool IsActivity(string kind) => ActivityKinds.Contains(kind);

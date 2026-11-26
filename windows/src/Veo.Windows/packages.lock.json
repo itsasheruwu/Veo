@@ -50,6 +50,12 @@
         "resolved": "10.0.0",
         "contentHash": "nHlCdjoeReiSx4kzgPEwPRlbOAyuVFwndXTZZT+CLnHb8UIfB+YMgpQjQ7faYvs3xU8wyvpb6dt+U+HwdlbG7w=="
       },
+      "Velopack": {
+        "type": "Direct",
+        "requested": "[1.2.161, )",
+        "resolved": "1.2.161",
+        "contentHash": "OpHNacIumnkhaaX3ZlQ/TCR4YPOJvud2/PAOoWb6o+mIrLwIVA275I5wAgt4q/1O2VrJeDwR1qFQyqzG4lUArg=="
+      },
       "Microsoft.Data.Sqlite.Core": {
         "type": "Transitive",
         "resolved": "10.0.0",

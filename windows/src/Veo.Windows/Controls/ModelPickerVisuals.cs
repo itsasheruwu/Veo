@@ -145,6 +145,12 @@ internal static class ModelPickerVisuals
         "F0 M7,0 A7,7 0 1 1 7,14 A7,7 0 1 1 7,0 Z M7,1.4 A5.6,5.6 0 1 1 7,12.6 A5.6,5.6 0 1 1 7,1.4 Z M7,3.5 A3.5,3.5 0 1 1 7,10.5 A3.5,3.5 0 1 1 7,3.5 Z M7,5 A2,2 0 1 1 7,9 A2,2 0 1 1 7,5 Z",
         brush);
 
+    internal static PathIcon RobloxIcon(Brush brush) => Mark(
+        "F0 M3,0 L15,3 12,15 0,12 Z M6.4,5.5 L9.5,6.4 8.6,9.5 5.5,8.6 Z", brush);
+
+    internal static PathIcon WildIcon(Brush brush) => Mark(
+        "M2,7 L4.6,6.2 5.6,1.5 7.5,2.7 9.5,1.5 10.5,6.2 13,7 15,8.3 13,9.1 2,9.1 0,8.3 Z M0.8,10.5 L6.4,10.5 7.5,11.2 8.5,10.5 14.2,10.5 13.3,13.8 10,14.2 8.6,12.9 6.4,12.9 5,14.2 1.7,13.8 Z", brush);
+
     static PathIcon Mark(string path, Brush brush)
     {
         var icon = (PathIcon)Microsoft.UI.Xaml.Markup.XamlReader.Load($"""

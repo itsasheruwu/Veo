@@ -16,6 +16,18 @@ public sealed class LocalGitService
     public LocalGitService(string recoveryDirectory, string gitExecutable = "git.exe")
     { this.recoveryDirectory = Path.GetFullPath(recoveryDirectory); executable = gitExecutable; }
 
+    public async Task<string> CommonDirectoryAsync(string workspacePath, CancellationToken token = default)
+    {
+        var workspace = new WorkspacePathPolicy(workspacePath).RootPath;
+        var result = await RunAsync(workspace, ["rev-parse", "--path-format=absolute", "--git-common-dir"], token, requireSuccess: false);
+        if (result.ExitCode != 0)
+        {
+            if (result.Stderr.Contains("not a git repository", StringComparison.OrdinalIgnoreCase)) throw new NotGitRepositoryException();
+            throw new IOException("Git could not inspect this workspace: " + result.Stderr.Trim());
+        }
+        return new WorkspacePathPolicy(Text(result)).RootPath;
+    }
+
     public async Task<GitRepositorySnapshot> SnapshotAsync(string workspacePath, CancellationToken token = default)
     {
         await mutationGate.WaitAsync(token);

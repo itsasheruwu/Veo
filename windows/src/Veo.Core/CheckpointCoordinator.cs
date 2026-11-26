@@ -11,6 +11,7 @@ public sealed record TurnCheckpoint(WorkspaceCheckpoint Checkpoint, string? Turn
 /// <summary>Nonfatal pre-turn capture with durable payload-to-turn binding; never restores files automatically.</summary>
 public sealed class CheckpointCoordinator
 {
+    static readonly TimeSpan CheckpointInspectionBudget = TimeSpan.FromSeconds(15);
     readonly WorkspaceCoordinator workspace; readonly ProjectPreferencesService projects; readonly ICoordinatorRpc rpc; readonly LocalGitService git;
     readonly ConcurrentDictionary<string, SemaphoreSlim> gates = new(StringComparer.Ordinal);
     readonly ConcurrentDictionary<string, string> warnings = new(StringComparer.Ordinal);
@@ -90,18 +91,27 @@ public sealed class CheckpointCoordinator
         // Source captures only where the runtime can revert paginated history, with default-on project preference.
         if (session.Record.CodexThreadId is not { } runtimeId || !rpc.Supports("thread/revert")) return;
         var gate = gates.GetOrAdd(session.Record.VeoId, _ => new(1, 1)); await gate.WaitAsync(token);
+        using var preflight = CancellationTokenSource.CreateLinkedTokenSource(token);
+        preflight.CancelAfter(CheckpointInspectionBudget);
+        var checkpointToken = preflight.Token;
         try
         {
-            if ((await projects.ConfigurationAsync(session.Record.Cwd, token)).CheckpointsEnabled == false) return;
-            if ((await EntriesAsync(session, token)).Any(x => x.Checkpoint.PayloadId == payload.ClientId)) return;
-            GitRepositorySnapshot snapshot;
-            try { snapshot = await git.SnapshotAsync(session.Record.Cwd, token); }
-            catch (NotGitRepositoryException) { return; }
-            var response = await rpc.RequestAsync("thread/read", new { threadId = runtimeId, includeTurns = false }, token);
+            if ((await projects.ConfigurationAsync(session.Record.Cwd, checkpointToken)).CheckpointsEnabled == false) return;
+            if ((await EntriesAsync(session, checkpointToken)).Any(x => x.Checkpoint.PayloadId == payload.ClientId)) return;
+            // History eligibility is cheap. Skip Git's full workspace fingerprint when the turn cannot use a checkpoint.
+            var response = await rpc.RequestAsync("thread/read", new { threadId = runtimeId, includeTurns = false }, checkpointToken);
             if (!response.TryObjectProperty("thread", out var thread) || thread.Str("historyMode") != "paginated") return;
+            GitRepositorySnapshot snapshot;
+            try { snapshot = await git.SnapshotAsync(session.Record.Cwd, checkpointToken); }
+            catch (NotGitRepositoryException) { return; }
+            preflight.CancelAfter(Timeout.InfiniteTimeSpan);
+            checkpointToken.ThrowIfCancellationRequested();
+            // Once capture starts, let it finish its recovery bundle and metadata as one operation.
             await CaptureAndSaveAsync(session, snapshot, payload.ClientId, "captured", token);
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
+        catch (OperationCanceledException) when (preflight.IsCancellationRequested)
+        { warnings[session.Record.VeoId] = "The automatic checkpoint was skipped because workspace inspection timed out."; }
         catch (Exception error)
         { warnings[session.Record.VeoId] = "Workspace checkpoint unavailable: " + DiagnosticRedactor.Redact(error.Message); }
         finally { gate.Release(); workspace.NotifyChanged(); }

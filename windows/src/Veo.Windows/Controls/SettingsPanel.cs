@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
+using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Veo.Core;
@@ -22,7 +23,7 @@ public sealed partial class SettingsPanel : UserControl
         new("Terminal", "Docked terminal and agent CLIs", "\uE756"),
         new("Browser", "Search engine, tabs, passwords, and website data", "\uE909"),
         new("Runtime", "Local Codex connection", "\uE945"),
-        new("Updates", "Version and release information", "\uE896"),
+        new("Updates", "Check for and install Veo updates", "\uE896"),
         new("Account", "Identity, usage, and limits", "\uE77B"),
         new("Integrations", "Skills, plugins, apps, and MCP", "\uE74C")
     ];
@@ -370,10 +371,56 @@ public sealed partial class SettingsPanel : UserControl
 
     void ShowUpdates()
     {
-        var version = typeof(SettingsPanel).Assembly.GetName().Version?.ToString() ?? "";
-        AddRow(Section("Software update"), "Installed version", version, "\uE896",
-            ActionButton("View releases", async () =>
-                await Windows.System.Launcher.LaunchUriAsync(new Uri("https://github.com/itsasheruwu/Veo/releases"))));
+        var updates = App.Updates;
+        var rows = Section("Software update");
+        AddRow(rows, "Veo version", updates.Version, "\uE896",
+            ActionButton("View releases", async () => await Windows.System.Launcher.LaunchUriAsync(WindowsAppUpdates.Releases)));
+        if (!updates.IsInstalled)
+        {
+            rows.Children.Add(new Border { Child = SettingText("Run the Veo installer from GitHub Releases to receive automatic updates.", "SettingDetail"), Padding = new Thickness(16, 4, 16, 12) });
+            return;
+        }
+
+        var preferences = workspace.Preferences;
+        var check = ActionButton("Check for updates", () => updates.CheckAsync());
+        var download = ActionButton("Download update", updates.DownloadAsync);
+        var restart = ActionButton("Restart to update", () => App.ShutdownAsync(restartForUpdate: true));
+        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { check, download, restart } };
+        AddRow(rows, "Windows beta", null, "\uE768", actions, fullWidth: true);
+        var status = SettingText(updates.Status, "SettingDetail");
+        AutomationProperties.SetLiveSetting(status, AutomationLiveSetting.Polite);
+        rows.Children.Add(new Border { Child = status, Padding = new Thickness(16, 4, 16, 12) });
+
+        var automaticallyInstall = Toggle("Install updates automatically", preferences.InstallAppUpdatesAutomatically,
+            value => preferences.InstallAppUpdatesAutomatically = value);
+        AddRow(rows, "Check automatically", "Check when Veo opens and every six hours.", "\uE895",
+            Toggle("Check automatically", preferences.CheckForAppUpdates, value =>
+            {
+                preferences.CheckForAppUpdates = value;
+                automaticallyInstall.IsEnabled = value;
+                if (value) _ = updates.CheckAsync(() => preferences.CheckForAppUpdates && preferences.InstallAppUpdatesAutomatically);
+            }));
+        automaticallyInstall.IsEnabled = preferences.CheckForAppUpdates;
+        AddRow(rows, "Install updates automatically", "Download in the background and install when you quit Veo.", "\uE896", automaticallyInstall);
+        automaticallyInstall.Toggled += (_, _) =>
+        {
+            if (automaticallyInstall.IsOn && preferences.CheckForAppUpdates)
+                _ = updates.CheckAsync(() => preferences.CheckForAppUpdates && preferences.InstallAppUpdatesAutomatically);
+        };
+
+        rows.Loaded += (_, _) => { updates.Changed += Refresh; Refresh(); };
+        rows.Unloaded += (_, _) => updates.Changed -= Refresh;
+        Refresh();
+
+        void Refresh()
+        {
+            status.Text = updates.Status;
+            check.IsEnabled = !updates.Busy;
+            download.Visibility = updates.HasUpdate && !updates.ReadyToRestart ? Visibility.Visible : Visibility.Collapsed;
+            download.IsEnabled = !updates.Busy;
+            restart.Visibility = updates.ReadyToRestart ? Visibility.Visible : Visibility.Collapsed;
+            restart.IsEnabled = !updates.Busy;
+        }
     }
 
     void ShowAccount()

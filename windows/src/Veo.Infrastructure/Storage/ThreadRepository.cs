@@ -143,6 +143,20 @@ public sealed partial class ThreadRepository : IAsyncDisposable
         }, cancellationToken);
     }
 
+    public Task MoveThreadAsync(PersistedThread previous, PersistedThread moved, CancellationToken cancellationToken = default) =>
+        WithConnectionAsync(async (db, token) =>
+        {
+            using var command = db.CreateCommand();
+            command.CommandText = """
+                UPDATE threads SET cwd=$cwd, codex_thread_id=$runtime, workspace_kind='project', meta_json=$meta
+                WHERE veo_id=$id AND cwd=$previous AND codex_thread_id IS $previousRuntime;
+                """;
+            Add(command, "$cwd", moved.Cwd, "$runtime", moved.CodexThreadId, "$meta", moved.MetaJson,
+                "$id", previous.VeoId, "$previous", previous.Cwd, "$previousRuntime", previous.CodexThreadId);
+            if (await command.ExecuteNonQueryAsync(token) != 1)
+                throw new InvalidOperationException("The chat changed before it could be moved. Try again.");
+        }, cancellationToken);
+
     public async Task<IReadOnlyList<PersistedThread>> ListThreadsAsync(bool archived = false,
         string? search = null, int limit = 200, int offset = 0, CancellationToken cancellationToken = default)
     {
@@ -323,6 +337,20 @@ public sealed partial class ThreadRepository : IAsyncDisposable
             value = await command.ExecuteScalarAsync(token) as string;
         }, cancellationToken);
         return value;
+    }
+
+    public async Task<IReadOnlyList<(string Scope, string Json)>> ReadStatesAsync(string key, CancellationToken cancellationToken = default)
+    {
+        var states = new List<(string, string)>();
+        await WithConnectionAsync(async (db, token) =>
+        {
+            using var command = db.CreateCommand();
+            command.CommandText = "SELECT scope,value_json FROM durable_state WHERE key=$key;";
+            Add(command, "$key", key);
+            await using var reader = await command.ExecuteReaderAsync(token);
+            while (await reader.ReadAsync(token)) states.Add((reader.GetString(0), reader.GetString(1)));
+        }, cancellationToken);
+        return states;
     }
 
     public async Task<IReadOnlyList<(string Key, string Json)>> ReadWorkspaceCheckpointStatesAsync(string workspacePath, CancellationToken cancellationToken = default)

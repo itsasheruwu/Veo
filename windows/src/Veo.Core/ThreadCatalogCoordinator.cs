@@ -8,7 +8,7 @@ public enum CatalogSort { Priority, LastUpdated, Manual }
 public sealed record CatalogOptions(CatalogSort Sort = CatalogSort.Priority, string[]? ManualOrder = null,
     Dictionary<string, string>? ProjectLabels = null, string[]? CollapsedProjects = null);
 public sealed record CatalogEntry(string Key, CatalogOrigin Origin, PersistedThread Thread, JsonElement? Runtime = null);
-public sealed record CatalogGroup(string ProjectPath, string Label, bool IsCollapsed, IReadOnlyList<CatalogEntry> Entries);
+public sealed record CatalogGroup(string CollapseKey, string Label, bool IsCollapsed, IReadOnlyList<CatalogEntry> Entries, bool IsProjectless);
 public sealed record CatalogPage(IReadOnlyList<CatalogEntry> Veo, IReadOnlyList<CatalogEntry> Codex, string? NextCodexCursor);
 public sealed record CatalogSearchResult(CatalogEntry Entry, string Snippet, string? ItemId = null, string? TurnId = null,
     string? TurnCursor = null, int MatchStart = 0, int MatchLength = 0);
@@ -17,6 +17,8 @@ public sealed record CatalogSearchPage(IReadOnlyList<CatalogSearchResult> Data, 
 /// <summary>Owns sidebar ordering and optional CLI history without changing repository visibility.</summary>
 public sealed class ThreadCatalogCoordinator(WorkspaceCoordinator workspace, ICoordinatorRpc? transport = null)
 {
+    const string VeoProjectlessKey = "veo://catalog/projectless/veo";
+    const string CodexProjectlessKey = "veo://catalog/projectless/codex";
     readonly ICoordinatorRpc rpc = transport ?? new WorkspaceCoordinatorRpc(workspace);
     readonly Dictionary<string, CatalogEntry> external = new(StringComparer.Ordinal);
     readonly HashSet<string> cursors = new(StringComparer.Ordinal);
@@ -71,9 +73,20 @@ public sealed class ThreadCatalogCoordinator(WorkspaceCoordinator workspace, ICo
         return ordered.ThenBy(x => x.Key, StringComparer.Ordinal).ToArray();
     }
     public IReadOnlyList<CatalogGroup> Group(IEnumerable<CatalogEntry> entries, IReadOnlyDictionary<string, string>? projectPaths = null) =>
-        entries.GroupBy(x => ProjectKey(projectPaths?.GetValueOrDefault(x.Thread.Cwd) ?? x.Thread.Cwd), StringComparer.OrdinalIgnoreCase)
-        .Select(group => new CatalogGroup(group.Key, Options.ProjectLabels?.GetValueOrDefault(group.Key) ?? ProjectName(group.Key), Options.CollapsedProjects?.Contains(group.Key, StringComparer.OrdinalIgnoreCase) == true, Sort(group)))
-        .OrderBy(x => x.Label, StringComparer.OrdinalIgnoreCase).ToArray();
+        entries.GroupBy(entry => (entry.Thread.WorkspaceKind, entry.Origin) switch
+        {
+            ("scratch" or "temporary", CatalogOrigin.Codex) => CodexProjectlessKey,
+            ("scratch" or "temporary", _) => VeoProjectlessKey,
+            _ => ProjectKey(projectPaths?.GetValueOrDefault(entry.Thread.Cwd) ?? entry.Thread.Cwd)
+        }, StringComparer.OrdinalIgnoreCase)
+        .Select(group =>
+        {
+            var projectless = group.Key is VeoProjectlessKey or CodexProjectlessKey;
+            var label = projectless ? "Projectless Chats" : Options.ProjectLabels?.GetValueOrDefault(group.Key) ?? ProjectName(group.Key);
+            var collapsed = Options.CollapsedProjects?.Contains(group.Key, StringComparer.OrdinalIgnoreCase) == true;
+            return new CatalogGroup(group.Key, label, collapsed, Sort(group), projectless);
+        })
+        .OrderByDescending(group => group.IsProjectless).ThenBy(group => group.Label, StringComparer.OrdinalIgnoreCase).ToArray();
     public Task ReorderVisibleAsync(IReadOnlyList<string> visibleOrder, IReadOnlyList<string> allKeys, CancellationToken token = default)
     {
         if (visibleOrder.Distinct(StringComparer.Ordinal).Count() != visibleOrder.Count || visibleOrder.Any(key => !allKeys.Contains(key, StringComparer.Ordinal))) throw new ArgumentException("The reordered rows must be distinct catalog rows.");
@@ -162,7 +175,11 @@ public sealed class ThreadCatalogCoordinator(WorkspaceCoordinator workspace, ICo
         var response = await rpc.RequestAsync("thread/fork", parameters, token);
         var runtime = response.GetProperty("thread"); var runtimeId = runtime.Str("id") ?? throw new InvalidDataException("The fork has no runtime identity.");
         var record = source.Record with { VeoId = Guid.NewGuid().ToString("N"), CodexThreadId = runtimeId, Title = source.Record.Title + " (fork)", ParentThreadId = source.Record.VeoId, IsArchived = false, IsPinned = false, UpdatedAt = DateTimeOffset.UtcNow, Status = "idle" };
-        await workspace.Threads.UpsertThreadAsync(record, token); var session = await workspace.LoadAsync(record); Changed?.Invoke(); return session;
+        await workspace.Threads.UpsertThreadAsync(record, token);
+        await workspace.Threads.SaveDraftAsync(record.VeoId, new("", OptionsJson: source.Draft.OptionsJson), token);
+        var session = await workspace.LoadAsync(record);
+        Changed?.Invoke();
+        return session;
     }
     public async Task<CatalogSearchPage> SearchContentAsync(string query, string? cursor = null, CancellationToken token = default)
     {

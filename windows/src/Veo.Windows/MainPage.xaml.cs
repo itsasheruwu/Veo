@@ -58,6 +58,7 @@ public sealed partial class MainPage : Page
         ActualThemeChanged += (_, _) => ApplyTheme();
         systemUi.AdvancedEffectsEnabledChanged += SystemEffectsChanged;
         workspace.Changed += () => DispatcherQueue.TryEnqueue(Render);
+        workspace.RuntimeEventApplied += SidebarRuntimeEventApplied;
         App.Questions.Changed += () => DispatcherQueue.TryEnqueue(Render);
         App.Routing.Changed += () => DispatcherQueue.TryEnqueue(Render);
         App.ThreadSettings.Changed += () => DispatcherQueue.TryEnqueue(RenderComposerGoalControls);
@@ -159,6 +160,7 @@ public sealed partial class MainPage : Page
             };
             composerAccess = options.RootElement.Str("access") ?? workspace.Preferences.DefaultAccess;
             composerMode = options.RootElement.Str("mode") ?? "Agentic";
+            composerWild = options.RootElement.TryGetProperty("wild", out var wildValue) && wildValue.ValueKind == System.Text.Json.JsonValueKind.True;
             workspace.Preferences.SelectedThread = session.Record.VeoId; await workspace.SavePreferencesAsync();
             await App.Plans.ObserveAsync(session); await App.Questions.ObserveAsync(session);
             await App.Routing.ObserveAsync(session);
@@ -171,51 +173,6 @@ public sealed partial class MainPage : Page
             UpdateDictationControl();
             SyncCatalogSelection();
         }
-    }
-    async Task RefreshCatalogAsync()
-    {
-        var revision = ++catalogRefreshRevision;
-        var query = SearchBox.Visibility == Visibility.Visible ? SearchBox.Text.Trim() : "";
-        var groupByProject = workspace.Preferences.GroupByProject;
-        SidebarCatalogLabel.Text = workspace.Preferences.ShowArchived ? "Archived" : "Chats";
-        var catalog = await App.Catalog.LoadAsync();
-        var rows = catalog.Veo.Concat(catalog.Codex).Where(x => query.Length == 0
-            || (x.Thread.Title + "\n" + x.Thread.Preview + "\n" + x.Thread.Cwd).Contains(query, StringComparison.OrdinalIgnoreCase)).Select(x => new ChatRow(x)).ToArray();
-        var projectPaths = groupByProject
-            ? await App.Projects.RegisteredProjectPathsAsync(rows.Select(row => row.Record.Cwd)) : null;
-        if (revision != catalogRefreshRevision) return;
-        updatingCatalog = true;
-        try
-        {
-            if (groupByProject)
-            {
-                var groups = new[] { CatalogOrigin.Veo, CatalogOrigin.Codex }.SelectMany(origin => App.Catalog.Group(rows.Where(x => x.Entry.Origin == origin).Select(x => x.Entry), projectPaths)
-                    .Select(group =>
-                    {
-                        var projectless = group.Entries.All(x => x.Thread.WorkspaceKind is "scratch" or "temporary");
-                        var label = (origin == CatalogOrigin.Codex ? "Codex CLI · " : "") + (projectless ? "Projectless Chats" : group.Label);
-                        return new ChatGroup(label, group.ProjectPath, origin, projectless, group.IsCollapsed,
-                            group.IsCollapsed ? [] : group.Entries.Select(x => new ChatRow(x)));
-                    })).ToArray();
-                visibleCatalogRows = groups.SelectMany(group => group).ToArray();
-                GroupedChats.Source = groups;
-                ChatList.ItemsSource = GroupedChats.View;
-            }
-            else { visibleCatalogRows = rows; ChatList.ItemsSource = rows; }
-        }
-        finally { updatingCatalog = false; }
-        SyncCatalogSelection();
-    }
-    void SyncCatalogSelection()
-    {
-        var selected = current?.Record.VeoId ?? workspace.Preferences.SelectedThread;
-        var runtimeId = current?.Record.CodexThreadId;
-        var row = visibleCatalogRows.FirstOrDefault(x => x.Record.VeoId == selected ||
-            runtimeId is not null && x.Entry.Origin == CatalogOrigin.Codex && x.Record.CodexThreadId == runtimeId);
-        var wasUpdating = updatingCatalog;
-        updatingCatalog = true;
-        try { if (!ReferenceEquals(ChatList.SelectedItem, row)) ChatList.SelectedItem = row; }
-        finally { updatingCatalog = wasUpdating; }
     }
     void Render()
     {
@@ -290,6 +247,7 @@ public sealed partial class MainPage : Page
         {
             case "new": case "clear": await NewChatAsync(); return true;
             case "rename" when current is not null: await RenameAsync(argument); return true;
+            case "move" when current is not null: await MoveChatPickerAsync(current); return true;
             case "temporary" when current is not null: await workspace.ToggleTemporaryChatAsync(current); return true;
             case "archive" when current is not null: await workspace.SetArchivedAsync(current, true); await NewChatAsync(); return true;
             case "delete" when current is not null: await DeleteCurrentAsync(); return true;
@@ -394,6 +352,7 @@ public sealed partial class MainPage : Page
     public async Task DisposeSurfacesAsync()
     {
         CloseComposerPill();
+        workspace.RuntimeEventApplied -= SidebarRuntimeEventApplied;
         App.Voice.Changed -= DictationRealtimeVoiceChanged;
         CancelDictation();
         if (dictationCleanup is { } cleanup) await cleanup;
@@ -564,8 +523,8 @@ public sealed partial class MainPage : Page
     }
     async void ProjectGroup_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is not Button { Tag: string path }) return;
-        await Run(async () => { var paths = (App.Catalog.Options.CollapsedProjects ?? []).ToHashSet(StringComparer.OrdinalIgnoreCase); if (!paths.Remove(path)) paths.Add(path); await App.Catalog.SaveOptionsAsync(App.Catalog.Options with { CollapsedProjects = paths.ToArray() }); await RefreshCatalogAsync(); });
+        if (sender is not Button { Tag: string key }) return;
+        await Run(async () => { var keys = (App.Catalog.Options.CollapsedProjects ?? []).ToHashSet(StringComparer.OrdinalIgnoreCase); if (!keys.Remove(key)) keys.Add(key); await App.Catalog.SaveOptionsAsync(App.Catalog.Options with { CollapsedProjects = keys.ToArray() }); await RefreshCatalogAsync(); });
     }
     async void Search_Changed(object sender, TextChangedEventArgs e)
     {
@@ -626,6 +585,7 @@ public sealed partial class MainPage : Page
         if (source?.DataContext is not ChatRow row) return;
         var menu = new MenuFlyout();
         void Item(string label, Func<Task> action) { var item = new MenuFlyoutItem { Text = label }; item.Click += async (_, _) => await Run(async () => { await SaveDraftNowAsync(); await SelectAsync(await App.Catalog.OpenAsync(row.Entry)); await action(); await RefreshCatalogAsync(); }); menu.Items.Add(item); }
+        if (row.Entry.Origin == CatalogOrigin.Veo) Item("Move to project…", () => MoveChatPickerAsync(current!));
         Item("Rename", () => RenameAsync("")); Item(row.Record.IsPinned ? "Unpin" : "Pin", () => workspace.SetPinnedAsync(current!, !row.Record.IsPinned));
         Item(row.Record.IsArchived ? "Unarchive" : "Archive", () => App.Catalog.SetArchivedAsync(row.Entry, !row.Record.IsArchived));
         if (row.Entry.Origin == CatalogOrigin.Veo) { Item("Make temporary", () => workspace.MakeTemporaryAsync(current!)); Item("Delete…", DeleteCurrentAsync); }

@@ -14,14 +14,21 @@ public sealed partial class MainPage
 {
     const double UtilityMinimumWidth = 280;
     const double UtilityMaximumWidth = 800;
-    const double UtilityMinimumWindowWidth = 1150;
     const double UtilityMinimumConversationWidth = 560;
     const double UtilityDividerWidth = 7;
+    static readonly (string Title, string Glyph)[] UtilityTabChoices =
+    [
+        ("Review", "\uE8A5"),
+        ("Browser", "\uE774"),
+        ("Files", "\uE8B7"),
+        ("Side chat", "\uE90A")
+    ];
     const double SidebarMinimumWidth = 236;
     const double SidebarIdealWidth = 318;
     const double SidebarReferenceFraction = 467.0 / 2160;
     bool utilityLayoutReady;
     bool restoringUtilityTab;
+    bool utilityFillsConversation;
     UtilityResizeSash? utilityResizeSash;
 
     void InitializeUtilityLayout()
@@ -39,6 +46,36 @@ public sealed partial class MainPage
             () => _ = Run(PersistUtilityLayoutAsync));
         UtilitySashHost.Content = utilityResizeSash;
         utilityResizeSash.IsEnabled = false;
+        foreach (var (title, glyph) in UtilityTabChoices)
+        {
+            var icon = new FontIcon { Glyph = glyph, FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
+            AutomationProperties.SetAccessibilityView(icon, AccessibilityView.Raw);
+            var label = new TextBlock
+            {
+                Text = title, FontSize = 11.5, MaxLines = 1, TextTrimming = TextTrimming.CharacterEllipsis,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            var tab = new ListViewItem
+            {
+                MinWidth = 0, MinHeight = 30, Padding = new(4, 0, 4, 0), CornerRadius = new(6),
+                HorizontalContentAlignment = HorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center,
+                Content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 5, Children = { icon, label } }
+            };
+            AutomationProperties.SetName(tab, title);
+            UtilityTabs.Items.Add(tab);
+        }
+        UtilityTabs.SizeChanged += (_, args) => UpdateUtilityTabWidths(args.NewSize.Width);
+    }
+
+    void UpdateUtilityTabWidths(double width)
+    {
+        if (width <= 0) return;
+        foreach (var tab in UtilityTabs.Items.OfType<ListViewItem>())
+        {
+            tab.Width = Math.Floor(width / UtilityTabChoices.Length);
+            if (tab.Content is StackPanel { Children: [FontIcon icon, _] })
+                icon.Visibility = width >= 325 ? Visibility.Visible : Visibility.Collapsed;
+        }
     }
 
     void RestoreUtilityLayout()
@@ -75,13 +112,23 @@ public sealed partial class MainPage
     void ApplyUtilityLayout()
     {
         if (!utilityLayoutReady) return;
-        // A narrow window may temporarily hide the panel without overwriting the user's choice.
-        var visible = workspace.Preferences.UtilityVisible && UtilityWindowWidth() >= UtilityMinimumWindowWidth;
-        UtilityWidth.Width = new GridLength(visible
+        var visible = workspace.Preferences.UtilityVisible;
+        var fillsConversation = visible && UtilityWindowWidth() - SidebarWidth.Width.Value <
+            UtilityMinimumConversationWidth + UtilityDividerWidth + UtilityMinimumWidth;
+        var docked = visible && !fillsConversation;
+        var enteringCompact = fillsConversation && !utilityFillsConversation;
+        utilityFillsConversation = fillsConversation;
+        UtilityWidth.Width = new GridLength(docked
             ? Math.Clamp(workspace.Preferences.UtilityWidth, UtilityMinimumWidth, MaximumUtilityWidth()) : 0);
-        UtilitySashWidth.Width = new GridLength(visible ? UtilityDividerWidth : 0);
-        UtilityPanel.Visibility = UtilitySashHost.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
-        if (utilityResizeSash is not null) utilityResizeSash.IsEnabled = visible;
+        UtilitySashWidth.Width = new GridLength(docked ? UtilityDividerWidth : 0);
+        UtilitySashHost.Visibility = docked ? Visibility.Visible : Visibility.Collapsed;
+        if (utilityResizeSash is not null) utilityResizeSash.IsEnabled = docked;
+        Grid.SetColumn(UtilityPanel, fillsConversation ? 1 : 3);
+        Grid.SetColumnSpan(UtilityPanel, fillsConversation ? 3 : 1);
+        UtilityBackRow.Visibility = fillsConversation ? Visibility.Visible : Visibility.Collapsed;
+        UtilityPanel.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+        ConversationPane.Visibility = fillsConversation ? Visibility.Collapsed : Visibility.Visible;
+        if (enteringCompact) UtilityBackButton.Focus(FocusState.Programmatic);
     }
 
     async Task PersistUtilityLayoutAsync()
@@ -107,13 +154,18 @@ public sealed partial class MainPage
 
     async Task ToggleUtilityPanelAsync()
     {
+        var returnToComposer = utilityFillsConversation;
         workspace.Preferences.UtilityVisible = !workspace.Preferences.UtilityVisible;
         ApplyUtilityLayout();
+        if (returnToComposer) Composer.Focus(FocusState.Programmatic);
         await PersistUtilityLayoutAsync();
         if (workspace.Preferences.UtilityVisible) await ShowUtilityAsync();
     }
 
-    static string UtilityTabName(int index) => index switch { 1 => "Browser", 2 => "Files", 3 => "Side chat", _ => "Review" };
+    async void CloseCompactUtility_Click(object sender, RoutedEventArgs e) => await Run(ToggleUtilityPanelAsync);
+
+    static string UtilityTabName(int index) => index >= 0 && index < UtilityTabChoices.Length
+        ? UtilityTabChoices[index].Title : UtilityTabChoices[0].Title;
 
     async void Utility_Changed(object sender, SelectionChangedEventArgs e)
     {
@@ -154,7 +206,7 @@ internal sealed class UtilityResizeSash : Control
         AutomationProperties.SetHelpText(this, "Drag left or right. Arrow keys resize by 10 pixels; Page Up and Page Down by 50. Home and End choose the minimum and maximum width.");
         Template = (ControlTemplate)XamlReader.Load("""
             <ControlTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" TargetType="Control">
-              <Grid Background="{ThemeResource SubtleFillColorSecondaryBrush}">
+              <Grid Background="Transparent">
                 <Border Width="1" HorizontalAlignment="Center" Background="{ThemeResource DividerStrokeColorDefaultBrush}" IsHitTestVisible="False"/>
                 <Border x:Name="FocusOutline" BorderBrush="{ThemeResource TextFillColorPrimaryBrush}" BorderThickness="0" IsHitTestVisible="False"/>
               </Grid>

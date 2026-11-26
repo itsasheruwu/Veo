@@ -20,6 +20,7 @@ public sealed partial class MainPage
     readonly PathGeometry composerBoltPair = ModelPickerVisuals.BoltGeometry(pair: true);
     string composerAccess = "Workspace";
     string composerMode = "Agentic";
+    bool composerWild;
     Flyout? composerModelFlyout;
     (string ThreadId, long Generation)? composerGoalRead;
 
@@ -114,20 +115,29 @@ public sealed partial class MainPage
             size: new(59, 23), dark: Rgb(255, 192, 58), light: Rgb(148, 79, 0));
         ComposerModePill.Configure(ComposerDebugPill, "Debug", new FontIcon { Glyph = "\uEBE8", FontSize = 11 },
             size: new(74, 24), dark: Rgb(255, 90, 255), light: Rgb(135, 36, 146));
+        ComposerModePill.Configure(ComposerAskPill, "Ask", new FontIcon { Glyph = "\uE897", FontSize = 11 }, size: new(54, 23), dark: Rgb(89, 166, 239), light: Rgb(12, 90, 157));
+        ComposerModePill.Configure(ComposerRobloxPill, "Roblox", ModelPickerVisuals.RobloxIcon(new SolidColorBrush(Microsoft.UI.Colors.IndianRed)), size: new(78, 23), dark: Rgb(231, 84, 100), light: Rgb(153, 21, 44));
+        ComposerModePill.Configure(ComposerWildPill, "Wild", ModelPickerVisuals.WildIcon(new SolidColorBrush(Rgb(218, 100, 152))), size: new(56, 23), dark: Rgb(218, 100, 152), light: Rgb(143, 35, 89));
         ComposerModePill.Configure(ComposerGoalPill, "Goal", ModelPickerVisuals.GoalIcon(ComposerGoalPill.Foreground),
-            size: new(62, 22), dark: Rgb(0, 255, 126), light: Rgb(6, 116, 58));
+            size: new(62, 22), dark: Rgb(0, 255, 126), light: Rgb(6, 116, 58), opensSettings: true);
     }
 
     void RenderComposerGoalControls()
     {
         var session = current;
         var enabled = session is not null && App.ThreadSettings.ComposerGoalEnabled(session);
+        if (composerGoalFlyout is { } flyout && (!enabled || !ReferenceEquals(composerGoalFlyoutSession, session))) flyout.Hide();
         ComposerPlanPill.Visibility = composerMode == "Plan" ? Visibility.Visible : Visibility.Collapsed;
         ComposerDebugPill.Visibility = composerMode == "Debug" ? Visibility.Visible : Visibility.Collapsed;
         ComposerGoalPill.Visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
-        ComposerModePills.Visibility = enabled || composerMode is "Plan" or "Debug" ? Visibility.Visible : Visibility.Collapsed;
+        ComposerAskPill.Visibility = composerMode == "Ask" ? Visibility.Visible : Visibility.Collapsed;
+        ComposerRobloxPill.Visibility = composerMode == "Roblox" ? Visibility.Visible : Visibility.Collapsed;
+        ComposerWildPill.Visibility = composerWild ? Visibility.Visible : Visibility.Collapsed;
+        ComposerModePills.Visibility = enabled || composerWild || composerMode != "Agentic" ? Visibility.Visible : Visibility.Collapsed;
         var goal = session is null ? null : App.ThreadSettings.ActiveGoal(session);
-        ToolTipService.SetToolTip(ComposerGoalPill, goal is null ? "Turn off Goal" : "Turn off Goal · " + goal.Objective);
+        var mode = goal is not null ? ComposerGoalMode.ProviderManaged : session?.GoalMode ?? ComposerGoalMode.ProviderManaged;
+        AutomationProperties.SetHelpText(ComposerGoalPill, ComposerGoals.Title(mode));
+        ToolTipService.SetToolTip(ComposerGoalPill, goal is null ? "Goal settings · " + ComposerGoals.Title(mode) : "Goal settings · " + goal.Objective);
         UpdateComposerKeyHints();
         if (session?.Record.CodexThreadId is { } threadId && workspace.Runtime.RuntimeState == CodexRuntimeState.Ready)
         {
@@ -150,13 +160,6 @@ public sealed partial class MainPage
 
     async void ComposerModePill_Click(object sender, RoutedEventArgs e) =>
         await Run(() => SetComposerModeAsync("Agentic"));
-
-    async void ComposerGoalPill_Click(object sender, RoutedEventArgs e)
-    {
-        if (current is not { } session) return;
-        await Run(() => App.ThreadSettings.SetComposerGoalModeAsync(session, false));
-        RenderComposerGoalControls();
-    }
 
     void UpdateComposerKeyHints()
     {
@@ -302,6 +305,16 @@ public sealed partial class MainPage
         permissionsFlyout = flyout;
         flyout.Closed += (_, _) => { if (permissionsFlyout == flyout) permissionsFlyout = null; };
         ShowComposerPill(flyout, composerPermissionsPill);
+    }
+
+    async void ComposerWildPill_Click(object sender, RoutedEventArgs e) =>
+        await Run(() => SetComposerWildAsync(false));
+
+    async Task SetComposerWildAsync(bool enabled)
+    {
+        if (composerWild == enabled) return;
+        composerWild = enabled;
+        await SaveComposerControlAsync();
     }
 
     async Task SetComposerModeAsync(string mode)

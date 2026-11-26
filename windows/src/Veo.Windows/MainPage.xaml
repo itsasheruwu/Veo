@@ -115,30 +115,32 @@
   <Grid.ColumnDefinitions><ColumnDefinition x:Name="SidebarWidth" Width="280"/><ColumnDefinition Width="*"/><ColumnDefinition x:Name="UtilitySashWidth" Width="8"/><ColumnDefinition x:Name="UtilityWidth" Width="360"/></Grid.ColumnDefinitions>
   <Grid x:Name="SidebarPanel" Grid.Column="0" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-   <StackPanel Spacing="1" Margin="8,1,8,6">
-    <Button Click="New_Click" Style="{StaticResource SubtleButtonStyle}" MinHeight="31" Padding="7,4" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" AutomationProperties.Name="New chat" AutomationProperties.AutomationId="NewChat">
-     <StackPanel Orientation="Horizontal" Spacing="10">
-      <FontIcon Glyph="&#xE70F;" Width="16" FontSize="15"/>
-      <TextBlock Text="New Chat" FontSize="13.5" FontWeight="SemiBold" VerticalAlignment="Center"/>
-     </StackPanel>
-    </Button>
-    <Button x:Name="SidebarSearchToggle" Click="SidebarSearch_Click" Style="{StaticResource SubtleButtonStyle}" MinHeight="31" Padding="7,4" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" AutomationProperties.Name="Search chats" AutomationProperties.AutomationId="SidebarSearchToggle">
-     <StackPanel Orientation="Horizontal" Spacing="10">
-      <FontIcon Glyph="&#xE721;" Width="16" FontSize="15" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-      <TextBlock Text="Search" FontSize="13.5" FontWeight="SemiBold" VerticalAlignment="Center"/>
-     </StackPanel>
-    </Button>
-    <TextBox x:Name="SearchBox" PlaceholderText="Search every project" Margin="4,2,4,1" Visibility="Collapsed" TextChanged="Search_Changed" KeyDown="SidebarSearch_KeyDown" AutomationProperties.Name="Search every project" AutomationProperties.AutomationId="SearchChats"/>
+   <StackPanel Spacing="6" Margin="9,5,9,6">
+    <Grid ColumnSpacing="5">
+     <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+     <Button Click="New_Click" Style="{StaticResource SubtleButtonStyle}" Height="29" MinHeight="0" Padding="6,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" AutomationProperties.Name="New chat" AutomationProperties.AutomationId="NewChat">
+      <StackPanel Orientation="Horizontal" Spacing="8">
+       <FontIcon Glyph="&#xE70F;" Width="16" FontSize="14"/>
+       <TextBlock Text="New chat" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center"/>
+      </StackPanel>
+     </Button>
+     <Button x:Name="SidebarSearchToggle" Grid.Column="1" Click="SidebarSearch_Click" Style="{StaticResource SubtleButtonStyle}" Width="28" Height="29" MinHeight="0" Padding="0" ToolTipService.ToolTip="Search chats" AutomationProperties.Name="Search chats" AutomationProperties.AutomationId="SidebarSearchToggle">
+      <FontIcon Glyph="&#xE721;" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+     </Button>
+    </Grid>
+    <TextBox x:Name="SearchBox" PlaceholderText="Search every project" MinHeight="30" FontSize="12.5" Visibility="Collapsed" TextChanged="Search_Changed" KeyDown="SidebarSearch_KeyDown" AutomationProperties.Name="Search every project" AutomationProperties.AutomationId="SearchChats"/>
    </StackPanel>
-   <Grid Grid.Row="1" Margin="13,0,9,1">
-    <TextBlock x:Name="SidebarCatalogLabel" Text="Chats" FontSize="11.5" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center"/>
-    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="2">
-     <Button Style="{StaticResource SubtleButtonStyle}" Click="SidebarOptions_Click" ToolTipService.ToolTip="Chat options" AutomationProperties.Name="Chat options" MinHeight="0" Width="28" Height="26" Padding="0"><FontIcon Glyph="&#xE71C;" FontSize="14" Foreground="{ThemeResource AccentFillColorDefaultBrush}"/></Button>
-     <Button Style="{StaticResource SubtleButtonStyle}" Click="OpenProject_Click" ToolTipService.ToolTip="Open project" AutomationProperties.Name="Open project" MinHeight="0" Width="28" Height="26" Padding="0"><FontIcon Glyph="&#xE838;" FontSize="15"/></Button>
+   <Grid Grid.Row="1" Margin="15,1,9,3" ColumnSpacing="7">
+    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+    <TextBlock x:Name="SidebarCatalogLabel" Text="Chats" FontSize="11.5" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="2">
+     <Button Style="{StaticResource SubtleButtonStyle}" Click="SidebarOptions_Click" ToolTipService.ToolTip="Chat options" AutomationProperties.Name="Chat options" AutomationProperties.AutomationId="SidebarChatOptions" MinHeight="0" Width="26" Height="25" Padding="0"><FontIcon Glyph="&#xE71C;" FontSize="13" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/></Button>
+     <Button Style="{StaticResource SubtleButtonStyle}" Click="OpenProject_Click" ToolTipService.ToolTip="Open project" AutomationProperties.Name="Open project" AutomationProperties.AutomationId="SidebarOpenProject" MinHeight="0" Width="26" Height="25" Padding="0"><FontIcon Glyph="&#xE838;" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/></Button>
     </StackPanel>
    </Grid>
-   <ListView x:Name="ChatList" Grid.Row="2" SelectionChanged="Chat_Changed" RightTapped="Chat_RightTapped" SelectionMode="Single" Padding="4,0" AutomationProperties.Name="Chats">
+   <ListView x:Name="ChatList" Grid.Row="2" SelectionChanged="Chat_Changed" RightTapped="Chat_RightTapped" SelectionMode="Single" Padding="7,0,7,3" AutomationProperties.Name="Chats" AutomationProperties.AutomationId="SidebarChats" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
     <ListView.ItemContainerTransitions><TransitionCollection/></ListView.ItemContainerTransitions>
+    <ListView.ItemsPanel><ItemsPanelTemplate><ItemsStackPanel ItemsUpdatingScrollMode="KeepItemsInView"/></ItemsPanelTemplate></ListView.ItemsPanel>
     <ListView.Resources>
      <CornerRadius x:Key="ListViewItemCornerRadius">6</CornerRadius>
      <x:Boolean x:Key="ListViewItemSelectionIndicatorVisualEnabled">False</x:Boolean>
@@ -148,7 +150,7 @@
     </ListView.Resources>
     <ListView.ItemContainerStyle>
      <Style TargetType="ListViewItem">
-      <Setter Property="MinHeight" Value="29"/>
+      <Setter Property="MinHeight" Value="27"/>
       <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
       <Setter Property="Padding" Value="0"/>
      </Style>
@@ -158,7 +160,7 @@
       <GroupStyle.HeaderContainerStyle>
        <Style TargetType="ListViewHeaderItem">
         <Setter Property="MinHeight" Value="25"/>
-        <Setter Property="Margin" Value="0,5,0,0"/>
+        <Setter Property="Margin" Value="0,5,0,2"/>
         <Setter Property="Padding" Value="0"/>
         <Setter Property="Template">
          <Setter.Value>
@@ -171,12 +173,12 @@
       </GroupStyle.HeaderContainerStyle>
       <GroupStyle.HeaderTemplate>
        <DataTemplate x:DataType="vm:ChatGroup">
-        <Button Style="{StaticResource SubtleButtonStyle}" Tag="{x:Bind ProjectPath}" Click="ProjectGroup_Click" AutomationProperties.Name="{x:Bind AccessibleLabel}" Padding="8,2" Height="25" MinHeight="0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
-         <Grid ColumnSpacing="6">
-          <Grid.ColumnDefinitions><ColumnDefinition Width="12"/><ColumnDefinition Width="16"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-          <FontIcon Glyph="{x:Bind Chevron}" FontSize="8" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-          <FontIcon Grid.Column="1" Glyph="{x:Bind Icon}" FontSize="14" Foreground="{ThemeResource AccentFillColorDefaultBrush}"/>
-          <TextBlock Grid.Column="2" Text="{x:Bind Key}" FontSize="12.5" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+        <Button Style="{StaticResource SubtleButtonStyle}" Tag="{x:Bind CollapseKey}" Click="ProjectGroup_Click" AutomationProperties.Name="{x:Bind AccessibleLabel, Mode=OneWay}" Padding="6,2" Height="25" MinHeight="0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
+         <Grid ColumnSpacing="5">
+          <Grid.ColumnDefinitions><ColumnDefinition Width="10"/><ColumnDefinition Width="14"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+          <FontIcon Glyph="{x:Bind Chevron, Mode=OneWay}" FontSize="8" Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
+          <FontIcon Grid.Column="1" Glyph="{x:Bind Icon}" FontSize="13" Foreground="{ThemeResource AccentFillColorDefaultBrush}"/>
+          <TextBlock Grid.Column="2" Text="{x:Bind Key, Mode=OneWay}" FontSize="12.5" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
          </Grid>
         </Button>
        </DataTemplate>
@@ -184,16 +186,18 @@
      </GroupStyle>
     </ListView.GroupStyle>
     <ListView.ItemTemplate><DataTemplate x:DataType="vm:ChatRow">
-     <Grid MinHeight="29" AutomationProperties.Name="{x:Bind AccessibleLabel}">
-      <Border Style="{StaticResource RoundedSidebarHighlight}" Opacity="{x:Bind HighlightOpacity, Mode=OneWay}" Margin="1"/>
-      <Grid Padding="14,3,10,3" ColumnSpacing="8">
+     <Grid MinHeight="27" AutomationProperties.Name="{x:Bind AccessibleLabel, Mode=OneWay}">
+      <Border Style="{StaticResource RoundedSidebarHighlight}" Opacity="{x:Bind HighlightOpacity, Mode=OneWay}" Margin="1" IsHitTestVisible="False"/>
+      <Grid Padding="{x:Bind CaptionPadding}" ColumnSpacing="8">
        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-       <TextBlock Text="{x:Bind Title}" FontSize="13" FontWeight="Medium" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
-       <TextBlock Grid.Column="1" Text="{x:Bind Age}" FontSize="11.5" FontWeight="Medium" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center"/>
+       <TextBlock Text="{x:Bind Title, Mode=OneWay}" FontSize="12.75" TextTrimming="CharacterEllipsis" MaxLines="1" VerticalAlignment="Center"/>
+       <TextBlock Grid.Column="1" Text="{x:Bind Age, Mode=OneWay}" FontSize="10.5" Foreground="{ThemeResource TextFillColorTertiaryBrush}" VerticalAlignment="Center" Visibility="{x:Bind AgeVisibility, Mode=OneWay}"/>
+       <TextBlock Grid.Column="1" Text="Live" FontSize="10.5" Foreground="{ThemeResource AccentFillColorDefaultBrush}" VerticalAlignment="Center" Visibility="{x:Bind LiveVisibility, Mode=OneWay}"/>
       </Grid>
      </Grid>
     </DataTemplate></ListView.ItemTemplate>
    </ListView>
+   <TextBlock x:Name="SidebarEmptyLabel" Grid.Row="2" Margin="15,12,15,0" Visibility="Collapsed" IsHitTestVisible="False" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" TextTrimming="CharacterEllipsis"/>
    <Border Grid.Row="3" BorderThickness="0,1,0,0" BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}" Padding="12,6,9,8">
     <Grid ColumnSpacing="8">
      <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
@@ -206,7 +210,7 @@
     </Grid>
    </Border>
   </Grid>
-  <Grid Grid.Column="1" Margin="12,0,12,10">
+  <Grid x:Name="ConversationPane" Grid.Column="1" Margin="12,0,12,10">
    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition x:Name="TimelineHeight" Height="*"/><RowDefinition x:Name="TerminalHeight" Height="0"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition x:Name="WelcomeBottom" Height="0"/></Grid.RowDefinitions>
    <StackPanel x:Name="ChatHeader" Margin="12,4,12,8" MaxWidth="{StaticResource ConversationMaxWidth}" Spacing="4">
     <Grid x:Name="ChatIdentity" ColumnSpacing="10">
@@ -345,9 +349,15 @@
          <Button x:Name="ComposerDebugPill" Style="{StaticResource ComposerModePillButton}" Click="ComposerModePill_Click"
                  Visibility="Collapsed" ToolTipService.ToolTip="Turn off Debug"
                  AutomationProperties.Name="Turn off Debug" AutomationProperties.AutomationId="ComposerDebugPill"/>
+         <Button x:Name="ComposerAskPill" Style="{StaticResource ComposerModePillButton}" Click="ComposerModePill_Click"
+                 Visibility="Collapsed" ToolTipService.ToolTip="Turn off Ask" AutomationProperties.Name="Turn off Ask"/>
+         <Button x:Name="ComposerRobloxPill" Style="{StaticResource ComposerModePillButton}" Click="ComposerModePill_Click"
+                 Visibility="Collapsed" ToolTipService.ToolTip="Turn off Roblox" AutomationProperties.Name="Turn off Roblox"/>
+         <Button x:Name="ComposerWildPill" Style="{StaticResource ComposerModePillButton}" Click="ComposerWildPill_Click"
+                 Visibility="Collapsed" ToolTipService.ToolTip="Turn off Wild" AutomationProperties.Name="Turn off Wild"/>
          <Button x:Name="ComposerGoalPill" Style="{StaticResource ComposerModePillButton}" Click="ComposerGoalPill_Click"
                  Visibility="Collapsed" ToolTipService.ToolTip="Turn off Goal"
-                 AutomationProperties.Name="Turn off Goal" AutomationProperties.AutomationId="ComposerGoalPill"/>
+                 AutomationProperties.Name="Goal settings" AutomationProperties.AutomationId="ComposerGoalPill"/>
         </StackPanel>
         <Button x:Name="DictateButton" Style="{StaticResource ComposerChromeButton}" Width="28" Height="28" CornerRadius="14"
                 Background="{ThemeResource SubtleFillColorSecondaryBrush}" Click="Dictate_Click" ToolTipService.ToolTip="Dictate (Ctrl+Shift+D)"
@@ -358,6 +368,7 @@
         <Button x:Name="SendButton" Style="{StaticResource ComposerChromeButton}" Width="28" Height="28" CornerRadius="14" Click="Send_Click" ToolTipService.ToolTip="Send" AutomationProperties.Name="Send" AutomationProperties.AutomationId="Send">
          <Grid x:Name="SendFace" Width="28" Height="28" CornerRadius="14" Background="{ThemeResource TextFillColorPrimaryBrush}">
           <FontIcon x:Name="SendGlyph" Glyph="&#xE74A;" FontSize="12" Foreground="{ThemeResource ApplicationPageBackgroundThemeBrush}"/>
+          <ProgressRing x:Name="SendProgress" Width="14" Height="14" Foreground="{ThemeResource ApplicationPageBackgroundThemeBrush}" Visibility="Collapsed" AutomationProperties.AccessibilityView="Raw"/>
          </Grid>
         </Button>
         <Button x:Name="StopButton" Style="{StaticResource ComposerChromeButton}" Width="28" Height="28" CornerRadius="14" Background="#E04447" Foreground="White" Click="Stop_Click" ToolTipService.ToolTip="Stop" AutomationProperties.Name="Stop" AutomationProperties.AutomationId="Stop" Visibility="Collapsed">
@@ -381,18 +392,29 @@
    </Border>
   </Grid>
   <ContentControl x:Name="UtilitySashHost" Grid.Column="2" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"/>
-  <Grid Grid.Column="3" x:Name="UtilityPanel">
-   <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-   <TabView x:Name="UtilityTabs" TabWidthMode="SizeToContent" IsAddTabButtonVisible="False" CanDragTabs="False" CanReorderTabs="False" SelectedIndex="0"
-            SelectionChanged="Utility_Changed" AutomationProperties.AutomationId="UtilityTabs" AutomationProperties.Name="Right panel tabs">
-    <TabView.TabItems>
-     <TabViewItem Header="Review" IsClosable="False"><TabViewItem.IconSource><SymbolIconSource Symbol="Document"/></TabViewItem.IconSource></TabViewItem>
-     <TabViewItem Header="Browser" IsClosable="False"><TabViewItem.IconSource><SymbolIconSource Symbol="World"/></TabViewItem.IconSource></TabViewItem>
-     <TabViewItem Header="Files" IsClosable="False"><TabViewItem.IconSource><SymbolIconSource Symbol="Folder"/></TabViewItem.IconSource></TabViewItem>
-     <TabViewItem Header="Side chat" IsClosable="False"><TabViewItem.IconSource><SymbolIconSource Symbol="Message"/></TabViewItem.IconSource></TabViewItem>
-    </TabView.TabItems>
-   </TabView>
-   <ContentControl x:Name="UtilityHost" Grid.Row="1" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"/>
+  <Grid Grid.Column="3" x:Name="UtilityPanel" Visibility="Collapsed">
+   <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+   <Border x:Name="UtilityBackRow" Padding="8,3" Visibility="Collapsed" BorderThickness="0,0,0,1" BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}">
+    <Button x:Name="UtilityBackButton" Style="{StaticResource SubtleButtonStyle}" Click="CloseCompactUtility_Click"
+            Padding="6,4" MinHeight="27" AutomationProperties.Name="Back to chat" AutomationProperties.AutomationId="UtilityBack">
+     <StackPanel Orientation="Horizontal" Spacing="7">
+      <FontIcon Glyph="&#xE76B;" FontSize="9" AutomationProperties.AccessibilityView="Raw"/>
+      <TextBlock Text="Back to chat" FontSize="11.5" VerticalAlignment="Center"/>
+     </StackPanel>
+    </Button>
+   </Border>
+   <Border Grid.Row="1" Padding="7,4" BorderThickness="0,0,0,1" BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}">
+    <ListView x:Name="UtilityTabs" SelectionMode="Single" SelectionChanged="Utility_Changed" Padding="0"
+              ScrollViewer.HorizontalScrollMode="Disabled" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+              ScrollViewer.VerticalScrollMode="Disabled" ScrollViewer.VerticalScrollBarVisibility="Disabled"
+              AutomationProperties.AutomationId="UtilityTabs" AutomationProperties.Name="Right panel views">
+     <ListView.ItemContainerTransitions><TransitionCollection/></ListView.ItemContainerTransitions>
+     <ListView.ItemsPanel>
+      <ItemsPanelTemplate><ItemsStackPanel Orientation="Horizontal"/></ItemsPanelTemplate>
+     </ListView.ItemsPanel>
+    </ListView>
+   </Border>
+   <ContentControl x:Name="UtilityHost" Grid.Row="2" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"/>
   </Grid>
  </Grid>
  <ContentControl x:Name="SettingsHost" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch" Visibility="Collapsed"/>

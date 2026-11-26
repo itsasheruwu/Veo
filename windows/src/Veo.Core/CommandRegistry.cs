@@ -23,6 +23,7 @@ public sealed class CommandRegistry(ThreadRepository repository)
         new("model", "Model", "Choose a live runtime model", "model"), new("reasoning", "Reasoning", "Choose reasoning effort", "reasoning"),
         new("permissions", "Permissions", "Choose explicit workspace access", "permissions"), new("review", "Review changes", "Open the native review workflow", "review", true),
         new("rename", "Rename chat", "Rename the selected chat", "rename", true), new("newChat", "New chat", "Start a new chat", "new", true, Key('N')),
+        new("move", "Move to project", "Move future turns to another local project", "move"),
         new("temporary", "Temporary chat", "Make an unused projectless chat temporary", "temporary"), new("archive", "Archive chat", "Archive the selected chat", "archive"),
         new("delete", "Delete chat", "Delete the selected chat after confirmation", "delete"), new("fork", "Fork chat", "Choose a history turn boundary", "fork"),
         new("init", "Create AGENTS.md", "Ask Codex to inspect and preserve project guidance", "init"), new("compact", "Compact history", "Summarize history to free context", "compact"),

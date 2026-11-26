@@ -17,7 +17,7 @@ internal static class ComposerModePill
     static readonly TimeSpan HoverDuration = TimeSpan.FromMilliseconds(160);
     static readonly Vector3 SmallDismissMark = new(.65f, .65f, 1);
 
-    internal static void Configure(Button button, string title, IconElement mark, Size size, Color dark, Color light)
+    internal static void Configure(Button button, string title, IconElement mark, Size size, Color dark, Color light, bool opensSettings = false)
     {
         var ui = new UISettings();
         var accessibility = new AccessibilitySettings();
@@ -50,7 +50,7 @@ internal static class ComposerModePill
         };
         var dismiss = new FontIcon
         {
-            Glyph = "\uE711", FontSize = 9, Foreground = tint, Opacity = 0, Scale = SmallDismissMark,
+            Glyph = opensSettings ? "\uE713" : "\uE711", FontSize = opensSettings ? 11 : 9, Foreground = tint, Opacity = 0, Scale = SmallDismissMark,
             HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center
         };
         dismiss.SizeChanged += (_, e) => dismiss.CenterPoint = new Vector3((float)e.NewSize.Width / 2, (float)e.NewSize.Height / 2, 0);
@@ -67,6 +67,7 @@ internal static class ComposerModePill
         var fade = new ScalarTransition { Duration = HoverDuration };
         var scale = new Vector3Transition { Duration = HoverDuration };
         var hovered = false;
+        var keyboardFocused = false;
         void ApplyAppearance(bool animate)
         {
             var highContrast = accessibility.HighContrast;
@@ -76,11 +77,12 @@ internal static class ComposerModePill
             var motion = animate && button.IsLoaded && ui.AnimationsEnabled;
             fill.OpacityTransition = edge.OpacityTransition = caption.OpacityTransition = dismiss.OpacityTransition = motion ? fade : null;
             dismiss.ScaleTransition = motion ? scale : null;
-            fill.Opacity = highContrast ? 0 : hovered ? .20 : .14;
-            edge.Opacity = highContrast ? 1 : hovered ? .42 : .28;
-            caption.Opacity = hovered ? .08 : 1;
-            dismiss.Opacity = hovered ? 1 : 0;
-            dismiss.Scale = hovered ? Vector3.One : SmallDismissMark;
+            var reveal = hovered || keyboardFocused;
+            fill.Opacity = highContrast ? 0 : reveal ? .20 : .14;
+            edge.Opacity = highContrast ? 1 : reveal ? .42 : .28;
+            caption.Opacity = reveal ? .08 : 1;
+            dismiss.Opacity = reveal ? 1 : 0;
+            dismiss.Scale = reveal ? Vector3.One : SmallDismissMark;
         }
 
         void SetHover(bool value)
@@ -96,6 +98,11 @@ internal static class ComposerModePill
         button.PointerExited += (_, _) => SetHover(false);
         button.PointerCanceled += (_, _) => SetHover(false);
         button.Unloaded += (_, _) => SetHover(false);
+        if (opensSettings)
+        {
+            button.GotFocus += (_, _) => { keyboardFocused = button.FocusState == FocusState.Keyboard; ApplyAppearance(animate: true); };
+            button.LostFocus += (_, _) => { keyboardFocused = false; ApplyAppearance(animate: true); };
+        }
         button.RegisterPropertyChangedCallback(UIElement.VisibilityProperty, (_, _) =>
         {
             if (button.Visibility != Visibility.Visible) SetHover(false);

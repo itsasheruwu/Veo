@@ -80,7 +80,7 @@ public sealed record ComposerDraft(string Text, ComposerAttachment[] Attachments
         return new ComposerSnapshot(clientId ?? Guid.NewGuid().ToString("N"), includeInput ? Text : "", String("model", defaults?.Model), String("effort", defaults?.Effort), NullableString("tier", defaults?.Tier), access,
             String("mode", defaults?.Mode ?? "Agentic")!, selected.Where(x => x.Kind == ComposerAttachmentKind.LocalImage).Select(x => x.Source).ToArray(),
             defaults?.PreserveDraft ?? false, context, String("routingMode", defaults?.RoutingMode ?? "Direct")!, Record("routerPolicy", defaults?.RouterPolicy), Record("familyPlan", defaults?.FamilyPlan), Record("visionFallback", defaults?.VisionFallback),
-            String("modelCatalogId", String("catalogModelId", defaults?.CatalogModelId)), selected, OptionsJson, daybreak).Freeze();
+            String("modelCatalogId", String("catalogModelId", defaults?.CatalogModelId)), selected, OptionsJson, daybreak, Wild: Value("wild")?.GetValue<bool>() ?? defaults?.Wild ?? false).Freeze();
     }
     public static ComposerSnapshot Snapshot(ThreadSession session, bool includeInput = false, ComposerSnapshot? defaults = null, string? clientId = null) => Read(session.Draft).Snapshot(clientId, defaults, includeInput);
     public static ComposerDraft FromSnapshot(ComposerSnapshot snapshot, string originalOptions = "{}") => new(snapshot.Text, ComposerProtocol.Attachments(snapshot).ToArray(), MergeOptions(snapshot.DraftOptionsJson ?? originalOptions, snapshot), DateTimeOffset.UtcNow);
@@ -88,7 +88,7 @@ public sealed record ComposerDraft(string Text, ComposerAttachment[] Attachments
     public static string MergeOptions(string original, ComposerSnapshot settings)
     {
         var root = JsonNode.Parse(original)?.AsObject() ?? throw new InvalidDataException("Invalid composer options.");
-        var values = new Dictionary<string, object?> { ["model"] = settings.Model, ["effort"] = settings.Effort, ["tier"] = settings.Tier, ["access"] = settings.Access, ["mode"] = settings.Mode, ["contextTokens"] = settings.ContextTokens, ["routingMode"] = settings.RoutingMode, ["routerPolicy"] = settings.RouterPolicy, ["familyPlan"] = settings.FamilyPlan, ["visionFallback"] = settings.VisionFallback, ["modelCatalogId"] = settings.CatalogModelId, ["daybreak"] = settings.Daybreak };
+        var values = new Dictionary<string, object?> { ["model"] = settings.Model, ["effort"] = settings.Effort, ["tier"] = settings.Tier, ["access"] = settings.Access, ["mode"] = settings.Mode, ["wild"] = settings.Wild, ["contextTokens"] = settings.ContextTokens, ["routingMode"] = settings.RoutingMode, ["routerPolicy"] = settings.RouterPolicy, ["familyPlan"] = settings.FamilyPlan, ["visionFallback"] = settings.VisionFallback, ["modelCatalogId"] = settings.CatalogModelId, ["daybreak"] = settings.Daybreak };
         foreach (var pair in values)
         {
             foreach (var key in root.Select(x => x.Key).Where(key => key.Equals(pair.Key, StringComparison.OrdinalIgnoreCase)).ToArray()) root.Remove(key);

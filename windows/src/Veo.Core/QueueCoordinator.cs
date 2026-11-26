@@ -39,7 +39,8 @@ public sealed class QueueCoordinator : IDisposable
     public async Task AddedUnderDispatchGateAsync(ThreadSession session, ComposerSnapshot payload, CancellationToken token = default)
     {
         // The server queue carries input only. Apply access programs and goals on the local dispatch path.
-        if (payload.Daybreak is not null || payload.StartGoal || payload.Access != session.EffectiveAccess) return;
+        if (payload.Daybreak is not null || payload.StartGoal || session.HasManagedGoal || payload.Access != session.EffectiveAccess
+            || ComposerModePolicy.RequiresNewTurn(payload) || session.ProtectedTurn) return;
         if (session.Record.CodexThreadId is not { } id || !rpc.Supports("thread/queue/add") || !rpc.Supports("thread/queue/list")) return;
         var bindings = await ReadBindingsAsync(session, token);
         if (bindings.Any(x => x.ClientId == payload.ClientId && x.State != "local")) return;
@@ -139,6 +140,8 @@ public sealed class QueueCoordinator : IDisposable
     }
     public async Task SteerAsync(ThreadSession session, ComposerSnapshot payload, CancellationToken token = default)
     {
+        if (ComposerModePolicy.RequiresNewTurn(payload) || session.ProtectedTurn)
+            throw new InvalidOperationException("Start a new turn to apply the queued mode and permissions.");
         if (payload.Daybreak is not null) throw new InvalidOperationException("Start the queued message as a new turn to apply its Daybreak choice.");
         if (payload.StartGoal) throw new InvalidOperationException("Start the queued message as a new turn to apply its goal.");
         await session.DispatchGate.WaitAsync(token);

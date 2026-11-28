@@ -15,7 +15,7 @@ public sealed class GitReviewPanel : UserControl
     private readonly WorkspaceCoordinator coordinator;
     private readonly LocalGitService git;
     private readonly Func<ThreadSession, string, Task> appendToDraft;
-    private readonly ListView changes = new() { SelectionMode = ListViewSelectionMode.Multiple, IsMultiSelectCheckBoxEnabled = true, MaxHeight = 160, ItemContainerTransitions = new() };
+    private readonly ListView changes = new() { SelectionMode = ListViewSelectionMode.Multiple, IsMultiSelectCheckBoxEnabled = true, IsItemClickEnabled = true, ItemContainerTransitions = new() };
     private readonly NativeDiffView diff = new() { PlaceholderText = "Select a changed file to inspect its diff" };
     private readonly ComboBox side = new() { ItemsSource = new[] { "Unstaged", "Staged" }, SelectedIndex = 0, MinWidth = 120 };
     private readonly ComboBox layout = new() { ItemsSource = new[] { "Unified", "Split" }, SelectedIndex = 0, MinWidth = 100 };
@@ -53,13 +53,13 @@ public sealed class GitReviewPanel : UserControl
         AutomationProperties.SetName(layout, "Diff layout"); AutomationProperties.SetName(hunks, "Diff hunk");
         var bar = new CommandBar
         {
-            Content = new Grid { Height = 48, Children = { summary } },
+            Content = new Grid { Height = 34, Children = { summary } },
             Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
             DefaultLabelPosition = CommandBarDefaultLabelPosition.Collapsed
         };
         var refresh = Button("Refresh review", Symbol.Refresh, RefreshAsync); refresh.Width = 36; bar.PrimaryCommands.Add(refresh);
-        var stage = Button("Stage selected files", Symbol.Add, () => MutateAsync((s, p) => git.StageAsync(s, p))); stage.Width = 36; bar.PrimaryCommands.Add(stage); mutations.Add(stage);
-        var unstage = Button("Unstage selected files", Symbol.Remove, () => MutateAsync((s, p) => git.UnstageAsync(s, p))); unstage.Width = 36; bar.PrimaryCommands.Add(unstage); mutations.Add(unstage);
+        var stage = Button("Stage selected files", Symbol.Add, () => MutateAsync((s, p) => git.StageAsync(s, p))); stage.Width = 36; bar.SecondaryCommands.Add(stage); mutations.Add(stage);
+        var unstage = Button("Unstage selected files", Symbol.Remove, () => MutateAsync((s, p) => git.UnstageAsync(s, p))); unstage.Width = 36; bar.SecondaryCommands.Add(unstage); mutations.Add(unstage);
         var discard = Button("Discard selected unstaged changes", Symbol.Delete, DiscardAsync); bar.SecondaryCommands.Add(discard); mutations.Add(discard);
         recover.Click += async (_, _) => await GuardAsync(RecoverAsync); bar.SecondaryCommands.Add(recover);
         bar.SecondaryCommands.Add(whitespace);
@@ -79,19 +79,105 @@ public sealed class GitReviewPanel : UserControl
         hunks.SelectionChanged += (_, _) => UpdateHunkActions();
         applyHunk.Click += async (_, _) => await GuardAsync(ApplyHunkAsync);
         commentOnLines.Click += async (_, _) => await GuardAsync(CommentOnLinesAsync);
-        changes.SelectionChanged += async (_, _) => await RequestDiffAsync();
+        changes.SelectionChanged += async (_, args) =>
+        {
+            if (args.AddedItems.FirstOrDefault() is not ChangeRow selected) return;
+            inspectedFile = selected.File.Path;
+            await RequestDiffAsync();
+        };
         var diffOptions = new Grid { ColumnSpacing = 6 };
         diffOptions.ColumnDefinitions.Add(new()); diffOptions.ColumnDefinitions.Add(new());
         diffOptions.Children.Add(side); Grid.SetColumn(layout, 1); diffOptions.Children.Add(layout);
-        var hunkOptions = new Grid { ColumnSpacing = 6 };
+        hunkOptions.ColumnSpacing = 6;
         hunkOptions.ColumnDefinitions.Add(new()); hunkOptions.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         hunkOptions.Children.Add(hunks); Grid.SetColumn(applyHunk, 1); hunkOptions.Children.Add(applyHunk);
-        var grid = new Grid { Padding = new Thickness(8, 0, 8, 8), RowSpacing = 5 };
-        foreach (var height in new[] { GridLength.Auto, GridLength.Auto, GridLength.Auto, GridLength.Auto,
-                     GridLength.Auto, GridLength.Auto, new GridLength(1, GridUnitType.Star), GridLength.Auto, GridLength.Auto }) grid.RowDefinitions.Add(new() { Height = height });
-        Add(grid, bar, 0); Add(grid, notice, 1); Add(grid, changes, 2); Add(grid, diffOptions, 3); Add(grid, hunkOptions, 4);
-        Add(grid, commentOnLines, 5); Add(grid, diff, 6); Add(grid, commitMessage, 7); Add(grid, commit, 8);
+        var grid = new Grid { Padding = new Thickness(8, 0, 8, 8), RowSpacing = 4 };
+        grid.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        grid.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        grid.RowDefinitions.Add(new());
+        grid.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        Add(grid, bar, 0);
+        Add(grid, notice, 1);
+        Add(grid, body, 2);
+        body.ColumnDefinitions.Add(new());
+        body.ColumnDefinitions.Add(new());
+        fileList.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        fileList.RowDefinitions.Add(new());
+        Add(fileList, changeHeading, 0);
+        Add(fileList, changes, 1);
+        body.Children.Add(fileList);
+        body.Children.Add(detail);
+        for (int row = 0; row < 4; row++) detail.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        detail.RowDefinitions.Add(new());
+        back.Style = (Style)Application.Current.Resources["SubtleButtonStyle"];
+        back.Click += (_, _) =>
+        {
+            showsCompactDiff = false;
+            LayoutReview();
+            changes.Focus(FocusState.Programmatic);
+        };
+        changes.ItemClick += (_, args) =>
+        {
+            if (args.ClickedItem is not ChangeRow row) return;
+            showsCompactDiff = true;
+            inspectedFile = row.File.Path;
+            LayoutReview();
+            _ = RequestDiffAsync();
+        };
+        Add(detail, back, 0);
+        Add(detail, diffOptions, 1);
+        Add(detail, hunkOptions, 2);
+        Add(detail, commentOnLines, 3);
+        Add(detail, diff, 4);
+        commitToggle.Style = (Style)Application.Current.Resources["SubtleButtonStyle"];
+        commitToggle.Click += (_, _) =>
+        {
+            commitOpen = !commitOpen;
+            LayoutReview();
+            if (commitOpen) commitMessage.Focus(FocusState.Keyboard);
+        };
+        var commitArea = new StackPanel { Spacing = 4 };
+        commitArea.Children.Add(commitToggle);
+        commitArea.Children.Add(commitMessage);
+        commitArea.Children.Add(commit);
+        Add(grid, commitArea, 3);
+        Add(grid, empty, 2);
+        SizeChanged += (_, _) => LayoutReview();
+        UpdateReviewSurface(false, false);
         Content = grid;
+    }
+
+    readonly InspectorEmptyState empty = new("\uE8A5", "Git unavailable", "Open a project with a Git repository.");
+    readonly Grid body = new() { ColumnSpacing = 6 }, fileList = new(), detail = new() { RowSpacing = 4 }, hunkOptions = new();
+    readonly TextBlock changeHeading = new() { Text = "Changed files", FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, Margin = new Thickness(4, 6, 4, 6) };
+    readonly Button back = new() { Content = "‹  Back to Changes", HorizontalAlignment = HorizontalAlignment.Left };
+    readonly Button commitToggle = new() { Content = "Commit…", FontSize = 12, HorizontalAlignment = HorizontalAlignment.Left };
+    string? inspectedFile;
+    bool commitOpen, hasChanges, showsCompactDiff;
+
+    void LayoutReview()
+    {
+        var compact = ActualWidth < 620;
+        body.ColumnDefinitions[0].Width = compact ? new GridLength(1, GridUnitType.Star) : new GridLength(210);
+        body.ColumnDefinitions[1].Width = compact ? new GridLength(0) : new GridLength(1, GridUnitType.Star);
+        Grid.SetColumn(detail, compact ? 0 : 1);
+        body.Visibility = hasChanges ? Visibility.Visible : Visibility.Collapsed;
+        fileList.Visibility = !compact || !showsCompactDiff ? Visibility.Visible : Visibility.Collapsed;
+        detail.Visibility = !compact || showsCompactDiff ? Visibility.Visible : Visibility.Collapsed;
+        back.Visibility = compact ? Visibility.Visible : Visibility.Collapsed;
+        layout.Visibility = ActualWidth >= 880 ? Visibility.Visible : Visibility.Collapsed;
+        diff.IsSplit = ActualWidth >= 880 && layout.SelectedIndex == 1;
+        commitToggle.Visibility = hasChanges ? Visibility.Visible : Visibility.Collapsed;
+        commit.Visibility = commitMessage.Visibility = hasChanges && commitOpen ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    void UpdateReviewSurface(bool available, bool changed)
+    {
+        hasChanges = changed;
+        empty.Visibility = changed ? Visibility.Collapsed : Visibility.Visible;
+        empty.SetText(available ? "No changes" : "Git unavailable", available ? "Your working tree is clean." : "Open a project with a Git repository.");
+        if (!changed) { commitOpen = showsCompactDiff = false; inspectedFile = null; }
+        LayoutReview();
     }
 
     public async Task LoadAsync(ThreadSession value)
@@ -101,7 +187,7 @@ public sealed class GitReviewPanel : UserControl
         {
             if (session?.Record.VeoId != value.Record.VeoId)
             {
-                session = value; snapshot = null; ResetDiff(); commitMessage.Text = "";
+                session = value; snapshot = null; inspectedFile = null; showsCompactDiff = false; ResetDiff(); commitMessage.Text = "";
                 var recovery = await coordinator.Threads.ReadStateAsync(value.Record.VeoId, "lastGitRecovery");
                 if (recovery is not null && JsonSerializer.Deserialize<GitRecoveryReceipt>(recovery) is { } receipt)
                     recoveries[value.Record.VeoId] = receipt;
@@ -121,13 +207,17 @@ public sealed class GitReviewPanel : UserControl
         try { result = await git.SnapshotAsync(session.Record.Cwd); }
         catch (NotGitRepositoryException)
         {
-            summary.Text = "No Git repository"; changes.ItemsSource = Array.Empty<ChangeRow>(); diff.Text = "";
+            UpdateReviewSurface(false, false); summary.Text = "Review"; changes.ItemsSource = Array.Empty<ChangeRow>(); diff.Text = "";
             diff.PlaceholderText = "This workspace has no Git repository."; notice.IsOpen = false; recover.IsEnabled = false;
             return;
         }
+        UpdateReviewSurface(true, result.Files.Any(file => file.IsInWorkspace));
         snapshot = result; summary.Text = result.Branch ?? "Detached HEAD";
         diff.PlaceholderText = "Select a changed file to inspect its diff"; commit.IsEnabled = result.CanMutate;
-        changes.ItemsSource = result.Files.Where(f => f.IsInWorkspace).Select(f => new ChangeRow(f)).ToArray();
+        var files = result.Files.Where(f => f.IsInWorkspace).Select(f => new ChangeRow(f)).ToArray();
+        changes.ItemsSource = files;
+        inspectedFile = files.FirstOrDefault(row => row.File.Path == inspectedFile)?.File.Path ?? files.FirstOrDefault()?.File.Path;
+        if (inspectedFile is not null) _ = RequestDiffAsync();
         foreach (var button in mutations) button.IsEnabled = result.CanMutate;
     }
     private string[] Selection() => changes.SelectedItems.Cast<ChangeRow>().Select(row => row.File.Path).ToArray();
@@ -143,6 +233,7 @@ public sealed class GitReviewPanel : UserControl
     private void UpdateHunkActions()
     {
         var hasHunk = displayedDiff is not null && hunks.SelectedItem is DiffHunk;
+        hunkOptions.Visibility = commentOnLines.Visibility = hasHunk ? Visibility.Visible : Visibility.Collapsed;
         commentOnLines.IsEnabled = hasHunk;
         applyHunk.IsEnabled = hasHunk && hunkActionsAllowed
             && displayedDiff?.IgnoreWhitespace == false && snapshot?.CanMutate == true;
@@ -155,7 +246,7 @@ public sealed class GitReviewPanel : UserControl
         try
         {
             if (request != diffRequest || snapshot is not { } expected || session is not { } target
-                || changes.SelectedItems.FirstOrDefault() is not ChangeRow row) return;
+                || changes.Items.OfType<ChangeRow>().FirstOrDefault(file => file.File.Path == inspectedFile) is not { } row) return;
             var requested = new DisplayedDiff(target, row.File.Path, side.SelectedIndex == 1, whitespace.IsChecked == true);
             notice.IsOpen = false;
             var text = await git.DiffAsync(expected, requested.Path, requested.Staged, requested.IgnoreWhitespace);

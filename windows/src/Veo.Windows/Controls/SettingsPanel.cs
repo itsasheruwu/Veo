@@ -22,13 +22,14 @@ public sealed partial class SettingsPanel : UserControl
         new("Notifications", "Alerts, notification area, and sounds", "\uE7E7"),
         new("Terminal", "Docked terminal and agent CLIs", "\uE756"),
         new("Browser", "Search engine, tabs, passwords, and website data", "\uE909"),
-        new("Runtime", "Local Codex connection", "\uE945"),
+        new("Runtime", "Active provider connection", "\uE945"),
         new("Updates", "Check for and install Veo updates", "\uE896"),
         new("Account", "Identity, usage, and limits", "\uE77B"),
         new("Integrations", "Skills, plugins, apps, and MCP", "\uE74C")
     ];
     sealed record Category(string Title, string Detail, string Glyph);
 
+    readonly Func<(string Name, string? Executable)?> selectedProvider;
     readonly WorkspaceCoordinator workspace;
     readonly Func<string, bool> shortcutAvailable;
     readonly Func<bool, Task> setIncludeGPT56Models;
@@ -40,9 +41,11 @@ public sealed partial class SettingsPanel : UserControl
     public event Action? BackRequested;
     public bool IsCapturingShortcut => shortcuts?.IsCapturing == true;
 
-    public SettingsPanel(WorkspaceCoordinator workspace, Func<string, bool> shortcutAvailable, Func<bool, Task> setIncludeGPT56Models)
+    public SettingsPanel(WorkspaceCoordinator workspace, Func<string, bool> shortcutAvailable, Func<bool, Task> setIncludeGPT56Models,
+        Func<(string Name, string? Executable)?> selectedProvider)
     {
         this.workspace = workspace;
+        this.selectedProvider = selectedProvider;
         this.shortcutAvailable = shortcutAvailable;
         this.setIncludeGPT56Models = setIncludeGPT56Models;
         InitializeComponent();
@@ -118,8 +121,9 @@ public sealed partial class SettingsPanel : UserControl
     public void RefreshPalette()
     {
         var p = workspace.Preferences;
-        SettingsLayout.Background = WorkspaceAppearance.Region(this, p.CanvasMaterial, WorkspaceSurface.Canvas);
-        SettingsRail.Background = WorkspaceAppearance.Region(this, p.SidebarMaterial, WorkspaceSurface.Sidebar);
+        WorkspaceAppearance.ApplyRegion(SettingsLayout, p.CanvasMaterial, WorkspaceSurface.Canvas);
+        WorkspaceAppearance.ApplyRegion(SettingsRail, p.SidebarMaterial, WorkspaceSurface.Sidebar);
+        WorkspaceAppearance.ApplyRegion(FeedbackSurface, p.NotificationMaterial, WorkspaceSurface.Notice);
         WorkspaceAppearance.ApplyAccent(this, p.Accent);
         accentBrush.Color = AccentColor(p.Accent);
         UpdateSelectionAppearance();
@@ -317,8 +321,21 @@ public sealed partial class SettingsPanel : UserControl
             Toggle("Fraudulent website warning", p.BrowserFraudWarning, v => p.BrowserFraudWarning = v));
     }
 
+    bool ShowProviderConnection(bool account)
+    {
+        if (selectedProvider() is not { } provider) return false;
+        var section = Section(account ? "Provider account" : "Provider runtime");
+        var detail = account
+            ? (provider.Executable == null ? "Manage API credentials in Providers." : "Sign-in and usage are managed by this provider’s CLI.")
+            : provider.Executable ?? "API provider connection";
+        AddRow(section, provider.Name, detail, account ? "\uE77B" : "\uE945",
+            ActionButton("Manage provider", () => { Select("Providers"); return Task.CompletedTask; }));
+        return true;
+    }
+
     void ShowRuntime()
     {
+        if (ShowProviderConnection(false)) return;
         var p = workspace.Preferences;
         var connection = Section("Local connection");
         var runtimeState = SettingText("", "SettingDetail");
@@ -425,6 +442,7 @@ public sealed partial class SettingsPanel : UserControl
 
     void ShowAccount()
     {
+        if (ShowProviderConnection(true)) return;
         var identity = Section("Codex account");
         var summary = new StackPanel { Spacing = 10 };
         AddRow(identity, "Local Codex account", "Sign in through Veo’s browser using the local Codex CLI.", "\uE77B",

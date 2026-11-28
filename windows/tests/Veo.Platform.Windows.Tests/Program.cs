@@ -25,6 +25,13 @@ history.Feed("\u001b[31mOLD\r\none\r\ntwo");
 Assert(history.Snapshot(1).Rows[0][0].Text == "O" && history.Snapshot(1).Rows[0][0].Foreground == 0xc50f1f, "scrollback retains native cell colors");
 history.Resize(6, 3);
 Assert(history.Snapshot(1).Rows.All(r => r.Length == 6) && history.Snapshot(1).Rows[0][0].Text == "O", "resize preserves visible history and valid cell bounds");
+var splitHistory = new TerminalBuffer(18, 4);
+splitHistory.Feed("0123456789ABCDEFGHijk\r\nnext");
+splitHistory.Resize(9, 6);
+Assert(splitHistory.CopyText().StartsWith("012345678" + Environment.NewLine + "9ABCDEFGH" + Environment.NewLine + "ijk"), "splitting a terminal preserves the full long historical line");
+splitHistory.Resize(24, 5);
+splitHistory.Feed("!");
+Assert(splitHistory.CopyText().StartsWith("0123456789ABCDEFGHijk" + Environment.NewLine + "next!"), "widening rejoins soft wraps and preserves the active cursor");
 var token = Guid.NewGuid().ToString("N");
 var credentials = new CredentialManager("PlatformTests-" + token);
 try

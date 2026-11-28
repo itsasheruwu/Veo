@@ -9,10 +9,14 @@ public sealed partial class MainPage
 {
     void RenderContextIndicator(ThreadSession session)
     {
-        ComposerContextIndicator.Visibility = session.ContextUsage is null ? Visibility.Collapsed : Visibility.Visible;
+        ComposerContextIndicator.Visibility = !workspace.Preferences.ShowUsage || session.ContextUsage is null ? Visibility.Collapsed : Visibility.Visible;
         if (session.ContextUsage is not { } usage) return;
         var percent = $"{usage.Percent}%";
-        ComposerContextPercent.Text = percent;
+        var p = workspace.Preferences;
+        ContextBar.Visibility = p.ContextStyle == "Bar" ? Visibility.Visible : Visibility.Collapsed;
+        ContextRing.Visibility = p.ContextStyle == "Circle" ? Visibility.Visible : Visibility.Collapsed;
+        ContextBar.Value = ContextRing.Value = usage.Percent;
+        ComposerContextPercent.Text = p.ContextLabel == "Tokens" && p.ContextStyle != "Percent" ? $"{usage.Used:N0}" : percent;
         var label = session.IsCompactingContext ? $"Compacting context, {percent} used" : $"Context window: {percent} used";
         AutomationProperties.SetName(ComposerContextIndicator, label);
         ToolTipService.SetToolTip(ComposerContextIndicator, label);

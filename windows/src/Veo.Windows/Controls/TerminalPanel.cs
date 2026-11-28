@@ -40,7 +40,13 @@ public sealed class TerminalPanel : Grid, IAsyncDisposable
     private readonly List<ContentControl> holders = [];
     private readonly Dictionary<string, Border> paneFrames = new(StringComparer.Ordinal);
     private readonly InfoBar notice = new() { IsOpen = false, IsClosable = true };
-    private readonly AppBarButton expand = new() { Label = "Expand terminal workspace", Icon = new SymbolIcon(Symbol.FullScreen) };
+    public event Action? HideRequested;
+    public event Action? SettingsRequested;
+    readonly ColumnDefinition railWidth = new() { Width = new GridLength(0) };
+    readonly Grid rail = new();
+    readonly Grid dockBar = new() { Height = 36, Padding = new Thickness(6, 0, 6, 0) };
+    readonly Grid workspaceBar = new() { Height = 38, Padding = new Thickness(10, 0, 6, 0) };
+    readonly TextBlock paneCount = new() { FontSize = 11.5, Opacity = .65, VerticalAlignment = VerticalAlignment.Center };
     private readonly DispatcherTimer persist = new() { Interval = TimeSpan.FromMilliseconds(200) };
     private readonly SemaphoreSlim actions = new(1, 1);
     private readonly string instanceId = Guid.NewGuid().ToString("N");
@@ -56,24 +62,18 @@ public sealed class TerminalPanel : Grid, IAsyncDisposable
     {
         this.workspace = workspace;
         MinHeight = 140;
-        RowDefinitions.Add(new() { Height = GridLength.Auto }); RowDefinitions.Add(new() { Height = GridLength.Auto }); RowDefinitions.Add(new());
-        var commands = new CommandBar { DefaultLabelPosition = CommandBarDefaultLabelPosition.Collapsed };
-        var add = new AppBarButton { Label = "New terminal session", Icon = new SymbolIcon(Symbol.Add) };
-        var splitRight = new AppBarButton { Label = "Split terminal right", Icon = new SymbolIcon(Symbol.TwoPage) };
-        var splitDown = new AppBarButton { Label = "Split terminal down", Icon = new SymbolIcon(Symbol.AlignCenter) };
-        var layouts = new AppBarButton { Label = "Terminal grid layout", Icon = new SymbolIcon(Symbol.View) };
-        var menu = new MenuFlyout();
-        foreach (var preset in Enum.GetValues<TerminalGridPreset>())
-        { var item = new MenuFlyoutItem { Text = PresetTitle(preset) }; item.Click += async (_, _) => await RunAsync(() => ApplyPresetAsync(preset)); menu.Items.Add(item); }
-        layouts.Flyout = menu;
-        commands.PrimaryCommands.Add(add); commands.PrimaryCommands.Add(splitRight); commands.PrimaryCommands.Add(splitDown); commands.PrimaryCommands.Add(layouts); commands.PrimaryCommands.Add(expand);
-        var close = new AppBarButton { Label = "Close focused terminal", Icon = new SymbolIcon(Symbol.Cancel) }; commands.SecondaryCommands.Add(close);
-        add.Click += async (_, _) => await RunAsync(async () => { if (context is not null) await AddAsync(context); });
-        splitRight.Click += async (_, _) => await RunAsync(() => SplitAsync(TerminalSplitAxis.Horizontal));
-        splitDown.Click += async (_, _) => await RunAsync(() => SplitAsync(TerminalSplitAxis.Vertical));
-        expand.Click += async (_, _) => await RunAsync(async () => { IsExpanded = !IsExpanded; await RenderAsync(); SchedulePersist(); ExpandedChanged?.Invoke(IsExpanded); });
-        close.Click += async (_, _) => await RunAsync(async () => { if (focusedId is not null) await CloseAsync(focusedId); });
-        Children.Add(commands); SetRow(notice, 1); Children.Add(notice); SetRow(viewport, 2); Children.Add(viewport);
+        ColumnDefinitions.Add(railWidth);
+        ColumnDefinitions.Add(new());
+        RowDefinitions.Add(new() { Height = GridLength.Auto });
+        RowDefinitions.Add(new() { Height = GridLength.Auto });
+        RowDefinitions.Add(new());
+        SetColumn(dockBar, 1); Children.Add(dockBar);
+        SetColumn(workspaceBar, 1); Children.Add(workspaceBar);
+        SetColumn(notice, 1); SetRow(notice, 1); Children.Add(notice);
+        SetColumn(viewport, 1); SetRow(viewport, 2); Children.Add(viewport);
+        SetRowSpan(rail, 3); Children.Add(rail);
+        BuildChrome();
+        SizeChanged += (_, _) => UpdateRailWidth();
         sidebar.ItemsSource = sessions;
         AutomationProperties.SetName(tabs, "Terminal sessions");
         AutomationProperties.SetName(sidebar, "Terminal session sidebar");
@@ -94,6 +94,85 @@ public sealed class TerminalPanel : Grid, IAsyncDisposable
         sidebar.DragItemsCompleted += (_, _) => { SyncTabs(); SchedulePersist(); };
         persist.Tick += async (_, _) => { persist.Stop(); await PersistAsync(); };
     }
+
+    static Button Tool(string label, string glyph, Action? click = null, bool showLabel = false)
+    {
+        var face = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 7, VerticalAlignment = VerticalAlignment.Center };
+        face.Children.Add(new FontIcon { Glyph = glyph, FontSize = 13 });
+        if (showLabel) face.Children.Add(new TextBlock { Text = label, FontSize = 12.5, VerticalAlignment = VerticalAlignment.Center });
+        var button = new Button { Content = face, Style = (Style)Application.Current.Resources["SubtleButtonStyle"],
+            Height = 28, MinHeight = 0, MinWidth = 26, Padding = new Thickness(showLabel ? 8 : 4, 0, showLabel ? 8 : 4, 0) };
+        ToolTipService.SetToolTip(button, label); AutomationProperties.SetName(button, label);
+        if (click is not null) button.Click += (_, _) => click();
+        return button;
+    }
+
+    void BuildChrome()
+    {
+        async Task ToggleExpanded()
+        {
+            IsExpanded = !IsExpanded; await RenderAsync(); SchedulePersist(); ExpandedChanged?.Invoke(IsExpanded);
+        }
+        dockBar.ColumnDefinitions.Add(new()); dockBar.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        tabs.Height = 36; tabs.CloseButtonOverlayMode = TabViewCloseButtonOverlayMode.OnPointerOver;
+        dockBar.Children.Add(tabs);
+        _ = new JoinedTabSelection(tabs, dockBar);
+        var dockActions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 3, VerticalAlignment = VerticalAlignment.Center };
+        dockActions.Children.Add(Tool("Expand terminal workspace", "\uE740", () => _ = RunAsync(ToggleExpanded)));
+        dockActions.Children.Add(Tool("Hide terminal panel", "\uE711", () => HideRequested?.Invoke()));
+        SetColumn(dockActions, 1); dockBar.Children.Add(dockActions);
+
+        workspaceBar.ColumnDefinitions.Add(new()); workspaceBar.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        var leading = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 5, VerticalAlignment = VerticalAlignment.Center };
+        var chooseLayout = Tool("Layout", "\uE89F", showLabel: true);
+        var menu = new MenuFlyout();
+        foreach (var preset in Enum.GetValues<TerminalGridPreset>())
+        {
+            var item = new MenuFlyoutItem { Text = PresetTitle(preset) };
+            item.Click += async (_, _) => await RunAsync(() => ApplyPresetAsync(preset)); menu.Items.Add(item);
+        }
+        chooseLayout.Flyout = menu; AutomationProperties.SetName(chooseLayout, "Terminal grid layout");
+        leading.Children.Add(chooseLayout);
+        leading.Children.Add(new Border { Width = 1, Height = 16, Background = (Brush)Application.Current.Resources["DividerStrokeColorDefaultBrush"] });
+        leading.Children.Add(Tool("Split terminal right", "\uE89F", () => _ = RunAsync(() => SplitAsync(TerminalSplitAxis.Horizontal))));
+        leading.Children.Add(Tool("Split terminal down", "\uE8FD", () => _ = RunAsync(() => SplitAsync(TerminalSplitAxis.Vertical))));
+        leading.Children.Add(paneCount); workspaceBar.Children.Add(leading);
+        var trailing = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        trailing.Children.Add(Tool("Restore docked terminal", "\uE73F", () => _ = RunAsync(ToggleExpanded)));
+        trailing.Children.Add(Tool("Hide terminal panel", "\uE711", () => HideRequested?.Invoke()));
+        SetColumn(trailing, 1); workspaceBar.Children.Add(trailing);
+        rail.Padding = new Thickness(12, 6, 12, 10);
+        rail.RowDefinitions.Add(new() { Height = GridLength.Auto }); rail.RowDefinitions.Add(new() { Height = GridLength.Auto }); rail.RowDefinitions.Add(new());
+        var buttons = new Grid { ColumnSpacing = 5 }; buttons.ColumnDefinitions.Add(new()); buttons.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        var add = Tool("New Session", "\uE710", () => _ = RunAsync(async () => { if (context is not null) await AddAsync(context); }), true);
+        add.HorizontalAlignment = HorizontalAlignment.Stretch; add.HorizontalContentAlignment = HorizontalAlignment.Left;
+        buttons.Children.Add(add);
+        var back = Tool("Back to chat", "\uE72B", () => HideRequested?.Invoke()); SetColumn(back, 1); buttons.Children.Add(back);
+        rail.Children.Add(buttons);
+        var label = new TextBlock { Text = "Terminals", FontSize = 11.5, Opacity = .64, Margin = new Thickness(8, 12, 0, 5) };
+        SetRow(label, 1); rail.Children.Add(label); SetRow(sidebar, 2); rail.Children.Add(sidebar);
+        rail.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        var settings = Tool("Terminal settings", "\uE713", () => SettingsRequested?.Invoke());
+        settings.HorizontalAlignment = HorizontalAlignment.Right;
+        SetRow(settings, 3);
+        rail.Children.Add(settings);
+        sidebar.ItemTemplate = (DataTemplate)Microsoft.UI.Xaml.Markup.XamlReader.Load("""
+            <DataTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation">
+              <Grid ColumnSpacing="9" Padding="3,5" MinHeight="42"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                <FontIcon Glyph="&#xE756;" FontSize="13" VerticalAlignment="Center"/>
+                <StackPanel Grid.Column="1" Spacing="2"><TextBlock Text="{Binding DisplayTitle}" FontSize="12.5" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/><TextBlock Text="PowerShell" FontSize="10.5" FontFamily="Cascadia Mono" Opacity=".65"/></StackPanel>
+              </Grid>
+            </DataTemplate>
+            """);
+    }
+
+    public void ApplyWorkspaceMaterials()
+    {
+        Services.WorkspaceAppearance.ApplyRegion(this, workspace.Preferences.CanvasMaterial, Services.WorkspaceSurface.Canvas);
+        Services.WorkspaceAppearance.ApplyRegion(rail, workspace.Preferences.SidebarMaterial, Services.WorkspaceSurface.Sidebar);
+    }
+
+    void UpdateRailWidth() => railWidth.Width = new GridLength(IsExpanded ? Math.Clamp(ActualWidth * .216, 190, 318) : 0);
 
     public async Task OpenAsync(ThreadSession session, bool ensureSession = true)
     {
@@ -224,29 +303,37 @@ public sealed class TerminalPanel : Grid, IAsyncDisposable
         var wasRendering = rendering; rendering = true;
         foreach (var descriptor in sessions)
             if (!tabItems.ContainsKey(descriptor.Id))
-            { var tab = new TabViewItem { Header = descriptor.Title, Tag = descriptor.Id, IsClosable = true }; ToolTipService.SetToolTip(tab, descriptor.Cwd); tabItems[descriptor.Id] = tab; }
-        tabs.TabItems.Clear(); foreach (var descriptor in sessions) tabs.TabItems.Add(tabItems[descriptor.Id]);
+            { var tab = new TabViewItem { Header = descriptor.DisplayTitle, Tag = descriptor.Id, IsClosable = true }; ToolTipService.SetToolTip(tab, descriptor.Cwd); tabItems[descriptor.Id] = tab; }
+        for (var index = 0; index < sessions.Count; index++)
+        {
+            var tab = tabItems[sessions[index].Id];
+            if (index < tabs.TabItems.Count && ReferenceEquals(tabs.TabItems[index], tab)) continue;
+            tabs.TabItems.Remove(tab);
+            tabs.TabItems.Insert(index, tab);
+        }
         rendering = wasRendering;
     }
     private async Task RenderAsync()
     {
         DetachSurfaces(); EnsureLayout(); SyncTabs();
-        expand.Label = IsExpanded ? "Restore docked terminal" : "Expand terminal workspace";
-        expand.Icon = new SymbolIcon(IsExpanded ? Symbol.BackToWindow : Symbol.FullScreen);
+        dockBar.Visibility = IsExpanded ? Visibility.Collapsed : Visibility.Visible;
+        workspaceBar.Visibility = rail.Visibility = IsExpanded ? Visibility.Visible : Visibility.Collapsed;
+        UpdateRailWidth();
+        paneCount.Text = layout?.LeafCount > 1 ? $"{layout.LeafCount} panes" : "";
+        viewport.Margin = IsExpanded ? new Thickness(4, 0, 4, 4) : new Thickness(0);
         if (IsExpanded && layout is not null)
         {
             foreach (var id in layout.SessionIds) await EnsureHandleAsync(sessions.Single(session => session.Id == id));
-            var expanded = new Grid(); expanded.ColumnDefinitions.Add(new() { Width = new GridLength(168) }); expanded.ColumnDefinitions.Add(new());
-            // A sidebar belongs to only one live visual tree at a time.
-            if (sidebar.Parent is Panel oldParent) oldParent.Children.Remove(sidebar);
-            expanded.Children.Add(sidebar); var panes = BuildNode(layout); SetColumn(panes, 1); expanded.Children.Add(panes); viewport.Content = expanded;
+            viewport.Content = BuildNode(layout);
             sidebar.SelectedItem = sessions.FirstOrDefault(session => session.Id == focusedId);
         }
         else
         {
             if (focusedId is not null && sessions.FirstOrDefault(session => session.Id == focusedId) is { } descriptor)
-            { tabItems[focusedId].Content = (await EnsureHandleAsync(descriptor)).Surface; tabs.SelectedItem = tabItems[focusedId]; }
-            viewport.Content = tabs;
+            {
+                viewport.Content = (await EnsureHandleAsync(descriptor)).Surface;
+                tabs.SelectedItem = tabItems[focusedId];
+            }
         }
         rendering = false;
         if (focusedId is not null && handles.TryGetValue(focusedId, out var active)) active.Surface.Focus(FocusState.Programmatic);
@@ -280,21 +367,24 @@ public sealed class TerminalPanel : Grid, IAsyncDisposable
     private FrameworkElement BuildPane(string id)
     {
         var descriptor = sessions.Single(session => session.Id == id);
-        var pane = new Grid(); pane.RowDefinitions.Add(new() { Height = GridLength.Auto }); pane.RowDefinitions.Add(new());
-        var header = new Grid { Background = (Brush)Application.Current.Resources["CardBackgroundFillColorDefaultBrush"], Padding = new Thickness(6, 2, 2, 2), CanDrag = true };
+        var pane = new Grid { CornerRadius = new CornerRadius(8) }; pane.RowDefinitions.Add(new() { Height = GridLength.Auto }); pane.RowDefinitions.Add(new());
+        var header = new Grid { Background = (Brush)Application.Current.Resources["CardBackgroundFillColorDefaultBrush"], MinHeight = 30, Padding = new Thickness(8, 2, 4, 2), CanDrag = true };
         header.ColumnDefinitions.Add(new()); header.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); header.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        var title = new TextBlock { Text = descriptor.Title, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center, IsHitTestVisible = false };
-        header.Children.Add(title); ToolTipService.SetToolTip(header, descriptor.Cwd);
-        var move = new Button { Content = "↔", Padding = new Thickness(5, 1, 5, 1) }; AutomationProperties.SetName(move, "Rearrange " + descriptor.Title);
+        var title = new TextBlock { Text = descriptor.DisplayTitle, FontSize = 12, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center, IsHitTestVisible = false };
+        var headerLabel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 7, VerticalAlignment = VerticalAlignment.Center };
+        headerLabel.Children.Add(new FontIcon { Glyph = "\uE756", FontSize = 12, Opacity = .65 });
+        headerLabel.Children.Add(title);
+        header.Children.Add(headerLabel); ToolTipService.SetToolTip(header, descriptor.Cwd);
+        var move = Tool("Rearrange terminal", "\uE7C2"); move.Visibility = layout?.LeafCount > 1 ? Visibility.Visible : Visibility.Collapsed; AutomationProperties.SetName(move, "Rearrange " + descriptor.Title);
         var moves = new MenuFlyout();
         foreach (var direction in new[] { -1, 1 })
         { var item = new MenuFlyoutItem { Text = direction < 0 ? "Swap with previous visible pane" : "Swap with next visible pane" }; item.Click += async (_, _) => await RunAsync(() => MoveAsync(id, direction)); moves.Items.Add(item); }
         move.Flyout = moves; SetColumn(move, 1); header.Children.Add(move);
-        var close = new Button { Content = "×", Padding = new Thickness(5, 1, 5, 1) }; AutomationProperties.SetName(close, "Close terminal " + descriptor.Title); close.Click += async (_, _) => await RunAsync(() => CloseAsync(id)); SetColumn(close, 2); header.Children.Add(close);
+        var close = Tool("Close terminal", "\uE711"); AutomationProperties.SetName(close, "Close terminal " + descriptor.Title); close.Click += async (_, _) => await RunAsync(() => CloseAsync(id)); SetColumn(close, 2); header.Children.Add(close);
         header.DragStarting += (_, args) => { args.Data.SetData(DragFormat, instanceId + "|" + id); args.Data.RequestedOperation = DataPackageOperation.Move; };
         var holder = new ContentControl { Content = handles[id].Surface, HorizontalContentAlignment = HorizontalAlignment.Stretch, VerticalContentAlignment = VerticalAlignment.Stretch }; holders.Add(holder); SetRow(holder, 1);
         pane.Children.Add(header); pane.Children.Add(holder);
-        var frame = new Border { Child = pane, BorderBrush = (Brush)Application.Current.Resources["SystemControlHighlightAccentBrush"], BorderThickness = new Thickness(id == focusedId ? 1 : 0), AllowDrop = true };
+        var frame = new Border { Margin = new Thickness(3), CornerRadius = new CornerRadius(8), Child = pane, BorderBrush = (Brush)Application.Current.Resources["SystemControlHighlightAccentBrush"], BorderThickness = new Thickness(id == focusedId ? 1 : 0), AllowDrop = true };
         paneFrames[id] = frame;
         frame.DragOver += (_, args) => { if (args.DataView.Contains(DragFormat)) { args.AcceptedOperation = DataPackageOperation.Move; args.Handled = true; } };
         frame.Drop += async (_, args) =>
@@ -361,6 +451,11 @@ internal sealed class NativeTerminalSurface : UserControl, IAsyncDisposable
     private readonly StringBuilder line = new();
     private readonly TextBlock status = new() { Margin = new Thickness(8), TextWrapping = TextWrapping.Wrap, IsHitTestVisible = false };
     private TerminalSnapshot? lastSnapshot;
+    private readonly List<Canvas> renderedLines = [];
+    private readonly Rectangle cursorMark = new() { StrokeThickness = 1, IsHitTestVisible = false };
+    private (Point?, Point?) drawnSelection;
+    private (double, double) drawnCellSize;
+    private ElementTheme drawnTheme;
     private Point? selectionStart, selectionEnd;
     private bool selecting, lineUnknown, disposed, awaitingConsent;
     private int dirty = 1;
@@ -369,7 +464,8 @@ internal sealed class NativeTerminalSurface : UserControl, IAsyncDisposable
     private double cellWidth = 8, cellHeight = 19;
     private const double FontSizePoints = 13;
     private static readonly FontFamily TerminalFont = new("Cascadia Mono, Consolas");
-    private static readonly uint DefaultForeground = 0xcccccc, DefaultBackground = 0x0c0c0c;
+    private uint DefaultForeground => ActualTheme == ElementTheme.Light ? 0x171717u : 0xccccccu;
+    private uint DefaultBackground => ActualTheme == ElementTheme.Light ? 0xffffffu : 0x0c0c0cu;
 
     public NativeTerminalSurface(WorkspaceCoordinator workspace)
     {
@@ -380,6 +476,11 @@ internal sealed class NativeTerminalSurface : UserControl, IAsyncDisposable
         AutomationProperties.SetHelpText(this, "Type directly into the shell. Control Shift C copies selection; Control Shift V pastes. Drag to select text.");
         var root = new Grid { Background = Brush(DefaultBackground), Padding = new Thickness(8), Children = { canvas, status } };
         Content = root;
+        ActualThemeChanged += (_, _) => { root.Background = Brush(DefaultBackground); Interlocked.Exchange(ref dirty, 1); };
+        GotFocus += (_, _) => Interlocked.Exchange(ref dirty, 1);
+        LostFocus += (_, _) => Interlocked.Exchange(ref dirty, 1);
+        canvas.Children.Add(cursorMark);
+        Canvas.SetZIndex(cursorMark, 1);
         canvas.IsHitTestVisible = false;
         terminal.OutputReceived += data => { buffer.Feed(data); Interlocked.Exchange(ref dirty, 1); };
         terminal.Faulted += error => DispatcherQueue.TryEnqueue(() => ShowFailure(DiagnosticRedactor.Redact(error.Message)));
@@ -460,9 +561,9 @@ internal sealed class NativeTerminalSurface : UserControl, IAsyncDisposable
 
     private void MeasureCells()
     {
-        var probe = new TextBlock { Text = "M", FontFamily = TerminalFont, FontSize = FontSizePoints };
+        var probe = new TextBlock { Text = new string('M', 128), FontFamily = TerminalFont, FontSize = FontSizePoints };
         probe.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-        cellWidth = Math.Max(1, probe.DesiredSize.Width); cellHeight = Math.Max(16, Math.Ceiling(probe.DesiredSize.Height));
+        cellWidth = Math.Max(1, probe.DesiredSize.Width / 128); cellHeight = Math.Max(16, Math.Ceiling(probe.DesiredSize.Height));
     }
     private void ResizeViewport()
     {
@@ -477,15 +578,34 @@ internal sealed class NativeTerminalSurface : UserControl, IAsyncDisposable
 
     private void Render()
     {
-        var snapshot = buffer.Snapshot();
+        var snapshot = buffer.CaptureRenderFrame();
         if (scrollbackOffset > 0) scrollbackOffset = Math.Clamp(scrollbackOffset + (int)Math.Min(int.MaxValue, snapshot.TotalScrolledLines - lastScrolledLines), 0, snapshot.ScrollbackCount);
         lastScrolledLines = snapshot.TotalScrolledLines;
-        if (scrollbackOffset > 0) snapshot = buffer.Snapshot(scrollbackOffset);
+        if (scrollbackOffset > 0) snapshot = buffer.CaptureRenderFrame(scrollbackOffset);
+        var previous = lastSnapshot;
+        var invalidate = drawnSelection != (selectionStart, selectionEnd) || drawnCellSize != (cellWidth, cellHeight) || drawnTheme != ActualTheme;
         lastSnapshot = snapshot;
-        canvas.Children.Clear();
+        drawnSelection = (selectionStart, selectionEnd);
+        drawnCellSize = (cellWidth, cellHeight);
+        drawnTheme = ActualTheme;
+        while (renderedLines.Count > snapshot.Rows.Length)
+        {
+            canvas.Children.Remove(renderedLines[^1]);
+            renderedLines.RemoveAt(renderedLines.Count - 1);
+        }
         for (var y = 0; y < snapshot.Rows.Length; y++)
         {
             var row = snapshot.Rows[y];
+            if (y == renderedLines.Count)
+            {
+                var line = new Canvas { IsHitTestVisible = false };
+                renderedLines.Add(line);
+                canvas.Children.Add(line);
+            }
+            else if (!invalidate && previous is not null && y < previous.Rows.Length && ReferenceEquals(previous.Rows[y], row)) continue;
+            var surface = renderedLines[y];
+            Canvas.SetTop(surface, y * cellHeight);
+            surface.Children.Clear();
             var x = 0;
             while (x < row.Length)
             {
@@ -497,14 +617,15 @@ internal sealed class NativeTerminalSurface : UserControl, IAsyncDisposable
                 var background = style.Inverse ? style.Foreground ?? DefaultForeground : style.Background ?? DefaultBackground;
                 var label = new TextBlock { Text = text.ToString(), FontFamily = TerminalFont, FontSize = FontSizePoints, Foreground = Brush(selected ? 0xffffffu : foreground), FontWeight = style.Bold ? FontWeights.Bold : FontWeights.Normal, FontStyle = style.Italic ? Windows.UI.Text.FontStyle.Italic : Windows.UI.Text.FontStyle.Normal, TextDecorations = style.Underline ? Windows.UI.Text.TextDecorations.Underline : Windows.UI.Text.TextDecorations.None, IsHitTestVisible = false, Height = cellHeight };
                 var segment = new Border { Child = label, Background = Brush(selected ? 0x264f78u : background), Width = (x - start) * cellWidth, Height = cellHeight, IsHitTestVisible = false };
-                Canvas.SetLeft(segment, start * cellWidth); Canvas.SetTop(segment, y * cellHeight); canvas.Children.Add(segment);
+                Canvas.SetLeft(segment, start * cellWidth); surface.Children.Add(segment);
             }
         }
-        if (snapshot.CursorVisible && FocusState != FocusState.Unfocused)
-        {
-            var cursor = new Rectangle { Width = Math.Max(1, cellWidth - 1), Height = cellHeight, Stroke = Brush(DefaultForeground), StrokeThickness = 1, IsHitTestVisible = false };
-            Canvas.SetLeft(cursor, snapshot.CursorColumn * cellWidth); Canvas.SetTop(cursor, snapshot.CursorRow * cellHeight); canvas.Children.Add(cursor);
-        }
+        cursorMark.Visibility = snapshot.CursorVisible && FocusState != FocusState.Unfocused ? Visibility.Visible : Visibility.Collapsed;
+        cursorMark.Width = Math.Max(1, cellWidth - 1);
+        cursorMark.Height = cellHeight;
+        cursorMark.Stroke = Brush(DefaultForeground);
+        Canvas.SetLeft(cursorMark, snapshot.CursorColumn * cellWidth);
+        Canvas.SetTop(cursorMark, snapshot.CursorRow * cellHeight);
     }
 
     private static bool SameStyle(TerminalCell a, TerminalCell b) => a.Foreground == b.Foreground && a.Background == b.Background && a.Bold == b.Bold && a.Italic == b.Italic && a.Underline == b.Underline && a.Inverse == b.Inverse;

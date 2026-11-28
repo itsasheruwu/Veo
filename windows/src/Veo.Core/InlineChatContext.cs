@@ -1,16 +1,33 @@
+using System.Globalization;
 using System.Text.RegularExpressions;
 
 namespace Veo.Core;
 
 public sealed partial record InlineChatContext(int Start, int Length, string Label, Uri Target, string Source)
 {
-    [GeneratedRegex(@"\[([^\]\n]+)\]\(((?:veo-(?:context|quote)|plugin)://[^\s)]+)\)", RegexOptions.CultureInvariant)]
+    // Only a quote link owns the following Markdown blockquote.
+    [GeneratedRegex(@"\[(?<label>[^\]\n]+)\]\((?<url>veo-quote://[^\s)]+)\):\r?\n(?<passage>>[^\r\n]*(?:\r?\n>[^\r\n]*)*)(?:\r?\n\r?\n)?|\[(?<label>[^\]\n]+)\]\((?<url>(?:veo-(?:context|quote)|plugin)://[^\s)]+)\)", RegexOptions.CultureInvariant)]
     private static partial Regex Marker();
 
-    public static IReadOnlyList<InlineChatContext> Scan(string text) => Marker().Matches(text)
-        .Where(match => Uri.TryCreate(match.Groups[2].Value, UriKind.Absolute, out _))
-        .Select(match => new InlineChatContext(match.Index, match.Length, VisibleLabel(match), new Uri(match.Groups[2].Value), match.Value))
-        .ToArray();
+    public static IReadOnlyList<InlineChatContext> Scan(string text)
+    {
+        if (!text.Contains("](", StringComparison.Ordinal)) return [];
+        var results = new List<InlineChatContext>();
+        foreach (Match match in Marker().Matches(text))
+        {
+            if (!Uri.TryCreate(match.Groups["url"].Value, UriKind.Absolute, out var uri)) continue;
+            var label = VisibleLabel(match);
+            if (match.Groups["passage"].Success)
+            {
+                var excerpt = string.Join(" ", match.Groups["passage"].Value.Split('\n')
+                    .Select(line => line[1..].Trim()).Where(line => line.Length > 0));
+                var starts = StringInfo.ParseCombiningCharacters(excerpt);
+                label = "“" + (starts.Length > 36 ? excerpt[..starts[35]] + "…" : excerpt) + "”";
+            }
+            results.Add(new(match.Index, match.Length, label, uri, match.Value));
+        }
+        return results;
+    }
 
     [GeneratedRegex(@"^[a-zA-Z0-9_.-]+@[a-zA-Z0-9_.-]+$", RegexOptions.CultureInvariant)]
     private static partial Regex PluginId();
@@ -26,10 +43,22 @@ public sealed partial record InlineChatContext(int Start, int Length, string Lab
         return text.Replace("](plugin://browser@openai-bundled?browserFamily=chrome)", "](plugin://chrome@openai-bundled)", StringComparison.Ordinal);
     }
 
-    static string VisibleLabel(Match match) => match.Groups[2].Value.StartsWith("plugin://", StringComparison.Ordinal)
-        ? "@" + match.Groups[1].Value.TrimStart('@') : match.Groups[1].Value;
+    static string VisibleLabel(Match match) => match.Groups["url"].Value.StartsWith("plugin://", StringComparison.Ordinal)
+        ? "@" + match.Groups["label"].Value.TrimStart('@') : match.Groups["label"].Value;
 
-    public static string DisplayText(string text) => Marker().Replace(text, VisibleLabel);
+    public static string DisplayText(string text)
+    {
+        var contexts = Scan(text);
+        if (contexts.Count == 0) return text;
+        var output = new System.Text.StringBuilder(text.Length);
+        var offset = 0;
+        foreach (var context in contexts)
+        {
+            output.Append(text, offset, context.Start - offset).Append(context.Label);
+            offset = context.Start + context.Length;
+        }
+        return output.Append(text, offset, text.Length - offset).ToString();
+    }
 
     public static string Link(string label, string kind, string value, int? line = null)
         => $"[{label.Replace(']', '）').ReplaceLineEndings(" ")}](veo-context://{kind}?value={Uri.EscapeDataString(value)}{(line is null ? "" : "&line=" + line.Value)})";

@@ -20,6 +20,7 @@ public sealed partial class MainPage
         if (current is not { } session || DictationActive) return;
         if (composerGoalFlyout is { } open) { open.Hide(); return; }
 
+        var anchor = sender as FrameworkElement ?? ComposerGoalPill;
         var nativeGoal = App.ThreadSettings.ActiveGoal(session);
         var selected = nativeGoal is not null ? ComposerGoalMode.ProviderManaged : session.GoalMode;
         var active = App.ThreadSettings.HasActiveComposerGoal(session);
@@ -35,13 +36,13 @@ public sealed partial class MainPage
         });
         var scroll = new ScrollViewer
         {
-            Width = 255, MaxHeight = ComposerMenuHeight(ComposerGoalPill, 260), Content = list,
+            Width = 255, MaxHeight = ComposerMenuHeight(anchor, 260), Content = list,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             HorizontalContentAlignment = HorizontalAlignment.Stretch
         };
         AutomationProperties.SetName(scroll, "Goal settings");
         AutomationProperties.SetAutomationId(scroll, "ComposerGoalMenu");
-        var surface = WorkspaceAppearance.Region(this, "Acrylic", WorkspaceSurface.Composer);
+        var surface = WorkspaceAppearance.FlyoutBrush(this);
         var flyout = new Flyout
         {
             Content = new StackPanel { Children =
@@ -109,6 +110,6 @@ public sealed partial class MainPage
             composerGoalFlyout = null;
             composerGoalFlyoutSession = null;
         };
-        flyout.ShowAt(ComposerGoalPill);
+        flyout.ShowAt(anchor);
     }
 }

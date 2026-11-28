@@ -125,9 +125,7 @@ public sealed partial class WorkspaceTour : UserControl
         var selected = Services.AgentConnections.Catalog.FirstOrDefault(a => a.Id == connections.Choice("default"));
         ProviderName.Text = selected?.Name ?? "Codex";
         ProviderDetail.Text = selected == null ? "Local Codex CLI" : "Connected coding agent";
-        var asset = selected == null ? "AgentMark-codex.png" : $"AgentMark-{selected.Id}.png";
-        if (!File.Exists(System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", asset))) asset = "TourAppIcon.png";
-        ProviderLogo.Source = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(new Uri("ms-appx:///Assets/" + asset));
+        ProviderLogo.Content = ProviderMark.Create(selected?.Id ?? "codex", 40);
     }
 
     void Providers_Click(object sender, RoutedEventArgs args)

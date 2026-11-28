@@ -28,7 +28,7 @@ public sealed class PlanPanel : UserControl
     bool updating;
     public event Action<ThreadSession>? OpenThreadRequested;
     public event Action<PlanReference>? SourceRequested;
-    public PlanPanel(PlanCoordinator plans, ThreadSession session, TimelineItem item, Func<ComposerSnapshot> settings)
+    public PlanPanel(PlanCoordinator plans, ThreadSession session, TimelineItem item, Func<ComposerSnapshot> settings, bool inInspector = false)
     {
         this.plans = plans; this.session = session; this.item = item; this.settings = settings;
         reference = new(session.Record.VeoId, item.Id);
@@ -41,6 +41,12 @@ public sealed class PlanPanel : UserControl
         var newTask = new AppBarButton { Label = "Implement in new chat" };
         var source = new AppBarButton { Label = "Go to plan source" };
         commands.PrimaryCommands.Add(edit); commands.PrimaryCommands.Add(save); commands.PrimaryCommands.Add(cancel); commands.PrimaryCommands.Add(implement);
+        if (!inInspector)
+        {
+            var open = new AppBarButton { Label = "Open plan in sidebar", Icon = new SymbolIcon(Symbol.OpenPane) };
+            open.Click += (_, _) => Run(() => App.Main?.OpenPlanTabAsync(session, item) ?? Task.CompletedTask);
+            commands.PrimaryCommands.Insert(0, open);
+        }
         commands.SecondaryCommands.Add(copy); commands.SecondaryCommands.Add(export); commands.SecondaryCommands.Add(revert); commands.SecondaryCommands.Add(newTask); commands.SecondaryCommands.Add(source);
         edit.Click += (_, _) => Run(() => { plans.BeginEditing(reference); Refresh(); return Task.CompletedTask; });
         editor.TextChanged += (_, _) => { if (!updating) plans.UpdateDraft(reference, editor.Text); };

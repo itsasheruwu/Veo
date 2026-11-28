@@ -66,13 +66,7 @@ public sealed class AgentDirectory : UserControl
             grid.Padding = new Thickness(4,6,3,6);
         }
         grid.ColumnDefinitions.Add(new(){Width=GridLength.Auto});grid.ColumnDefinitions.Add(new());grid.ColumnDefinitions.Add(new(){Width=GridLength.Auto});
-        var iconPath=Path.Combine(AppContext.BaseDirectory,"Assets","AgentMark-"+mark+".png");
-        if(mark!=null && File.Exists(iconPath))
-        {
-            var image=new Image {Width=22,Height=22,Source=new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(new Uri("ms-appx:///Assets/AgentMark-"+mark+".png"))};
-            grid.Children.Add(new Border {Width=34,Height=34,CornerRadius=new CornerRadius(8),Background=new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.WhiteSmoke),Child=image});
-        }
-        else grid.Children.Add(new FontIcon {Glyph="\uE950",Width=34,FontSize=18,VerticalAlignment=VerticalAlignment.Center});
+        grid.Children.Add(ProviderMark.Create(mark, 30));
         var label=new StackPanel {Spacing=2,Children={new TextBlock {Text=title,FontWeight=Microsoft.UI.Text.FontWeights.SemiBold},new TextBlock {Text=detail,FontSize=12,Opacity=.72}}};
         Grid.SetColumn(label,1);grid.Children.Add(label);
         var button=new Button {Content=action,IsEnabled=click!=null,VerticalAlignment=VerticalAlignment.Center};
@@ -113,13 +107,8 @@ public sealed class AgentDirectory : UserControl
             if (onboarding) {
                 // Keep the ordinary connection one click away; command overrides stay available.
                 content.Children.Clear();
-                var markFile = "AgentMark-" + agent.Id + ".png";
                 var title = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
-                if (File.Exists(Path.Combine(AppContext.BaseDirectory, "Assets", markFile))) {
-                    var mark = new Image { Width = 20, Height = 20, Source = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(new Uri("ms-appx:///Assets/" + markFile)) };
-                    title.Children.Add(new Border { Width = 32, Height = 32, CornerRadius = new CornerRadius(8),
-                        Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.WhiteSmoke), Child = mark });
-                }
+                title.Children.Add(ProviderMark.Create(agent.Id, 34));
                 title.Children.Add(new TextBlock { Text = agent.Name, FontSize = 20, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center });
                 dialog.Title = title;
                 content.Children.Add(new TextBlock { Text = "Install the agent and sign in, then connect it to Veo.", TextWrapping = TextWrapping.Wrap });

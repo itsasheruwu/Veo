@@ -56,8 +56,8 @@ public sealed partial class MainPage
             mark = ModelPickerVisuals.ModelGlyph(NativeModelDescriptor.Normalize(title));
         ModelMark.Glyph = mark;
         ModelMark.Visibility = mark.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
-        ModelCube.Visibility = mark.Length == 0 && !slider ? Visibility.Visible : Visibility.Collapsed;
-        ModelMarkHost.Visibility = mark.Length > 0 || !slider ? Visibility.Visible : Visibility.Collapsed;
+        ModelCube.Visibility = mark.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+        ModelMarkHost.Visibility = Visibility.Visible;
         UpdateComposerModelLayout();
         var speedTitle = speed switch { ModelSpeed.Fast => ", Fast Mode on", ModelSpeed.Ultrafast => ", Ultrafast on", _ => "" };
         AutomationProperties.SetName(ModelTrigger, $"Model settings, {title}" + (effortTitle.Length > 0 ? $", {effortTitle} reasoning" : "") + speedTitle);
@@ -79,7 +79,7 @@ public sealed partial class MainPage
         {
             WelcomeProjectLabel.Text = record.WorkspaceKind switch
             {
-                "scratch" => "Choose project", "temporary" => "Temporary workspace", _ => ProjectFolderName(record.Cwd)
+                "scratch" => "Temporary workspace", "temporary" => "Temporary workspace", _ => ProjectFolderName(record.Cwd)
             };
             ToolTipService.SetToolTip(WelcomeProjectButton, record.WorkspaceKind == "project" ? record.Cwd : "Choose the project for this chat");
         }
@@ -127,13 +127,16 @@ public sealed partial class MainPage
         var session = current;
         var enabled = session is not null && App.ThreadSettings.ComposerGoalEnabled(session);
         if (composerGoalFlyout is { } flyout && (!enabled || !ReferenceEquals(composerGoalFlyoutSession, session))) flyout.Hide();
-        ComposerPlanPill.Visibility = composerMode == "Plan" ? Visibility.Visible : Visibility.Collapsed;
-        ComposerDebugPill.Visibility = composerMode == "Debug" ? Visibility.Visible : Visibility.Collapsed;
-        ComposerGoalPill.Visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
-        ComposerAskPill.Visibility = composerMode == "Ask" ? Visibility.Visible : Visibility.Collapsed;
-        ComposerRobloxPill.Visibility = composerMode == "Roblox" ? Visibility.Visible : Visibility.Collapsed;
-        ComposerWildPill.Visibility = composerWild ? Visibility.Visible : Visibility.Collapsed;
-        ComposerModePills.Visibility = enabled || composerWild || composerMode != "Agentic" ? Visibility.Visible : Visibility.Collapsed;
+        activeModePills.Clear();
+        Button? modePill = composerMode switch
+        {
+            "Plan" => ComposerPlanPill, "Debug" => ComposerDebugPill, "Ask" => ComposerAskPill,
+            "Roblox" => ComposerRobloxPill, _ => null
+        };
+        if (modePill is not null) activeModePills.Add(modePill);
+        if (composerWild) activeModePills.Add(ComposerWildPill);
+        if (enabled) activeModePills.Add(ComposerGoalPill);
+        ComposerModePills.Visibility = activeModePills.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         var goal = session is null ? null : App.ThreadSettings.ActiveGoal(session);
         var mode = goal is not null ? ComposerGoalMode.ProviderManaged : session?.GoalMode ?? ComposerGoalMode.ProviderManaged;
         AutomationProperties.SetHelpText(ComposerGoalPill, ComposerGoals.Title(mode));
@@ -171,30 +174,73 @@ public sealed partial class MainPage
     {
         var width = ComposerPanel.ActualWidth - 26;
         if (width <= 0 || DictationActive || composerPillFlyout is not null) return;
-        var unconstrained = new Size(double.PositiveInfinity, double.PositiveInfinity);
+        var natural = new Size(double.PositiveInfinity, double.PositiveInfinity);
+        ModelPickerSlot.Measure(natural);
+        AccessButton.Measure(natural);
+        var fixedWidth = ComposerOptionsButton.Width + ModelPickerSlot.DesiredSize.Width + AccessButton.DesiredSize.Width
+            + 3 * ComposerToolbar.ColumnSpacing;
+        int buttons = 0;
+        foreach (var control in ComposerSendControls.Children.OfType<FrameworkElement>())
+        {
+            if (control == ComposerModePills || control == ComposerKeyHints || control.Visibility != Visibility.Visible) continue;
+            control.Measure(natural);
+            fixedWidth += control.DesiredSize.Width;
+            buttons++;
+        }
+        fixedWidth += Math.Max(0, buttons - 1) * ComposerSendControls.Spacing;
+        var hasModes = ComposerModePills.Visibility == Visibility.Visible;
         ComposerKeyHints.Visibility = Visibility.Collapsed;
-        ModelPickerSlot.Measure(unconstrained);
-        ComposerSendControls.Measure(unconstrained);
-        var gap = ComposerToolbar.ColumnSpacing;
-        var modelGroup = ComposerOptionsButton.Width + ModelPickerSlot.DesiredSize.Width + gap;
-        AccessButton.Measure(unconstrained);
-        var permissions = AccessButton.DesiredSize.Width;
-        var send = ComposerSendControls.DesiredSize.Width;
-        var widthNeeded = modelGroup + permissions + send + 2 * gap;
-        if (widthNeeded + 123 <= width && ComposerModePills.Visibility == Visibility.Collapsed &&
-            current is { Timeline.IsRunning: false })
-            ComposerKeyHints.Visibility = Visibility.Visible;
+        // A very narrow window may put primary actions on a second line. Keep all mode controls reachable.
+        var stack = fixedWidth + (hasModes ? 42 : 0) > width;
+        Grid.SetRow(ComposerSendControls, stack ? 1 : 0);
+        Grid.SetColumn(ComposerSendControls, stack ? 0 : 3);
+        Grid.SetColumnSpan(ComposerSendControls, stack ? 4 : 1);
+        var available = width - fixedWidth - ComposerSendControls.Spacing;
+        if (stack) available += ModelPickerSlot.DesiredSize.Width + AccessButton.DesiredSize.Width + ComposerOptionsButton.Width + 3 * ComposerToolbar.ColumnSpacing;
+        LayoutModePills(available);
+        ComposerToolbar.RowSpacing = stack ? ComposerToolbar.ColumnSpacing : 0;
+    }
 
-        var permissionsRow = modelGroup + permissions + gap <= width ? 0 : 1;
-        var sendRow = widthNeeded <= width ? 0
-            : permissionsRow == 0 || permissions + gap + send <= width ? 1 : 2;
-        Grid.SetRow(AccessButton, permissionsRow);
-        Grid.SetColumn(AccessButton, permissionsRow == 0 ? 2 : 0);
-        Grid.SetColumnSpan(AccessButton, permissionsRow == 0 ? 1 : 2);
-        Grid.SetRow(ComposerSendControls, sendRow);
-        Grid.SetColumn(ComposerSendControls, sendRow == 0 ? 3 : 0);
-        Grid.SetColumnSpan(ComposerSendControls, sendRow == 0 ? 1 : 4);
-        ComposerToolbar.RowSpacing = sendRow == 0 ? 0 : gap;
+    readonly List<Button> activeModePills = [];
+    int visibleModeCount;
+
+    void LayoutModePills(double available)
+    {
+        var spacing = ComposerModePills.Spacing;
+        var used = activeModePills.Sum(pill => pill.Width) + Math.Max(0, activeModePills.Count - 1) * spacing;
+        visibleModeCount = activeModePills.Count;
+        if (used > available)
+        {
+            used += ModeOverflow.Width + spacing;
+            while (used > available && visibleModeCount > 0)
+                used -= activeModePills[--visibleModeCount].Width + spacing;
+        }
+        foreach (var pill in ComposerModePills.Children.OfType<Button>())
+        {
+            if (pill == ModeOverflow) continue;
+            var index = activeModePills.IndexOf(pill);
+            pill.Visibility = index >= 0 && index < visibleModeCount ? Visibility.Visible : Visibility.Collapsed;
+        }
+        int hidden = activeModePills.Count - visibleModeCount;
+        ModeOverflow.Visibility = hidden > 0 ? Visibility.Visible : Visibility.Collapsed;
+        if (hidden > 0) ModeOverflow.Content = "+" + hidden;
+    }
+
+    void ModeOverflow_Click(object sender, RoutedEventArgs e)
+    {
+        var menu = new MenuFlyout();
+        foreach (var pill in activeModePills.Skip(visibleModeCount))
+        {
+            var item = new MenuFlyoutItem { Text = AutomationProperties.GetName(pill) };
+            item.Click += (_, args) =>
+            {
+                if (pill == ComposerGoalPill) ComposerGoalPill_Click(ModeOverflow, args);
+                else if (pill == ComposerWildPill) ComposerWildPill_Click(pill, args);
+                else ComposerModePill_Click(pill, args);
+            };
+            menu.Items.Add(item);
+        }
+        menu.ShowAt(ModeOverflow);
     }
 
     void Model_Click(object sender, RoutedEventArgs e)

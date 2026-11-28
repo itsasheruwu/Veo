@@ -102,7 +102,7 @@
                                AutomationProperties.HeadingLevel="Level1" AutomationProperties.AutomationId="SettingsPageTitle"/>
                     <TextBlock x:Name="PageDetail" FontSize="13" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                 </StackPanel>
-                <InfoBar x:Name="Feedback" IsClosable="True" IsOpen="False" Margin="0,0,0,12"/>
+                <Grid x:Name="FeedbackSurface" CornerRadius="8" Margin="0,0,0,12"><InfoBar x:Name="Feedback" Background="Transparent" IsClosable="True" IsOpen="False"/></Grid>
                 <StackPanel x:Name="Sections" Spacing="22"/>
             </StackPanel>
             </Grid>

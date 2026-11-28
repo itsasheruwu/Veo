@@ -10,13 +10,13 @@ public sealed partial class BrowserPanel : Grid, IAsyncDisposable
     readonly WorkspaceCoordinator workspace;
     readonly BrowserStateStore state;
     readonly BrowserCredentialStore credentials;
-    readonly TabView tabs = new()
+    readonly List<Tab> browsers = [];
+    readonly ContentControl pageHost = new()
     {
-        IsAddTabButtonVisible = true,
-        TabWidthMode = TabViewWidthMode.SizeToContent,
-        CanReorderTabs = true,
-        CanDragTabs = true
+        HorizontalContentAlignment = HorizontalAlignment.Stretch,
+        VerticalContentAlignment = VerticalAlignment.Stretch
     };
+    Tab? Current { get; set; }
     readonly TextBlock progress = new()
     {
         FontSize = 11,
@@ -29,17 +29,16 @@ public sealed partial class BrowserPanel : Grid, IAsyncDisposable
         Text = "Request desktop site",
         IsChecked = true
     };
-    readonly Dictionary<TabViewItem, Tab> browsers = [];
     readonly Dictionary<string, NativeBrowserWorkspace> states = new(StringComparer.OrdinalIgnoreCase);
     readonly SemaphoreSlim dialogs = new(1, 1), switching = new(1, 1);
     CoreWebView2Environment? environment;
     Task<CoreWebView2Environment>? environmentTask;
     string? scope;
     bool restoring, loaded, disposed, showingAddress;
-    sealed class Tab(string id, TabViewItem item, Grid content, WebView2 view, BrowserStartPage start)
+    sealed class Tab(string id, string title, Grid content, WebView2 view, BrowserStartPage start)
     {
         public readonly string Id = id;
-        public readonly TabViewItem Item = item;
+        public string Title = title;
         public readonly Grid Content = content;
         public readonly BrowserStartPage Start = start;
         public WebView2 View = view;
@@ -53,7 +52,40 @@ public sealed partial class BrowserPanel : Grid, IAsyncDisposable
         public readonly List<string> Console = [];
     }
 
-    Tab? Current => tabs.SelectedItem is TabViewItem item ? browsers.GetValueOrDefault(item) : null;
+    internal event Action? WorkspaceTabsChanged;
+    internal IEnumerable<(string Id, string Title, bool Loading)> WorkspaceTabs =>
+        browsers.Select(tab => (tab.Id, tab.Title, tab.LoadingNavigationId.HasValue));
+    internal string? SelectedPageId => Current?.Id;
+
+    internal void SelectPage(string id)
+    {
+        if (browsers.FirstOrDefault(tab => tab.Id == id) is not { } page || Current == page) return;
+        Activate(page);
+        Guard(PersistAsync);
+    }
+
+    void Activate(Tab tab)
+    {
+        Current = tab;
+        pageHost.Content = tab.Content;
+        ShowAddress(tab);
+        ApplyViewport(tab);
+        RefreshNavigationAvailability();
+        RefreshConsole();
+    }
+
+    internal async Task ReorderPagesAsync(IEnumerable<string> ids)
+    {
+        var order = ids.Select(id => browsers.FirstOrDefault(tab => tab.Id == id)).OfType<Tab>().Distinct().ToArray();
+        if (restoring || order.Length != browsers.Count || order.SequenceEqual(browsers)) return;
+        browsers.Clear();
+        browsers.AddRange(order);
+        await PersistAsync();
+    }
+
+    internal async Task NewPageAsync() { await AddTabAsync(focusStartPage: true); await PersistAsync(); }
+    internal Task ClosePageAsync(string id) => browsers.FirstOrDefault(tab => tab.Id == id) is { } page
+        ? CloseAsync(page) : Task.CompletedTask;
 
     public BrowserPanel(WorkspaceCoordinator workspace)
     {
@@ -66,36 +98,6 @@ public sealed partial class BrowserPanel : Grid, IAsyncDisposable
         RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) });
         RowDefinitions.Add(new() { Height = GridLength.Auto });
         RowDefinitions.Add(new() { Height = GridLength.Auto });
-        var pageHost = new ContentControl
-        {
-            HorizontalContentAlignment = HorizontalAlignment.Stretch,
-            VerticalContentAlignment = VerticalAlignment.Stretch
-        };
-        tabs.AddTabButtonClick += (_, _) => Guard(async () =>
-        {
-            await AddTabAsync(focusStartPage: true);
-            await PersistAsync();
-        });
-        tabs.TabCloseRequested += (_, e) =>
-        {
-            if (e.Tab is TabViewItem item)
-                Guard(() => CloseAsync(item));
-        };
-        tabs.SelectionChanged += (_, _) =>
-        {
-            pageHost.Content = Current?.Content;
-            RefreshNavigationAvailability();
-            if (Current is { } tab)
-            {
-                ShowAddress(tab);
-                ApplyViewport(tab);
-                RefreshConsole();
-            }
-
-            Guard(PersistAsync);
-        };
-        tabs.TabItemsChanged += (_, _) => Guard(PersistAsync);
-        Children.Add(tabs);
         SetRow(navigation, 1);
         Children.Add(navigation);
         SetRow(pageHost, 2);
@@ -132,7 +134,7 @@ public sealed partial class BrowserPanel : Grid, IAsyncDisposable
             var key = BrowserStateStore.WorkspaceKey(session.Record.Cwd);
             if (scope == key)
             {
-                foreach (var tab in browsers.Values)
+                foreach (var tab in browsers)
                 {
                     tab.Start.RefreshSearchEngine();
                     if (tab.View.CoreWebView2 is { } core)
@@ -144,10 +146,11 @@ public sealed partial class BrowserPanel : Grid, IAsyncDisposable
             if (scope is not null)
                 await PersistAsync();
             restoring = true;
-            foreach (var tab in browsers.Values)
+            foreach (var tab in browsers)
                 Close(tab);
             browsers.Clear();
-            tabs.TabItems.Clear();
+            Current = null;
+            pageHost.Content = null;
             scope = key;
             var saved = states.GetValueOrDefault(key) ?? state.Restore(key, workspace.Preferences.RestoreBrowserTabs);
             if (saved is null && workspace.Preferences.RestoreBrowserTabs && workspace.Preferences.BrowserTabs.TryGetValue(session.Record.Cwd, out var old))
@@ -158,8 +161,8 @@ public sealed partial class BrowserPanel : Grid, IAsyncDisposable
                     await AddTabAsync(tab.Url, tab.Id, tab.Title);
             if (browsers.Count == 0)
                 await AddTabAsync();
-            else if (saved?.SelectedId is { } selected && browsers.Values.FirstOrDefault(t => t.Id == selected)is { } chosen)
-                tabs.SelectedItem = chosen.Item;
+            else if (saved?.SelectedId is { } selected && browsers.FirstOrDefault(t => t.Id == selected)is { } chosen)
+                Activate(chosen);
         }
         finally
         {
@@ -275,6 +278,7 @@ public sealed partial class BrowserPanel : Grid, IAsyncDisposable
             }
 
             tab.LoadingNavigationId = e.NavigationId;
+            if (!restoring) WorkspaceTabsChanged?.Invoke();
             tab.Address = e.Uri;
             if (Current == tab)
             {
@@ -303,7 +307,7 @@ public sealed partial class BrowserPanel : Grid, IAsyncDisposable
         {
             if (!tab.Closed && tab.View == view)
             {
-                tab.Item.Header = string.IsNullOrWhiteSpace(core.DocumentTitle) ? "New tab" : core.DocumentTitle;
+                tab.Title = string.IsNullOrWhiteSpace(core.DocumentTitle) ? "New Tab" : core.DocumentTitle;
                 await PersistAsync();
             }
         });
@@ -329,7 +333,7 @@ public sealed partial class BrowserPanel : Grid, IAsyncDisposable
                 deferral.Complete();
             }
         };
-        core.WindowCloseRequested += (_, _) => Guard(() => CloseAsync(tab.Item));
+        core.WindowCloseRequested += (_, _) => Guard(() => CloseAsync(tab));
         core.ProcessFailed += (_, e) =>
         {
             if (!tab.Closed && tab.View == view)
@@ -362,11 +366,6 @@ public sealed partial class BrowserPanel : Grid, IAsyncDisposable
     {
         if (browsers.Count >= 32)
             throw new InvalidOperationException("Close a tab before opening another (32 maximum).");
-        var item = new TabViewItem
-        {
-            Header = title ?? "New tab",
-            IsClosable = true
-        };
         var content = new Grid();
         var view = new WebView2
         {
@@ -375,20 +374,14 @@ public sealed partial class BrowserPanel : Grid, IAsyncDisposable
         content.Children.Add(view);
         var start = new BrowserStartPage(() => workspace.Preferences.SearchEngine);
         content.Children.Add(start);
-        var tab = new Tab(Guid.TryParse(id, out _) ? id! : Guid.NewGuid().ToString("N"), item, content, view, start);
-        browsers[item] = tab;
-        tabs.TabItems.Add(item);
-        tabs.SelectedItem = item;
-        ApplyViewport(tab);
+        var tab = new Tab(Guid.TryParse(id, out _) ? id! : Guid.NewGuid().ToString("N"), title ?? "New Tab", content, view, start);
+        browsers.Add(tab);
+        Activate(tab);
         start.Submit += query => Guard(async () =>
         {
-            tabs.SelectedItem = item;
+            Activate(tab);
             await NavigateAsync(query);
         });
-        var menu = new MenuFlyout();
-        AddMenu(menu, "Move tab left", () => MoveAsync(tab, -1));
-        AddMenu(menu, "Move tab right", () => MoveAsync(tab, 1));
-        item.ContextFlyout = menu;
         if (url is not null && BrowserOrigin.IsWeb(url))
             await NavigateAsync(url);
         else if (focusStartPage)
@@ -396,38 +389,16 @@ public sealed partial class BrowserPanel : Grid, IAsyncDisposable
         return tab;
     }
 
-    async Task MoveAsync(Tab tab, int delta)
+    async Task CloseAsync(Tab tab)
     {
-        var index = tabs.TabItems.IndexOf(tab.Item);
-        var target = index + delta;
-        if (index < 0 || target < 0 || target >= tabs.TabItems.Count)
-            return;
-        restoring = true;
-        try
-        {
-            tabs.TabItems.RemoveAt(index);
-            tabs.TabItems.Insert(target, tab.Item);
-            tabs.SelectedItem = tab.Item;
-        }
-        finally
-        {
-            restoring = false;
-        }
-
-        await PersistAsync();
-    }
-
-    async Task CloseAsync(TabViewItem item)
-    {
-        if (!browsers.Remove(item, out var tab))
-            return;
-        var index = tabs.TabItems.IndexOf(item);
+        var index = browsers.IndexOf(tab);
+        if (index < 0) return;
+        browsers.RemoveAt(index);
         Close(tab);
-        tabs.TabItems.Remove(item);
         if (browsers.Count == 0)
             await AddTabAsync();
-        else if (tabs.SelectedItem is null)
-            tabs.SelectedIndex = Math.Clamp(index, 0, browsers.Count - 1);
+        else if (Current == tab)
+            Activate(browsers[Math.Min(index, browsers.Count - 1)]);
         await PersistAsync();
     }
 
@@ -461,7 +432,8 @@ public sealed partial class BrowserPanel : Grid, IAsyncDisposable
     {
         if (restoring || disposed || scope is null)
             return;
-        var snapshot = new NativeBrowserWorkspace(tabs.TabItems.OfType<TabViewItem>().Where(browsers.ContainsKey).Select(t => new NativeBrowserTab(browsers[t].Id, browsers[t].PreviewRoot is null ? browsers[t].Address : "", t.Header?.ToString() ?? "")).ToArray(), Current?.Id, viewportMode);
+        WorkspaceTabsChanged?.Invoke();
+        var snapshot = new NativeBrowserWorkspace(browsers.Select(tab => new NativeBrowserTab(tab.Id, tab.PreviewRoot is null ? tab.Address : "", tab.Title)).ToArray(), Current?.Id, viewportMode);
         states[scope] = snapshot;
         await state.SaveWorkspaceAsync(scope, snapshot, workspace.Preferences.RestoreBrowserTabs);
     }
@@ -503,7 +475,7 @@ public sealed partial class BrowserPanel : Grid, IAsyncDisposable
         await PersistAsync();
         disposed = true;
         CancelDownloads();
-        foreach (var tab in browsers.Values)
+        foreach (var tab in browsers)
             Close(tab);
         browsers.Clear();
     }

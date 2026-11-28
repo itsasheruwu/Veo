@@ -3,7 +3,7 @@
   <ResourceDictionary>
   <ResourceDictionary.ThemeDictionaries>
    <ResourceDictionary x:Key="Light"><SolidColorBrush x:Key="ComposerProviderPillFill" Color="#0D000000"/></ResourceDictionary>
-   <ResourceDictionary x:Key="Dark"><SolidColorBrush x:Key="ComposerProviderPillFill" Color="#0DFFFFFF"/></ResourceDictionary>
+   <ResourceDictionary x:Key="Dark"><SolidColorBrush x:Key="ComposerProviderPillFill" Color="#1BFFFFFF"/></ResourceDictionary>
    <ResourceDictionary x:Key="HighContrast"><SolidColorBrush x:Key="ComposerProviderPillFill" Color="{ThemeResource SystemColorButtonFaceColor}"/></ResourceDictionary>
   </ResourceDictionary.ThemeDictionaries>
   <CollectionViewSource x:Name="GroupedChats" IsSourceGrouped="True"/>
@@ -115,19 +115,16 @@
   <Grid.ColumnDefinitions><ColumnDefinition x:Name="SidebarWidth" Width="280"/><ColumnDefinition Width="*"/><ColumnDefinition x:Name="UtilitySashWidth" Width="8"/><ColumnDefinition x:Name="UtilityWidth" Width="360"/></Grid.ColumnDefinitions>
   <Grid x:Name="SidebarPanel" Grid.Column="0" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-   <StackPanel Spacing="6" Margin="9,5,9,6">
-    <Grid ColumnSpacing="5">
-     <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-     <Button Click="New_Click" Style="{StaticResource SubtleButtonStyle}" Height="29" MinHeight="0" Padding="6,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" AutomationProperties.Name="New chat" AutomationProperties.AutomationId="NewChat">
+   <StackPanel Spacing="6" Margin="12,6,12,12">
+     <Button Click="New_Click" Style="{StaticResource SubtleButtonStyle}" Height="32" MinHeight="0" Padding="10,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" AutomationProperties.Name="New chat" AutomationProperties.AutomationId="NewChat">
       <StackPanel Orientation="Horizontal" Spacing="8">
        <FontIcon Glyph="&#xE70F;" Width="16" FontSize="14"/>
        <TextBlock Text="New chat" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center"/>
       </StackPanel>
      </Button>
-     <Button x:Name="SidebarSearchToggle" Grid.Column="1" Click="SidebarSearch_Click" Style="{StaticResource SubtleButtonStyle}" Width="28" Height="29" MinHeight="0" Padding="0" ToolTipService.ToolTip="Search chats" AutomationProperties.Name="Search chats" AutomationProperties.AutomationId="SidebarSearchToggle">
-      <FontIcon Glyph="&#xE721;" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+     <Button x:Name="SidebarSearchToggle" Click="SidebarSearch_Click" Style="{StaticResource SubtleButtonStyle}" Height="32" MinHeight="0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Padding="10,0" ToolTipService.ToolTip="Search chats" AutomationProperties.Name="Search chats" AutomationProperties.AutomationId="SidebarSearchToggle">
+      <StackPanel Orientation="Horizontal" Spacing="8"><FontIcon Glyph="&#xE721;" Width="16" FontSize="14"/><TextBlock Text="Search" FontSize="13" VerticalAlignment="Center"/></StackPanel>
      </Button>
-    </Grid>
     <TextBox x:Name="SearchBox" PlaceholderText="Search every project" MinHeight="30" FontSize="12.5" Visibility="Collapsed" TextChanged="Search_Changed" KeyDown="SidebarSearch_KeyDown" AutomationProperties.Name="Search every project" AutomationProperties.AutomationId="SearchChats"/>
    </StackPanel>
    <Grid Grid.Row="1" Margin="15,1,9,3" ColumnSpacing="7">
@@ -211,14 +208,12 @@
    </Border>
   </Grid>
   <Grid x:Name="ConversationPane" Grid.Column="1" Margin="12,0,12,10">
-   <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition x:Name="TimelineHeight" Height="*"/><RowDefinition x:Name="TerminalHeight" Height="0"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition x:Name="WelcomeBottom" Height="0"/></Grid.RowDefinitions>
+   <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition x:Name="TimelineHeight" Height="*"/><RowDefinition Height="0"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition x:Name="WelcomeBottom" Height="0"/><RowDefinition x:Name="TerminalHeight" Height="0"/></Grid.RowDefinitions>
    <StackPanel x:Name="ChatHeader" Margin="12,4,12,8" MaxWidth="{StaticResource ConversationMaxWidth}" Spacing="4">
     <Grid x:Name="ChatIdentity" ColumnSpacing="10">
-     <Grid.ColumnDefinitions><ColumnDefinition Width="2*"/><ColumnDefinition Width="3*"/></Grid.ColumnDefinitions>
      <TextBlock x:Name="ChatTitle" Text="New chat" FontSize="12" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-     <TextBlock x:Name="CwdLabel" Grid.Column="1" FontSize="11" TextTrimming="CharacterEllipsis" TextAlignment="Right" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
     </Grid>
-    <InfoBar x:Name="Notice" IsOpen="False" IsClosable="True" Severity="Error"/>
+    <Grid x:Name="NoticeSurface" CornerRadius="8"><InfoBar x:Name="Notice" Background="Transparent" IsOpen="False" IsClosable="True" Severity="Error"/></Grid>
    </StackPanel>
    <ListView x:Name="Timeline" Grid.Row="1" SelectionMode="None" Padding="0,0,0,12" MaxWidth="{StaticResource ConversationMaxWidth}" HorizontalContentAlignment="Stretch">
     <ListView.ItemContainerTransitions><TransitionCollection/></ListView.ItemContainerTransitions>
@@ -230,11 +225,30 @@
      </DataTemplate>
     </ListView.ItemTemplate>
    </ListView>
+   <Grid x:Name="MinimapSurface" Grid.Row="1" Visibility="Collapsed" HorizontalAlignment="Right" VerticalAlignment="Center" MaxHeight="220" Margin="0,0,3,0" CornerRadius="9" BorderThickness="1" BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}">
+    <ScrollViewer Margin="3,5" VerticalScrollBarVisibility="Hidden" VerticalScrollMode="Enabled"><StackPanel x:Name="MinimapMarkers" AutomationProperties.Name="Thread minimap"/></ScrollViewer>
+   </Grid>
    <TextBlock x:Name="WelcomeHeading" Grid.Row="1" Text="What should we work on?" FontSize="26" FontWeight="SemiBold" TextWrapping="Wrap" TextAlignment="Center" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="12,0,12,14" Visibility="Collapsed"/>
-   <ContentControl x:Name="TerminalHost" Grid.Row="2" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"/>
+   <Grid Grid.Row="7">
+    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+    <Thumb x:Name="TerminalDockGrip" Height="8" HorizontalAlignment="Stretch" IsTabStop="True" Visibility="Collapsed"
+           AutomationProperties.Name="Resize terminal dock" ToolTipService.ToolTip="Resize terminal dock"
+           DragDelta="TerminalDock_DragDelta" DragCompleted="TerminalDock_DragCompleted" KeyDown="TerminalDock_KeyDown">
+     <Thumb.Template><ControlTemplate TargetType="Thumb"><Grid Background="Transparent"><Border Width="30" Height="3" CornerRadius="2" Background="{ThemeResource TextFillColorTertiaryBrush}"/></Grid></ControlTemplate></Thumb.Template>
+    </Thumb>
+    <ContentControl x:Name="TerminalHost" Grid.Row="1" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"/>
+   </Grid>
    <StackPanel Grid.Row="3" Spacing="8" MaxWidth="{StaticResource ConversationMaxWidth}"><ContentControl x:Name="ApprovalReviewHost"/><StackPanel x:Name="PendingPanel" Spacing="8"/></StackPanel>
-   <Border x:Name="ComposerPanel" Grid.Row="5" MaxWidth="{StaticResource ConversationMaxWidth}" Margin="4,0,4,8" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="16" SizeChanged="ComposerPanel_SizeChanged">
-    <Grid>
+   <StackPanel x:Name="ComposerDock" Grid.Row="5" MaxWidth="621" Margin="4,0,4,8" Spacing="4">
+   <Grid x:Name="TurnSummary" CornerRadius="10" Visibility="Collapsed" AutomationProperties.Name="Turn status">
+    <StackPanel Orientation="Horizontal" Spacing="4" Margin="8,3">
+     <Button x:Name="SummaryPlan" Content="Plan" Style="{StaticResource SubtleButtonStyle}" Click="SummaryPlan_Click" FontSize="12"/>
+     <Button x:Name="SummaryChanges" Content="Changes" Style="{StaticResource SubtleButtonStyle}" Click="SummaryChanges_Click" FontSize="12"/>
+     <Button x:Name="SummaryAgents" Content="Subagents" Style="{StaticResource SubtleButtonStyle}" Click="SummaryAgents_Click" FontSize="12"/>
+    </StackPanel>
+   </Grid>
+   <Border x:Name="ComposerPanel" Background="Transparent" BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="16" SizeChanged="ComposerPanel_SizeChanged">
+    <Grid x:Name="ComposerSurface" CornerRadius="15">
     <Canvas x:Name="ComposerDictationEffects" IsHitTestVisible="False" Visibility="Collapsed" AutomationProperties.AccessibilityView="Raw"/>
     <StackPanel>
      <Border x:Name="QueueShelf" Visibility="Collapsed" CornerRadius="15,15,0,0"
@@ -243,7 +257,7 @@
       <StackPanel x:Name="QueuePanel" Padding="13,8,13,9" Spacing="4"
                   AutomationProperties.Name="Queued follow-ups"/>
      </Border>
-     <StackPanel Padding="12" Spacing="8">
+     <StackPanel Padding="12,9,12,10" Spacing="6">
       <StackPanel x:Name="ComposerInputs" Spacing="6" Visibility="Collapsed"/>
       <Grid>
       <local:ChatComposerBox x:Name="Composer" PlaceholderText="Send follow-up" AcceptsReturn="True" TextWrapping="Wrap" IsSpellCheckEnabled="False" IsTextPredictionEnabled="False" MinHeight="34" MaxHeight="110" FontSize="14" BorderThickness="0" Background="Transparent" Padding="5,8,5,0" TextChanged="Composer_Changed" AllowDrop="True" DragOver="Composer_DragOver" Drop="Composer_Drop" AutomationProperties.Name="Message Codex" AutomationProperties.AutomationId="Composer">
@@ -281,26 +295,15 @@
       </Grid>
       </Grid>
       <InfoBar x:Name="DictationError" Severity="Warning" IsOpen="False" IsClosable="True" Title="Dictation" />
-      <Grid x:Name="ComposerToolbar" ColumnSpacing="8">
+      <Grid x:Name="ComposerToolbar" ColumnSpacing="7">
        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
        <Button x:Name="ComposerOptionsButton" Style="{StaticResource ComposerChromeButton}" Width="27" Height="27" CornerRadius="14" Background="{ThemeResource SubtleFillColorSecondaryBrush}" Click="ComposerOptions_Click" ToolTipService.ToolTip="Composer options" AutomationProperties.Name="Composer options" AutomationProperties.AutomationId="ComposerOptions">
         <FontIcon Glyph="&#xE710;" FontSize="12"/>
        </Button>
-       <Grid x:Name="ModelPickerSlot" Grid.Column="1" ColumnSpacing="5">
-        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-       <Button x:Name="ProviderTrigger" Height="26" Padding="7,0" CornerRadius="13" Background="{ThemeResource ComposerProviderPillFill}" Style="{StaticResource ComposerChromeButton}" Click="Provider_Click" ToolTipService.ToolTip="Change provider" AutomationProperties.Name="Change provider" AutomationProperties.AutomationId="ProviderPicker">
-        <Grid x:Name="ProviderPillSurface">
-        <StackPanel x:Name="ProviderPillFace" Orientation="Horizontal" Spacing="5" VerticalAlignment="Center">
-         <ContentPresenter x:Name="ComposerProviderMark" Width="19" Height="19" HorizontalContentAlignment="Center" VerticalContentAlignment="Center" AutomationProperties.AccessibilityView="Raw"/>
-         <TextBlock x:Name="ComposerProviderName" Text="Codex" FontSize="11.5" FontWeight="Medium" MaxWidth="112"
-                    TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
-         <FontIcon Glyph="&#xE70D;" FontSize="8" Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                   AutomationProperties.AccessibilityView="Raw" IsHitTestVisible="False"/>
-        </StackPanel>
-        </Grid>
-       </Button>
-       <Button x:Name="ModelTrigger" Grid.Column="1" Height="26" Padding="7,0" CornerRadius="13"
+       <Grid x:Name="ModelPickerSlot" Grid.Column="1">
+
+       <Button x:Name="ModelTrigger" Height="26" Padding="7,0" CornerRadius="13"
                Background="{ThemeResource ComposerProviderPillFill}" Style="{StaticResource ComposerChromeButton}"
                Click="Model_Click" AutomationProperties.Name="Select model" AutomationProperties.AutomationId="ModelPicker">
         <Grid x:Name="ModelPillSurface">
@@ -315,7 +318,7 @@
            <FontIcon x:Name="ModelMark" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                      HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed"/>
           </Grid>
-          <TextBlock x:Name="ModelLabel" FontSize="11.5" FontWeight="Medium" Text="Select model" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+          <TextBlock x:Name="ModelLabel" FontSize="12" FontWeight="SemiBold" Text="Select model" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
           <TextBlock x:Name="ModelEffortLabel" FontSize="11.5" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center"/>
           <FontIcon Glyph="&#xE70D;" FontSize="8" Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
          </StackPanel>
@@ -329,7 +332,7 @@
         <Grid x:Name="AccessPillSurface">
          <StackPanel x:Name="AccessPillFace" Orientation="Horizontal" Spacing="5">
          <FontIcon x:Name="AccessIcon" Glyph="&#xE70F;" FontSize="11"/>
-         <TextBlock x:Name="AccessLabel" Text="Auto-accept edits" FontSize="11.5"
+         <TextBlock x:Name="AccessLabel" Text="Auto-accept edits" FontSize="12"
                     FontWeight="Medium" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
          <FontIcon x:Name="AccessChevron" Glyph="&#xE70D;" FontSize="8"/>
          </StackPanel>
@@ -340,7 +343,11 @@
         <Button x:Name="ComposerContextIndicator" Height="25" MinWidth="28" Padding="2,0"
                 Style="{StaticResource ComposerChromeButton}" Visibility="Collapsed" Click="ContextIndicator_Click"
                 AutomationProperties.Name="Context window usage" AutomationProperties.AutomationId="ComposerContextUsage">
-         <TextBlock x:Name="ComposerContextPercent" FontSize="11" FontWeight="Medium" VerticalAlignment="Center"/>
+         <StackPanel Orientation="Horizontal" Spacing="3" VerticalAlignment="Center">
+          <ProgressBar x:Name="ContextBar" Width="23" Height="4" Minimum="0" Maximum="100" Visibility="Collapsed"/>
+          <ProgressRing x:Name="ContextRing" Width="15" Height="15" MinWidth="0" MinHeight="0" IsIndeterminate="False" Minimum="0" Maximum="100" Visibility="Collapsed"/>
+          <TextBlock x:Name="ComposerContextPercent" FontSize="11" FontWeight="Medium" VerticalAlignment="Center"/>
+         </StackPanel>
         </Button>
         <StackPanel x:Name="ComposerModePills" Orientation="Horizontal" Spacing="6" Visibility="Collapsed">
          <Button x:Name="ComposerPlanPill" Style="{StaticResource ComposerModePillButton}" Click="ComposerModePill_Click"
@@ -358,6 +365,7 @@
          <Button x:Name="ComposerGoalPill" Style="{StaticResource ComposerModePillButton}" Click="ComposerGoalPill_Click"
                  Visibility="Collapsed" ToolTipService.ToolTip="Turn off Goal"
                  AutomationProperties.Name="Goal settings" AutomationProperties.AutomationId="ComposerGoalPill"/>
+         <Button x:Name="ModeOverflow" Style="{StaticResource ComposerChromeButton}" Width="32" Height="24" Padding="0" CornerRadius="12" Background="{ThemeResource SubtleFillColorSecondaryBrush}" Visibility="Collapsed" Click="ModeOverflow_Click" AutomationProperties.Name="More active modes"/>
         </StackPanel>
         <Button x:Name="DictateButton" Style="{StaticResource ComposerChromeButton}" Width="28" Height="28" CornerRadius="14"
                 Background="{ThemeResource SubtleFillColorSecondaryBrush}" Click="Dictate_Click" ToolTipService.ToolTip="Dictate (Ctrl+Shift+D)"
@@ -377,22 +385,35 @@
        </StackPanel>
       </Grid>
      </StackPanel>
-     <Border x:Name="WelcomeProjectRow" Height="38" BorderThickness="0,1,0,0" BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}" Visibility="Collapsed">
-      <Button x:Name="WelcomeProjectButton" Style="{StaticResource ComposerChromeButton}" Width="220" Height="24" HorizontalAlignment="Center" VerticalAlignment="Center" Click="ComposerProject_Click" AutomationProperties.Name="Choose project" AutomationProperties.AutomationId="ComposerProject">
-       <Grid ColumnSpacing="7">
-        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-        <FontIcon Glyph="&#xE8B7;" FontSize="12"/>
-        <TextBlock x:Name="WelcomeProjectLabel" Grid.Column="1" FontSize="11.5" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
-        <FontIcon Grid.Column="2" Glyph="&#xE70D;" FontSize="8" Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
-       </Grid>
-      </Button>
-     </Border>
+
     </StackPanel>
     </Grid>
    </Border>
+    <Grid x:Name="WelcomeProjectRow" Height="30"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+      <Button x:Name="WelcomeProjectButton" Style="{StaticResource ComposerChromeButton}" MaxWidth="300" Padding="7,0" Height="24" HorizontalAlignment="Left" VerticalAlignment="Center" Click="ComposerProject_Click" AutomationProperties.Name="Choose workspace" AutomationProperties.AutomationId="ComposerProject">
+       <Grid ColumnSpacing="7">
+        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+        <FontIcon Glyph="&#xE8B7;" FontSize="12"/>
+        <TextBlock x:Name="WelcomeProjectLabel" Grid.Column="1" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+        <FontIcon Grid.Column="2" Glyph="&#xE70D;" FontSize="8" Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
+       </Grid>
+      </Button>
+       <Button x:Name="ProviderTrigger" Grid.Column="1" HorizontalAlignment="Right" Height="28" Padding="7,0" CornerRadius="13" Background="Transparent" Style="{StaticResource ComposerChromeButton}" Click="Provider_Click" ToolTipService.ToolTip="Change provider" AutomationProperties.Name="Change provider" AutomationProperties.AutomationId="ProviderPicker">
+        <Grid x:Name="ProviderPillSurface">
+        <StackPanel x:Name="ProviderPillFace" Orientation="Horizontal" Spacing="5" VerticalAlignment="Center">
+         <ContentPresenter x:Name="ComposerProviderMark" Width="15" Height="15" HorizontalContentAlignment="Center" VerticalContentAlignment="Center" AutomationProperties.AccessibilityView="Raw"/>
+         <TextBlock x:Name="ComposerProviderName" Text="Codex" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontWeight="Medium" MaxWidth="112"
+                    TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+         <FontIcon Glyph="&#xE70D;" FontSize="8" Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                   AutomationProperties.AccessibilityView="Raw" IsHitTestVisible="False"/>
+        </StackPanel>
+        </Grid>
+       </Button>
+    </Grid>
+   </StackPanel>
   </Grid>
   <ContentControl x:Name="UtilitySashHost" Grid.Column="2" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"/>
-  <Grid Grid.Column="3" x:Name="UtilityPanel" Visibility="Collapsed">
+  <Grid Grid.Column="3" x:Name="UtilityPanel" CornerRadius="9" Margin="4,0,6,6" BorderThickness="1" BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}" Visibility="Collapsed">
    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
    <Border x:Name="UtilityBackRow" Padding="8,3" Visibility="Collapsed" BorderThickness="0,0,0,1" BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}">
     <Button x:Name="UtilityBackButton" Style="{StaticResource SubtleButtonStyle}" Click="CloseCompactUtility_Click"
@@ -403,18 +424,17 @@
      </StackPanel>
     </Button>
    </Border>
-   <Border Grid.Row="1" Padding="7,4" BorderThickness="0,0,0,1" BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}">
-    <ListView x:Name="UtilityTabs" SelectionMode="Single" SelectionChanged="Utility_Changed" Padding="0"
-              ScrollViewer.HorizontalScrollMode="Disabled" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-              ScrollViewer.VerticalScrollMode="Disabled" ScrollViewer.VerticalScrollBarVisibility="Disabled"
-              AutomationProperties.AutomationId="UtilityTabs" AutomationProperties.Name="Right panel views">
-     <ListView.ItemContainerTransitions><TransitionCollection/></ListView.ItemContainerTransitions>
-     <ListView.ItemsPanel>
-      <ItemsPanelTemplate><ItemsStackPanel Orientation="Horizontal"/></ItemsPanelTemplate>
-     </ListView.ItemsPanel>
-    </ListView>
-   </Border>
-   <ContentControl x:Name="UtilityHost" Grid.Row="2" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"/>
+   <Grid x:Name="UtilityTabBar" Grid.Row="1"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+   <TabView x:Name="UtilityTabs" Height="36" CloseButtonOverlayMode="OnPointerOver" TabWidthMode="SizeToContent" CanDragTabs="True" CanReorderTabs="True" AllowDropTabs="True"
+            SelectionChanged="Utility_Changed" IsAddTabButtonVisible="True" AutomationProperties.AutomationId="UtilityTabs" AutomationProperties.Name="Right panel views">
+    <TabView.Resources>
+
+    </TabView.Resources>
+   </TabView>
+   <Button x:Name="UtilityExpand" Grid.Column="1" Click="UtilityExpand_Click" Style="{StaticResource SubtleButtonStyle}" Width="28" Height="28" MinWidth="0" MinHeight="0" Padding="0" Margin="1,0,4,0" AutomationProperties.Name="Expand right panel" ToolTipService.ToolTip="Expand right panel">
+    <FontIcon x:Name="UtilityExpandIcon" Glyph="&#xE740;" FontSize="12"/>
+   </Button></Grid>
+   <ContentControl x:Name="UtilityHost" Grid.Row="2" Background="{ThemeResource ControlFillColorSecondaryBrush}" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"/>
   </Grid>
  </Grid>
  <ContentControl x:Name="SettingsHost" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch" Visibility="Collapsed"/>

@@ -59,7 +59,7 @@ public sealed partial class MainPage
         AutomationProperties.SetName(scroll, "Composer options");
         AutomationProperties.SetAutomationId(scroll, "ComposerOptionsMenu");
 
-        var surface = WorkspaceAppearance.Region(this, "Acrylic", WorkspaceSurface.Composer);
+        var surface = WorkspaceAppearance.FlyoutBrush(this);
         var flyout = new Flyout
         {
             Content = new StackPanel { Children =

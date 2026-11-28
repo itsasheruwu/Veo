@@ -72,10 +72,13 @@ public sealed partial class MainPage
         if (terminalPanel is null)
         {
             terminalPanel = new(workspace);
+            terminalPanel.AddSelectionToChat += text => _ = Run(() => AddTerminalSelectionToComposerAsync(text));
+            terminalPanel.SettingsRequested += () => _ = Run(() => ShowSettingsAsync("Terminal"));
             terminalPanel.ExpandedChanged += ApplyTerminalExpansion;
+            terminalPanel.HideRequested += () => _ = Run(ToggleTerminalAsync);
         }
         TerminalHost.Content = terminalPanel;
-        TerminalHeight.Height = new GridLength(250);
+        if (!terminalWorkspaceExpanded) SetDockHeight(workspace.Preferences.TerminalDockHeight);
         await terminalPanel.RunProjectActionAsync(session, action.Command);
     }
 

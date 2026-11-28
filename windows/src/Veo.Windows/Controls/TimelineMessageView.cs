@@ -3,6 +3,8 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Data;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Media;
 using Veo.Core;
 using Veo.Protocol;
@@ -269,7 +271,7 @@ public sealed partial class TimelineMessageView : UserControl
         panel.Children.Add(details);
         return panel;
     }
-    static ComposerSnapshot Snapshot(ThreadSession session)
+    internal static ComposerSnapshot Snapshot(ThreadSession session)
     {
         var fallback = App.Workspace.Models.FirstOrDefault();
         return ComposerDraft.Snapshot(session, includeInput: false, defaults: new(Guid.NewGuid().ToString("N"), "", fallback?.Id, fallback?.DefaultEffort, null, App.Workspace.Preferences.DefaultAccess, "Agentic", []));
@@ -296,22 +298,53 @@ public sealed partial class TimelineMessageView : UserControl
     }
     void InstallSelectionMenu(MarkdownView view, MessageRow row)
     {
-        var menu = new MenuFlyout();
-        var copy = new MenuFlyoutItem { Text = "Copy selection" };
-        var copyMarkdown = new MenuFlyoutItem { Text = "Copy as Markdown" };
-        var quote = new MenuFlyoutItem { Text = "Quote selection" };
-        var selection = "";
-        menu.Opening += (_, _) => { selection = SelectedText(view); copy.IsEnabled = quote.IsEnabled = selection.Length > 0; };
-        copy.Click += (_, _) => Copy(selection);
-        copyMarkdown.Click += (_, _) => Copy(VisibleMessage(row));
-        quote.Click += async (_, _) =>
+        if (view.ContextFlyout is not MenuFlyout menu)
         {
-            if (selection.Length == 0 || App.Main is not { } main) return;
-            await main.QuoteIntoComposerAsync(new(row.Session.Record.VeoId, row.Id), selection);
-        };
-        menu.Items.Add(copy); menu.Items.Add(copyMarkdown); menu.Items.Add(new MenuFlyoutSeparator()); menu.Items.Add(quote);
-        view.ContextFlyout = menu;
-        foreach (var child in MarkdownView.Descendants(view).OfType<FrameworkElement>()) child.ContextFlyout = menu;
+            menu = new MenuFlyout();
+            var copy = new MenuFlyoutItem { Text = "Copy selection" };
+            var copyMarkdown = new MenuFlyoutItem { Text = "Copy as Markdown" };
+            var quote = new MenuFlyoutItem { Text = "Quote selection" };
+            var selection = "";
+            menu.Opening += (_, _) => { selection = SelectedText(view); copy.IsEnabled = quote.IsEnabled = selection.Length > 0; };
+            copy.Click += (_, _) => Copy(selection);
+            copyMarkdown.Click += (_, _) => Copy(VisibleMessage(row));
+            quote.Click += async (_, _) =>
+            {
+                if (selection.Length == 0 || App.Main is not { } main) return;
+                await main.QuoteIntoComposerAsync(new(row.Session.Record.VeoId, row.Id), selection);
+            };
+            menu.Items.Add(copy); menu.Items.Add(copyMarkdown); menu.Items.Add(new MenuFlyoutSeparator()); menu.Items.Add(quote);
+            view.ContextFlyout = menu;
+        }
+        foreach (var child in MarkdownView.Descendants(view).OfType<FrameworkElement>())
+        {
+            if (child.ContextFlyout == menu) continue;
+            child.ContextFlyout = menu;
+            if (child is not (RichTextBlock or TextBox)) continue;
+            child.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler((_, args) =>
+            {
+                var point = args.GetCurrentPoint(child);
+                if (point.Properties.PointerUpdateKind != Microsoft.UI.Input.PointerUpdateKind.LeftButtonReleased) return;
+                var selected = child is RichTextBlock rich ? rich.SelectedText : ((TextBox)child).SelectedText;
+                if (string.IsNullOrWhiteSpace(selected)) return;
+                var action = new Button { Content = "Quote", Padding = new Thickness(10, 3, 10, 3), MinHeight = 26 };
+                AutomationProperties.SetName(action, "Quote selection");
+                var presenter = new Style(typeof(FlyoutPresenter));
+                presenter.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(2)));
+                presenter.Setters.Add(new Setter(Control.CornerRadiusProperty, new CornerRadius(16)));
+                presenter.Setters.Add(new Setter(FrameworkElement.MinWidthProperty, 0d));
+                action.Style = (Style)Application.Current.Resources["SubtleButtonStyle"];
+                action.CornerRadius = new CornerRadius(14);
+                var quoteFlyout = new Flyout { Content = action, FlyoutPresenterStyle = presenter };
+                action.Click += async (_, _) =>
+                {
+                    quoteFlyout.Hide();
+                    if (App.Main is { } main) await main.QuoteIntoComposerAsync(new(row.Session.Record.VeoId, row.Id), selected);
+                };
+                quoteFlyout.ShowAt(child, new FlyoutShowOptions { Placement = FlyoutPlacementMode.Top,
+                    Position = new Windows.Foundation.Point(point.Position.X, Math.Max(0, point.Position.Y - 8)), ShowMode = FlyoutShowMode.Transient });
+            }), true);
+        }
     }
     static string SelectedText(MarkdownView view) => view.SelectedText();
     static string VisibleMessage(MessageRow row)

@@ -62,6 +62,7 @@ public sealed record VeoPreferences
     public int? WindowX { get; set; }
     public int? WindowY { get; set; }
     public bool WindowMaximized { get; set; }
+    public double TerminalDockHeight { get; set; } = 288;
     public double UtilityWidth { get; set; } = 360;
     public bool UtilityVisible { get; set; } = true;
     public bool SteerFollowUps { get; set; }

@@ -60,6 +60,7 @@ public sealed class ChatComposerBox : RichEditBox
     {
         get
         {
+            if (chips.Count == 0) return rendered;
             var result = new StringBuilder(rendered);
             for (var index = chips.Count - 1; index >= 0; index--)
             {
@@ -77,7 +78,7 @@ public sealed class ChatComposerBox : RichEditBox
             foreach (var context in InlineChatContext.Scan(value))
             {
                 visible.Append(value, offset, context.Start - offset);
-                var label = "[" + context.Label + "]";
+                var label = context.Target.Scheme == "veo-quote" ? context.Label : "[" + context.Label + "]";
                 positions.Add(new(visible.Length, label, context));
                 visible.Append(label);
                 offset = context.Start + context.Length;

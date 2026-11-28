@@ -5,7 +5,19 @@ namespace Veo.Core;
 public enum TerminalSplitAxis { Horizontal, Vertical }
 public enum TerminalGridPreset { Single, TwoUp, TwoStack, Quad, Six }
 public sealed record TerminalSessionDescriptor(string Id, string ThreadId, string Cwd, string Title)
-{ public override string ToString() => Title; }
+{
+    // Temporary workspaces have UUID directory names. Keep the original cwd for the shell and tooltip.
+    [JsonIgnore] public string DisplayTitle
+    {
+        get
+        {
+            var name = Path.GetFileName(Cwd.TrimEnd(Path.DirectorySeparatorChar));
+            return Guid.TryParse(name, out _) && Title.StartsWith(name, StringComparison.OrdinalIgnoreCase)
+                ? "Terminal" + Title[name.Length..] : Title;
+        }
+    }
+    public override string ToString() => DisplayTitle;
+}
 
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "$kind")]
 [JsonDerivedType(typeof(TerminalPaneLeaf), "leaf")]

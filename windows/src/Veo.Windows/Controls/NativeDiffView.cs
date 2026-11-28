@@ -31,7 +31,16 @@ public sealed class NativeDiffView : UserControl
     private readonly Grid host = new();
     public string PlaceholderText { get => raw.PlaceholderText; set => raw.PlaceholderText = value; }
     public string Text { get => text; set { text = value; document = UnifiedDiff.Parse(value); Render(); } }
-    public bool IsSplit { get => split; set { split = value; Render(); } }
+    public bool IsSplit
+    {
+        get => split;
+        set
+        {
+            if (split == value) return;
+            split = value;
+            Render();
+        }
+    }
     public void ShowRawText(string value) { text = value; document = null; Render(); }
     public NativeDiffView()
     {

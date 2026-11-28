@@ -1,4 +1,5 @@
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Veo.Core;
 using Veo.Protocol;
@@ -20,7 +21,7 @@ internal sealed class SideChatPanel : Grid
     readonly StackPanel messages = new() { Spacing = 14, Padding = new(12) };
     readonly ScrollViewer scroll;
     readonly TextBox question = new() { PlaceholderText = "Ask a side question", MaxHeight = 100, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap };
-    readonly Button send = new() { Content = "Ask", VerticalAlignment = VerticalAlignment.Bottom };
+    readonly Button send = new() { Content = new FontIcon { Glyph = "\uE74A", FontSize = 13 }, CornerRadius = new CornerRadius(15), Width = 30, Height = 30, MinHeight = 0, Padding = new Thickness(0), VerticalAlignment = VerticalAlignment.Bottom };
     readonly Func<ThreadSession, string, string, Task<string>> answer;
     readonly Func<ThreadSession, string, Task> bringBack;
     ThreadSession? session;
@@ -34,9 +35,13 @@ internal sealed class SideChatPanel : Grid
         RowDefinitions.Add(new() { Height = GridLength.Auto });
         scroll = new ScrollViewer { Content = messages };
         Children.Add(scroll);
-        var input = new Grid { ColumnSpacing = 8, Padding = new(12) };
+        var input = new Grid { ColumnSpacing = 4, Padding = new(5), Margin = new Thickness(9, 3, 9, 9), CornerRadius = new CornerRadius(12), Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["CardBackgroundFillColorDefaultBrush"], BorderBrush = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["DividerStrokeColorDefaultBrush"], BorderThickness = new Thickness(1) };
         input.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         input.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        AutomationProperties.SetName(send, "Ask side question");
+        question.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent);
+        question.BorderThickness = new Thickness(0);
+        question.VerticalAlignment = VerticalAlignment.Center;
         input.Children.Add(question);
         SetColumn(send, 1);
         input.Children.Add(send);
@@ -95,7 +100,7 @@ internal sealed class SideChatPanel : Grid
         if (session is not { } selected) return;
         var state = conversations[selected.Record.VeoId];
         if (state.Exchanges.Count == 0)
-            messages.Children.Add(new TextBlock { Text = "Ask a question about this chat.", Opacity = .72, TextWrapping = TextWrapping.Wrap });
+            messages.Children.Add(new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Opacity = .72, Children = { new FontIcon { Glyph = "\uE8F2", FontSize = 14 }, new TextBlock { Text = "Ask a question about this chat.", FontSize = 13 } } });
         foreach (var exchange in state.Exchanges)
         {
             var entry = new StackPanel { Spacing = 7 };

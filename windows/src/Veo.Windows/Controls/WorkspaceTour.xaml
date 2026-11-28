@@ -82,7 +82,7 @@
                         <TextBlock Text="Provider" FontSize="13" FontWeight="SemiBold" Opacity=".78"/>
                         <Grid Grid.Row="1" VerticalAlignment="Center" ColumnSpacing="12">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                            <Border Width="39" Height="39" CornerRadius="10" Background="WhiteSmoke"><Image x:Name="ProviderLogo" Source="ms-appx:///Assets/AgentMark-codex.png" Margin="7"/></Border>
+                            <ContentPresenter x:Name="ProviderLogo" Width="40" Height="40"/>
                             <StackPanel Grid.Column="1" Spacing="1"><TextBlock x:Name="ProviderName" FontSize="18" FontWeight="SemiBold"/><TextBlock x:Name="ProviderDetail" FontSize="12" Opacity=".72"/></StackPanel>
                             <Button x:Name="ProviderSetup" Grid.Column="2" VerticalAlignment="Center" Content="Change" AutomationProperties.Name="Choose providers…" Click="Providers_Click"/>
                         </Grid>

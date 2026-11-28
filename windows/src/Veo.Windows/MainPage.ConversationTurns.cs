@@ -53,6 +53,8 @@ public sealed partial class MainPage
         var groups = items.Where(item => item.TurnId is not null).ToLookup(item => item.TurnId!);
         var rows = new List<TimelineItem>(items.Count + turns.Count * 2);
         var liveTurnId = session.Timeline.IsRunning ? session.Timeline.ActiveTurnId : null;
+        var statusTurn = liveTurnId is not null ? turns.GetValueOrDefault(liveTurnId) : turns.Values.MaxBy(turn => turn.Order);
+        UpdateTurnSummary(statusTurn, statusTurn is null ? [] : groups[statusTurn.Id]);
         var segmentByItem = new Dictionary<string, string>(StringComparer.Ordinal);
         var activityBySegment = new Dictionary<string, List<TimelineItem>>(StringComparer.Ordinal);
         var lastPromptByTurn = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -163,6 +165,48 @@ public sealed partial class MainPage
             && list.ValueKind == System.Text.Json.JsonValueKind.Array)
             return list.EnumerateArray().ToArray();
         return [];
+    }
+
+    TimelineItem? summaryPlan;
+    TimelineTurn? summaryTurn;
+
+    void UpdateTurnSummary(TimelineTurn? turn, IEnumerable<TimelineItem> entries)
+    {
+        if (!workspace.Preferences.ShowStatus || turn is null) { TurnSummary.Visibility = Visibility.Collapsed; return; }
+        summaryTurn = turn;
+        summaryPlan = entries.LastOrDefault(item => item.Kind is "plan" or "planUpdate");
+        var changes = !string.IsNullOrWhiteSpace(turn.Diff) || entries.Any(item => item.Kind == "fileChange");
+        var agents = entries.Any(item => item.Kind is "subAgentActivity" or "collabAgentToolCall");
+        if (summaryPlan is null && !changes && !agents) { TurnSummary.Visibility = Visibility.Collapsed; return; }
+        TurnSummary.Visibility = Visibility.Visible;
+        SummaryPlan.Visibility = summaryPlan is null ? Visibility.Collapsed : Visibility.Visible;
+        SummaryChanges.Visibility = changes ? Visibility.Visible : Visibility.Collapsed;
+        SummaryAgents.Visibility = agents ? Visibility.Visible : Visibility.Collapsed;
+        var steps = summaryPlan?.Raw;
+        SummaryPlan.Content = steps is { ValueKind: System.Text.Json.JsonValueKind.Object } raw &&
+            raw.TryGetProperty("plan", out var plan) && plan.ValueKind == System.Text.Json.JsonValueKind.Array
+            ? $"Plan · {plan.EnumerateArray().Count(step => step.Str("status") == "completed")}/{plan.GetArrayLength()}" : "Plan";
+    }
+
+    async void SummaryPlan_Click(object sender, RoutedEventArgs e)
+    {
+        if (summaryPlan is not { } item || current is not { } session) return;
+        if (item.Kind == "plan") await Run(() => OpenPlanTabAsync(session, item));
+        else if (messages.FirstOrDefault(row => row.Id == item.Id) is { } row) Timeline.ScrollIntoView(row, ScrollIntoViewAlignment.Leading);
+        else if (messages.FirstOrDefault(row => row.Item.TurnId == item.TurnId) is { } first) Timeline.ScrollIntoView(first, ScrollIntoViewAlignment.Leading);
+    }
+
+    async void SummaryChanges_Click(object sender, RoutedEventArgs e)
+    {
+        if (summaryTurn is not { } turn || current is not { } session) return;
+        inspectedTurn = turn with { Diff = TurnPatch(turn, session.Timeline.Items.Where(item => item.TurnId == turn.Id)) };
+        await Run(() => OpenUtilityPanelAsync(0));
+    }
+
+    async void SummaryAgents_Click(object sender, RoutedEventArgs e)
+    {
+        UtilityTabs.SelectedItem = FindUtilityTab(4) ?? AddUtilityTab(4);
+        await Run(() => OpenUtilityPanelAsync());
     }
 
     static string TurnPatch(TimelineTurn turn, IEnumerable<TimelineItem> entries)

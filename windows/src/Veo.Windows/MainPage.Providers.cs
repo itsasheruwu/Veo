@@ -12,18 +12,6 @@ public sealed partial class MainPage
 {
     AgentConnections Agents => AgentConnections.For(workspace);
     string? ActiveAgent => current is { } session ? Agents.Choice(session.Record.VeoId) : null;
-    static IconElement ProviderIcon(string? id, double size)
-    {
-        var file = "AgentMark-" + id + ".png";
-        IconElement icon = id is not null && File.Exists(Path.Combine(AppContext.BaseDirectory, "Assets", file))
-            ? new BitmapIcon { UriSource = new Uri("ms-appx:///Assets/" + file), ShowAsMonochrome = id == "codex" }
-            : new FontIcon { Glyph = id == "fx" ? "ƒx" : "\uE950", FontSize = size - 3 };
-        icon.Width = size;
-        icon.Height = size;
-        AutomationProperties.SetAccessibilityView(icon, Microsoft.UI.Xaml.Automation.Peers.AccessibilityView.Raw);
-        return icon;
-    }
-
     static string? ApiMark(string? id) => id is "xai" or "grok-build" or "grok" or "grok-oauth" ? "grok-build" : null;
 
     void RenderProvider()
@@ -36,11 +24,7 @@ public sealed partial class MainPage
         if (ComposerProviderMark.Content is null || !Equals(ComposerProviderMark.Tag, mark))
         {
             ComposerProviderMark.Tag = mark;
-            var icon = ProviderIcon(mark, 15);
-            ComposerProviderMark.Content = icon is BitmapIcon && mark != "codex"
-                ? new Border { Width = 19, Height = 19, CornerRadius = new CornerRadius(4),
-                    Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.WhiteSmoke), Child = icon }
-                : icon;
+            ComposerProviderMark.Content = Controls.ProviderMark.Create(mark, 15);
         }
         AutomationProperties.SetName(ProviderTrigger, "Change provider, " + ComposerProviderName.Text);
         ProviderTrigger.IsEnabled=current is { IsSubmitting:false } && !current.Timeline.IsRunning;
@@ -57,11 +41,10 @@ public sealed partial class MainPage
     async void Provider_Click(object sender,RoutedEventArgs args) => await Run(async () => {
         if(current is not { } session) return;
         var menu=new MenuFlyout {Placement=FlyoutPlacementMode.TopEdgeAlignedLeft};
-        void Item(string text,Action click, string? mark=null)
+        void Item(string text,Action click)
         {
             var item=new MenuFlyoutItem {Text=text};
-            item.Icon=ProviderIcon(mark, 16);
-            if (item.Icon is BitmapIcon bitmap) bitmap.ShowAsMonochrome = true;
+            if (text == ComposerProviderName.Text) item.Icon = new SymbolIcon(Symbol.Accept);
             item.Click+=(_,_)=>{if(ReferenceEquals(session,current))click();};
             menu.Items.Add(item);
         }
@@ -86,13 +69,13 @@ public sealed partial class MainPage
                 if (ReferenceEquals(session, current)) await ShowModelPickerUpgradeAsync();
             });
         }
-        Item("Codex",()=>SelectNative(App.Models.Selectable.FirstOrDefault(m=>!m.IsExternal)),mark:"codex");
-        foreach(var a in AgentConnections.Catalog.Where(a=>Agents.Connections.ContainsKey(a.Id))) Item(a.Name,()=>Use(a.Id),a.Id);
+        Item("Codex",()=>SelectNative(App.Models.Selectable.FirstOrDefault(m=>!m.IsExternal)));
+        foreach(var a in AgentConnections.Catalog.Where(a=>Agents.Connections.ContainsKey(a.Id))) Item(a.Name,()=>Use(a.Id));
         var api=await new ProviderConfigurationStore(workspace.DataRoot).LoadAsync();
         foreach(var p in api.Where(p=>p.Enabled))
         {
             var m=App.Models.Selectable.FirstOrDefault(m=>p.Models?.Any(r=>r.Enabled&&r.Id==m.Id)==true);
-            if(m!=null)Item(p.Name,()=>SelectNative(m),p.Preset is ProviderPreset.Xai or ProviderPreset.GrokOAuth ? "grok-build" : null);
+            if(m!=null)Item(p.Name,()=>SelectNative(m));
         }
         menu.Items.Add(new MenuFlyoutSeparator());
         Item("Connect a provider…",()=>_=Run(()=>ShowSettingsAsync("Providers")));

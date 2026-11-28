@@ -92,6 +92,7 @@ public sealed partial class MainWindow : Window
         finally { if (Page is { } page) await page.DisposeSurfacesAsync(); }
     }
     public Task NavigateToThreadAsync(Veo.Core.ThreadSession session) => Page?.NavigateToThreadAsync(session) ?? Task.CompletedTask;
+    public Task OpenPlanTabAsync(Veo.Core.ThreadSession session, Veo.Core.TimelineItem item) => Page?.OpenPlanTabAsync(session, item) ?? Task.CompletedTask;
     public Task QuoteIntoComposerAsync(Veo.Core.QuoteReference reference, string text) => Page?.QuoteIntoComposerAsync(reference, text) ?? Task.CompletedTask;
     public Task HandleActivationAsync(string arguments) => Page?.HandleActivationAsync(arguments) ?? Task.CompletedTask;
     public Task NavigateBrowserAsync(Uri uri) => Page?.OpenBrowserAsync(uri) ?? Task.CompletedTask;

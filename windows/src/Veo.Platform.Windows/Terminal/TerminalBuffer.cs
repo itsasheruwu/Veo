@@ -23,6 +23,8 @@ public sealed class TerminalBuffer
     private TerminalCell style = Blank;
     private int column, row, savedColumn, savedRow, primaryColumn, primaryRow, scrollTop, scrollBottom;
     private bool wrapPending;
+    // Mark continuations by row identity so scrolling, insertion and deletion carry the mark with the cells.
+    private readonly System.Runtime.CompilerServices.ConditionalWeakTable<TerminalCell[], object> continuations = new();
     private char? pendingHighSurrogate;
     private bool cursorVisible = true, bracketedPaste, applicationCursorKeys;
     private readonly List<string> replies = [];
@@ -63,14 +65,34 @@ public sealed class TerminalBuffer
         foreach (var response in responses) ResponseRequested?.Invoke(response);
     }
 
-    public TerminalSnapshot Snapshot(int scrollbackOffset = 0)
+    // A rendering frame owns immutable copies of its rows. Retain at most the last
+    // viewport; in-place edits invalidate a row before its next frame is captured.
+    private Dictionary<TerminalCell[], TerminalCell[]> renderedRows = new();
+    public TerminalSnapshot Snapshot(int scrollbackOffset = 0) => Capture(scrollbackOffset, false);
+    public TerminalSnapshot CaptureRenderFrame(int scrollbackOffset = 0) => Capture(scrollbackOffset, true);
+
+    private TerminalSnapshot Capture(int scrollbackOffset, bool reuseRows)
     {
         lock (gate)
         {
             var offset = primaryScreen is null ? Math.Clamp(scrollbackOffset, 0, scrollback.Count) : 0;
             var visible = offset == 0 ? screen.AsEnumerable() : scrollback.Concat(screen).Skip(scrollback.Count - offset).Take(Rows);
-            // Old history can have a different column count after resize.
-            var cells = visible.Select(line => { var resized = NewLineCells(Columns, Blank); Array.Copy(line, resized, Math.Min(line.Length, Columns)); return resized; }).ToArray();
+            var cells = new TerminalCell[Rows][];
+            Dictionary<TerminalCell[], TerminalCell[]>? retained = reuseRows ? new(Rows) : null;
+            var index = 0;
+            foreach (var line in visible)
+            {
+                if (!reuseRows || !renderedRows.TryGetValue(line, out var copy) || copy.Length != Columns)
+                {
+                    copy = new TerminalCell[Columns];
+                    var length = Math.Min(line.Length, Columns);
+                    Array.Copy(line, copy, length);
+                    if (length < Columns) Array.Fill(copy, Blank, length, Columns - length);
+                }
+                cells[index++] = copy;
+                if (retained is not null) retained[line] = copy;
+            }
+            if (retained is not null) renderedRows = retained;
             return new(cells, column, row, cursorVisible && offset == 0, primaryScreen is not null, bracketedPaste, applicationCursorKeys, scrollback.Count, totalScrolledLines);
         }
     }
@@ -89,12 +111,70 @@ public sealed class TerminalBuffer
         ValidateSize(columns, rows);
         lock (gate)
         {
-            screen = ResizeScreen(screen, columns, rows);
-            if (primaryScreen is not null) primaryScreen = ResizeScreen(primaryScreen, columns, rows);
+            if (columns != Columns && primaryScreen is null && scrollTop == 0 && scrollBottom == Rows - 1)
+                ReflowPrimary(columns, rows);
+            else
+            {
+                screen = ResizeScreen(screen, columns, rows);
+                if (primaryScreen is not null) primaryScreen = ResizeScreen(primaryScreen, columns, rows);
+                column = Math.Clamp(column, 0, columns - 1);
+                row = Math.Clamp(row, 0, rows - 1);
+                wrapPending = false;
+            }
             Columns = columns; Rows = rows;
-            column = Math.Clamp(column, 0, columns - 1); row = Math.Clamp(row, 0, rows - 1);
-            scrollTop = 0; scrollBottom = rows - 1; wrapPending = false;
+            scrollTop = 0; scrollBottom = rows - 1;
         }
+    }
+
+    private void ReflowPrimary(int columns, int rows)
+    {
+        var result = new List<TerminalCell[]>();
+        int cursorX = 0, cursorY = 0, x = 0;
+        bool afterLastCell = false;
+        var last = Math.Max(row, Array.FindLastIndex(screen, line => Array.Exists(line, cell => cell != Blank)));
+        for (var y = 0; y <= last; y++)
+        {
+            if (y == 0 || !continuations.TryGetValue(screen[y], out _))
+            {
+                result.Add(NewLineCells(columns, Blank));
+                x = 0;
+            }
+            var length = y < last && continuations.TryGetValue(screen[y + 1], out _)
+                ? Columns : Array.FindLastIndex(screen[y], cell => cell != Blank) + 1;
+            if (y == row) length = Math.Max(length, column + 1);
+            for (var i = 0; i < length; i++)
+            {
+                var cell = screen[y][i];
+                if (cell.Width == 0) continue;
+                var width = Math.Min(columns, cell.Width);
+                if (x + width > columns)
+                {
+                    var next = NewLineCells(columns, Blank);
+                    continuations.GetOrCreateValue(next);
+                    result.Add(next);
+                    x = 0;
+                }
+                if (y == row && column >= i && column < i + cell.Width)
+                {
+                    cursorY = result.Count - 1;
+                    cursorX = wrapPending ? x + width : x;
+                    afterLastCell = cursorX == columns;
+                    cursorX = Math.Min(cursorX, columns - 1);
+                }
+                result[^1][x] = cell with { Width = width };
+                if (width == 2) result[^1][x + 1] = cell with { Text = "", Width = 0 };
+                x += width;
+            }
+        }
+        var first = Math.Clamp(result.Count - rows, 0, cursorY);
+        for (var i = 0; i < first; i++) RememberLine(result[i]);
+        screen = result.Skip(first).Take(rows).ToArray();
+        var used = screen.Length;
+        Array.Resize(ref screen, rows);
+        for (int i = used; i < rows; i++) screen[i] = NewLineCells(columns, Blank);
+        column = cursorX;
+        row = cursorY - first;
+        wrapPending = afterLastCell;
     }
 
     private void ParseEscape(char c)
@@ -163,7 +243,7 @@ public sealed class TerminalBuffer
             case 'M': DeleteLines(Math.Min(count, Rows - row)); break;
             case 'P': DeleteCharacters(Math.Min(count, Columns - column)); break;
             case '@': InsertCharacters(Math.Min(count, Columns - column)); break;
-            case 'X': Array.Fill(screen[row], ErasedCell, column, Math.Min(count, Columns - column)); break;
+            case 'X': renderedRows.Remove(screen[row]); Array.Fill(screen[row], ErasedCell, column, Math.Min(count, Columns - column)); break;
             case 'h' or 'l' when privateMode:
                 foreach (var value in values)
                 {
@@ -200,11 +280,13 @@ public sealed class TerminalBuffer
         {
             var previous = Math.Max(0, column - 1);
             if (screen[row][previous].Width == 0 && previous > 0) previous--;
+            renderedRows.Remove(screen[row]);
             screen[row][previous] = screen[row][previous] with { Text = screen[row][previous].Text + rune.ToString() };
             return;
         }
         var width = RuneWidth(rune);
-        if (wrapPending || column + width > Columns) { column = 0; NewLine(); }
+        if (wrapPending || column + width > Columns) { column = 0; NewLine(); continuations.GetOrCreateValue(screen[row]); }
+        renderedRows.Remove(screen[row]);
         screen[row][column] = style with { Text = rune.ToString(), Width = width };
         if (width == 2 && column + 1 < Columns) screen[row][column + 1] = style with { Text = "", Width = 0 };
         column += width;
@@ -215,13 +297,21 @@ public sealed class TerminalBuffer
     {
         wrapPending = false;
         if (row == scrollBottom) ScrollUp(1); else row = Math.Min(Rows - 1, row + 1);
+        continuations.Remove(screen[row]);
     }
     private void Move(int x, int y) { column = Math.Clamp(x, 0, Columns - 1); row = Math.Clamp(y, 0, Rows - 1); wrapPending = false; }
     private TerminalCell ErasedCell => style with { Text = " ", Width = 1 };
+    private void RememberLine(TerminalCell[] line)
+    {
+        scrollback.Enqueue(line);
+        totalScrolledLines++;
+        while (scrollback.Count > MaximumScrollback) scrollback.Dequeue();
+    }
+
     private void ScrollUp(int count)
     {
         if (primaryScreen is null && scrollTop == 0)
-            for (var y = 0; y < count; y++) { scrollback.Enqueue(screen[y].ToArray()); totalScrolledLines++; while (scrollback.Count > MaximumScrollback) scrollback.Dequeue(); }
+            for (var y = 0; y < count; y++) RememberLine(screen[y]);
         for (var y = scrollTop; y <= scrollBottom - count; y++) screen[y] = screen[y + count];
         for (var y = scrollBottom - count + 1; y <= scrollBottom; y++) screen[y] = NewLineCells(Columns, ErasedCell);
     }
@@ -245,13 +335,14 @@ public sealed class TerminalBuffer
         for (var y = scrollBottom - count + 1; y <= scrollBottom; y++) screen[y] = NewLineCells(Columns, ErasedCell);
     }
     private void DeleteCharacters(int count)
-    { Array.Copy(screen[row], column + count, screen[row], column, Columns - column - count); Array.Fill(screen[row], ErasedCell, Columns - count, count); }
+    { renderedRows.Remove(screen[row]); Array.Copy(screen[row], column + count, screen[row], column, Columns - column - count); Array.Fill(screen[row], ErasedCell, Columns - count, count); }
     private void InsertCharacters(int count)
-    { Array.Copy(screen[row], column, screen[row], column + count, Columns - column - count); Array.Fill(screen[row], ErasedCell, column, count); }
+    { renderedRows.Remove(screen[row]); Array.Copy(screen[row], column, screen[row], column + count, Columns - column - count); Array.Fill(screen[row], ErasedCell, column, count); }
     private void EraseLine(int mode)
     {
         var start = mode == 0 ? column : 0;
         var end = mode == 1 ? column + 1 : Columns;
+        renderedRows.Remove(screen[row]);
         Array.Fill(screen[row], ErasedCell, start, end - start);
     }
     private void EraseDisplay(int mode)
@@ -298,10 +389,18 @@ public sealed class TerminalBuffer
     { screen = NewScreen(Columns, Rows); primaryScreen = null; style = Blank; Move(0, 0); scrollTop = 0; scrollBottom = Rows - 1; cursorVisible = true; bracketedPaste = false; applicationCursorKeys = false; }
     private static TerminalCell[][] NewScreen(int columns, int rows) => Enumerable.Range(0, rows).Select(_ => NewLineCells(columns, Blank)).ToArray();
     private static TerminalCell[] NewLineCells(int columns, TerminalCell blank) => Enumerable.Repeat(blank, columns).ToArray();
-    private static TerminalCell[][] ResizeScreen(TerminalCell[][] previous, int columns, int rows)
+    private TerminalCell[][] ResizeScreen(TerminalCell[][] previous, int columns, int rows)
     {
         var resized = NewScreen(columns, rows);
-        for (var y = 0; y < Math.Min(rows, previous.Length); y++) Array.Copy(previous[y], resized[y], Math.Min(columns, previous[y].Length));
+        for (var y = 0; y < Math.Min(rows, previous.Length); y++)
+        {
+            if (columns == previous[y].Length) resized[y] = previous[y];
+            else
+            {
+                Array.Copy(previous[y], resized[y], Math.Min(columns, previous[y].Length));
+                if (continuations.TryGetValue(previous[y], out _)) continuations.GetOrCreateValue(resized[y]);
+            }
+        }
         return resized;
     }
     private static string LineText(TerminalCell[] cells) => string.Concat(cells.Where(x => x.Width != 0).Select(x => x.Text)).TrimEnd();

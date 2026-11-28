@@ -22,7 +22,7 @@ public sealed partial class MainPage
             CancelDictation();
             workspaceFocusBeforeSettings = FocusManager.GetFocusedElement(XamlRoot) as Control;
             CloseCompletions();
-            settingsPanel = new SettingsPanel(workspace, shortcutCommands.IsAvailable, SetIncludeGPT56ModelsAsync);
+            settingsPanel = new SettingsPanel(workspace, shortcutCommands.IsAvailable, SetIncludeGPT56ModelsAsync, GetSettingsProvider);
             settingsPanel.BackRequested += BackFromSettings;
             SettingsHost.Content = settingsPanel;
             SettingsHost.Visibility = Visibility.Visible;
@@ -33,6 +33,14 @@ public sealed partial class MainPage
         settingsPanel.Select(category);
         settingsPanel.FocusCategory();
         App.Main?.Activate();
+    }
+
+    (string Name, string? Executable)? GetSettingsProvider()
+    {
+        if (ActiveAgent is { } id && Agents.Connections.TryGetValue(id, out var connection))
+            return (Services.AgentConnections.Catalog.First(a => a.Id == id).Name, connection.Executable);
+        var selection = App.Models.Find(modelCatalogId ?? model);
+        return selection?.IsExternal == true ? (selection.Id.Split('/')[0], null) : null;
     }
 
     async Task SetIncludeGPT56ModelsAsync(bool enabled)

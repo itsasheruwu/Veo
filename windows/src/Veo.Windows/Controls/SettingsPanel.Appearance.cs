@@ -30,7 +30,10 @@ public sealed partial class SettingsPanel
         var sidebar = Section("Sidebar");
         Material(sidebar, "Left sidebar material", "\uE90C", p.SidebarMaterial, v => p.SidebarMaterial = v);
         Material(sidebar, "Right sidebar material", "\uE89F", p.UtilityMaterial, v => p.UtilityMaterial = v);
-        Sections.Children.Add(SettingText("Windows transparency and High Contrast settings are used for material fallbacks.", "SettingDetail"));
+        var effects = new Windows.UI.ViewManagement.UISettings();
+        Sections.Children.Add(SettingText(effects.AdvancedEffectsEnabled
+            ? "Mica uses the desktop wallpaper. Acrylic blurs the desktop behind the window."
+            : "Windows transparency effects are off. Mica and Acrylic use opaque tints.", "SettingDetail"));
 
         var composer = Section("Composer");
         AddRow(composer, "Model picker", "Choose the model selector used beside the composer.", "\uE81E",
@@ -42,8 +45,8 @@ public sealed partial class SettingsPanel
         AddRow(composer, "Show context window usage", "Display token usage beside Send.", "\uE9D9", usage);
         var usageOptions = new StackPanel { Visibility = p.ShowUsage ? Visibility.Visible : Visibility.Collapsed };
         AddRow(usageOptions, "Usage style", "Choose how context window use is drawn.", "\uE9D9",
-            Choice("Usage style", ["Bar", "Circle"], p.ContextStyle, v => p.ContextStyle = v));
-        AddRow(usageOptions, "Usage label", "Show remaining context as a percent or token count.", "\uE8EC",
+            Choice("Usage style", ["Percent", "Circle", "Bar"], p.ContextStyle, v => p.ContextStyle = v));
+        AddRow(usageOptions, "Usage label", "Choose the context usage label.", "\uE8EC",
             Choice("Usage label", ["Percent", "Tokens"], p.ContextLabel, v => p.ContextLabel = v));
         composer.Children.Add(usageOptions);
         usage.Toggled += (_, _) => usageOptions.Visibility = usage.IsOn ? Visibility.Visible : Visibility.Collapsed;
@@ -51,9 +54,13 @@ public sealed partial class SettingsPanel
         Material(Section("Notifications"), "Notification material", "\uE7E7", p.NotificationMaterial, v => p.NotificationMaterial = v);
 
         var minimap = Section("Thread minimap");
+        var minimapSwitch = Toggle("Show thread minimap", p.ShowMinimap, v => p.ShowMinimap = v);
         AddRow(minimap, "Show thread minimap", "Display topic changes beside longer conversations.", "\uE8A5",
-            Toggle("Show thread minimap", p.ShowMinimap, v => p.ShowMinimap = v));
-        Material(minimap, "Minimap material", "\uE8A5", p.MinimapMaterial, v => p.MinimapMaterial = v);
+            minimapSwitch);
+        var minimapOptions = new StackPanel { Visibility = p.ShowMinimap ? Visibility.Visible : Visibility.Collapsed };
+        minimap.Children.Add(minimapOptions);
+        minimapSwitch.Toggled += (_, _) => minimapOptions.Visibility = minimapSwitch.IsOn ? Visibility.Visible : Visibility.Collapsed;
+        Material(minimapOptions, "Minimap material", "\uE8A5", p.MinimapMaterial, v => p.MinimapMaterial = v);
 
         var conversation = Section("Conversation");
         AddRow(conversation, "Response streaming", "Choose how quickly new response text appears.", "\uE8F2",

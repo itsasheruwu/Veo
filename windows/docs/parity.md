@@ -541,3 +541,33 @@ An isolated x64 WinUI build on Astra-PC displayed one Projectless Chats heading 
 Native x64 `2.6.1-beta.6` showed a centered new-tab search and a full-height WebView2 page in dark and light themes on Astra-PC. The address field grew from 92 to 208 pixels at the minimum dock width, and the wider dock exposed Forward and Reload beside Back. The Viewport submenu saved Mobile and then restored Responsive. A selected WebView2 tab survived resizing the window from 1380×820 to 680×610 and back.
 
 With a loopback fixture, a pointer click on the new-tab search button preserved the separate address draft, and Enter in the address field navigated the tab. Back, Forward, Reload, and Stop loading worked with real WebView2 requests. All 25 browser harness checks passed. The exact checked build was installed and reopened from Start. The installed assembly hash matched the one used for the native test. The setup SHA-256 is `6874cd6c1c9c96f48d8e88bfc99698ee02a8541d9d313ba831a2e8410f676fe6`. This records partial acceptance for B01, B02, and B09.
+
+### Composer, inspector tabs, and terminal workspace
+
+An x64 Release build on Astra-PC displayed the workspace and provider at opposite ends of a 621-pixel footer in an existing chat. With Roblox, Wild, and Goal active, the extra-mode menu appeared at an 800-pixel window width and disappeared at 1400 pixels. Send remained visible throughout. Two fixture messages exercised inline queue editing, saving, and reordering. In light appearance, dragging across a reply exposed Quote above the selection. Activating it inserted the selected word as an inline quote.
+
+In the dark workspace, the inspector add button started eight pixels after Files when all tabs fit. It opened Side chat. Expanding the docked terminal moved it into the workspace, and restoring it brought back the chat footer. The composer suite passed 49 checks and the terminal workspace suite passed 30, including real ConPTY process ownership and viewport resizing.
+
+On the same PC, seven runs of 3,000 single-line changes in a 144-column, 50-row terminal took a median of 174.2 ms with full snapshots and 13.9 ms with the renderer's retained rows. A separate 4,000-frame comparison matched every cell, cursor, and mode flag across edits, scrolling, resizing, and alternate screens. These timings cover snapshot preparation.
+
+### Native Windows inspector, composer, and terminal follow-up
+
+Astra-PC ran the x64 Release build at a 1400 × 800 window size with a 455-unit inspector. Native UI Automation exercised a disposable conversation in light and dark appearance. The visual reference was the Mac composer capture, supplied tab design, and current Mac view implementations.
+
+- The composer retained the workspace and provider menus below a started chat. With Roblox, Wild, and Goal enabled, all three appeared beside Send at full chat width. Opening the inspector moved the excess mode into the count button.
+- Review showed a repository-specific empty state. In an isolated Git repository, clicking a tracked change opened its unified diff at compact width. Back to Changes restored the list, and expanding the inspector exposed the files and diff together. The changed line was read back from the native diff view.
+- Files opened a fixture text file and returned its contents through the editor. Browser showed a distinct address field and start-page search field. Creating another browser page produced two browser entries in the shared inspector strip. Side chat opened from the add menu. This pass did not exercise a live subagent run or a provider-generated Plan tab.
+- The terminal dock resized 16 units by keyboard. Typing and backspacing in a real PowerShell session produced the expected output. Expanding, splitting, restoring, and hiding the terminal retained the session. Long command text and the following prompt wrapped inside the split pane.
+- The logged-in Windows session passed 24 platform assertions, 30 terminal workspace checks, 25 browser checks, and 49 composer checks. Platform coverage includes narrowing a terminal with long historical text, widening it again, and appending at the restored cursor.
+
+The installed Windows build opened from the existing Start menu shortcut with its normal profile. Native window readback reported a visible Veo window at 1380 × 900. The installed assembly SHA-256 was `F6FB9196E9B30045002F1FC7C4669235A808FD9BD04CCD175FA9CE2D65A45E72`. The previous local installation was retained for rollback.
+
+### Windows tab motion, composer spacing, and appearance
+
+On November 28, 2026, Astra-PC ran an x64 Release build in the logged-in desktop session. Pointer captures in a disposable conversation showed the inspector selection traveling between tabs and both the model and permission pills compressing into a blurred edge before revealing a capsule. Escape dismissed the pickers. The inspector and docked terminal use the same tab selection renderer. Only the inspector transition was captured in this pass.
+
+UI Automation measured 7 pixels between the options button and model pill at this display scale with the picker closed, with it open, and with the inspector visible. Both a 112-pixel model pill in dark appearance and a 126-pixel pill in light appearance kept that spacing.
+
+Selecting Solid, Mica, and Acrylic through Appearance persisted all six region settings. With system transparency disabled, dark sidebar captures sampled #191A1B, #242629, and #2C2F33 respectively. Light appearance was also exercised. This machine verified the fallback rendering. Desktop translucency with Windows transparency enabled remains unverified. In the populated light fixture, the thread minimap and turn status appeared and could be hidden, and all three context usage styles persisted.
+
+The existing Start menu shortcut opened the normal profile in a visible 1380 × 900 Veo window. The installed assembly SHA-256 was `A7FD873C5990753F33628F12E8A81DC49FBA65C177071A6689A58CD1B2B64260`. The previous installation was retained.

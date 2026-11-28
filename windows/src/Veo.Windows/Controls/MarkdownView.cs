@@ -73,7 +73,7 @@ public sealed class MarkdownView : StackPanel
         if (block is ThematicBreakBlock) return new Border { Height = 1, Background = Resource("DividerStrokeColorDefaultBrush"), Margin = new(0, 6, 0, 6) };
         if (block is LeafBlock leaf && leaf.Inline is { } inline)
         {
-            var rich = new RichTextBlock { IsTextSelectionEnabled = true, TextWrapping = TextWrapping.Wrap, FontSize = block is HeadingBlock heading ? Math.Max(14, 26 - heading.Level * 2) : 14 };
+            var rich = new RichTextBlock { IsTextSelectionEnabled = true, HorizontalAlignment = HorizontalAlignment.Left, TextWrapping = TextWrapping.Wrap, FontSize = block is HeadingBlock heading ? Math.Max(14, 26 - heading.Level * 2) : 14 };
             if (block is HeadingBlock) rich.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold; var paragraph = new Paragraph(); Inlines(inline, paragraph.Inlines); rich.Blocks.Add(paragraph); return rich;
         }
         if (block is ContainerBlock container) return Container(container);

@@ -12,6 +12,7 @@ namespace Veo_Windows.Controls;
 /// <summary>Native lazy workspace tree and text editor; editor buffers survive utility-tab changes.</summary>
 public sealed class FilesPanel : UserControl
 {
+    private readonly Button back = new();
     private readonly WorkspaceCoordinator coordinator;
     private readonly TreeView tree = new() { SelectionMode = TreeViewSelectionMode.Single, ItemContainerTransitions = new() };
     private readonly TextBox editor = new() { AcceptsReturn = true, TextWrapping = TextWrapping.NoWrap,
@@ -99,22 +100,56 @@ public sealed class FilesPanel : UserControl
             var data = args.InvokedItem is TreeViewNode node ? node.Content as NodeData : args.InvokedItem as NodeData;
             if (data is not null && !data.Entry.IsDirectory) await GuardAsync(() => OpenAsync(data.Entry.RelativePath));
         };
+        var toolbar = new Grid { ColumnSpacing = 5, Padding = new Thickness(8, 3, 4, 3) };
+        toolbar.ColumnDefinitions.Add(new()); toolbar.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        searchFiles.PlaceholderText = "Filter files";
+        toolbar.Children.Add(searchFiles);
+        commands.Content = null; commands.HorizontalAlignment = HorizontalAlignment.Right;
+        commands.IsDynamicOverflowEnabled = false;
+        commands.PrimaryCommands.Remove(save); commands.SecondaryCommands.Add(save);
+        commands.PrimaryCommands.Remove(search); commands.SecondaryCommands.Add(search);
+        Grid.SetColumn(commands, 1); toolbar.Children.Add(commands);
         var grid = new Grid();
-        grid.RowDefinitions.Add(new() { Height = GridLength.Auto });
-        grid.RowDefinitions.Add(new() { Height = GridLength.Auto });
-        grid.RowDefinitions.Add(new() { Height = GridLength.Auto });
-        grid.RowDefinitions.Add(new() { Height = new GridLength(0.32, GridUnitType.Star) });
-        grid.RowDefinitions.Add(new() { Height = GridLength.Auto });
-        grid.RowDefinitions.Add(new() { Height = new GridLength(0.68, GridUnitType.Star) });
-        Add(grid, commands, 0); Add(grid, notice, 1); Add(grid, searchFiles, 2); Add(grid, tree, 3); Add(grid, find, 4); Add(grid, editor, 5);
+        grid.RowDefinitions.Add(new() { Height = GridLength.Auto }); grid.RowDefinitions.Add(new() { Height = GridLength.Auto }); grid.RowDefinitions.Add(new());
+        Add(grid, toolbar, 0); Add(grid, notice, 1); Add(grid, body, 2);
+        body.ColumnDefinitions.Add(new()); body.ColumnDefinitions.Add(new());
+        treePanel.Children.Add(tree); treePanel.Children.Add(emptyTree); body.Children.Add(treePanel);
+        var detail = new Grid { Padding = new Thickness(5) };
+        detail.RowDefinitions.Add(new() { Height = GridLength.Auto }); detail.RowDefinitions.Add(new() { Height = GridLength.Auto }); detail.RowDefinitions.Add(new());
+        back.Content = "‹  Files"; back.Style = (Style)Application.Current.Resources["SubtleButtonStyle"];
+        back.Click += (_, _) => { showsDetail = false; UpdateLayoutMode(); };
+        var header = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 5, Children = { back, location } };
+        Add(detail, header, 0); Add(detail, find, 1); Add(detail, editor, 2);
+        detailPanel.Children.Add(detail); detailPanel.Children.Add(emptyDetail); body.Children.Add(detailPanel);
+        SizeChanged += (_, _) => UpdateLayoutMode();
         Content = grid;
+        UpdateLayoutMode();
+    }
+
+    readonly Grid body = new(), treePanel = new(), detailPanel = new();
+    readonly InspectorEmptyState emptyTree = new("\uE8B7", "No files", "Files in this workspace appear here.");
+    readonly InspectorEmptyState emptyDetail = new("\uE8A5", "Select a file", "Preview files or open text files for manual editing.");
+    bool showsDetail;
+    void UpdateLayoutMode()
+    {
+        var compact = ActualWidth < 590;
+        back.Visibility = compact && showsDetail ? Visibility.Visible : Visibility.Collapsed;
+        var detailVisible = !compact || showsDetail;
+        treePanel.Visibility = !compact || !showsDetail ? Visibility.Visible : Visibility.Collapsed;
+        detailPanel.Visibility = detailVisible ? Visibility.Visible : Visibility.Collapsed;
+        body.ColumnDefinitions[0].Width = compact ? new GridLength(1, GridUnitType.Star) : new GridLength(210);
+        body.ColumnDefinitions[1].Width = compact ? new GridLength(0) : new GridLength(1, GridUnitType.Star);
+        Grid.SetColumn(detailPanel, compact ? 0 : 1);
+        detailPanel.Children[0].Visibility = active is null ? Visibility.Collapsed : Visibility.Visible;
+        emptyDetail.Visibility = active is null ? Visibility.Visible : Visibility.Collapsed;
+        emptyTree.Visibility = tree.RootNodes.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
     public async Task LoadAsync(ThreadSession session)
     {
         if (cwd == session.Record.Cwd) return;
         searchCancellation?.Cancel(); searchFiles.Text = ""; searchFiles.ItemsSource = null;
-        cwd = session.Record.Cwd; files = new(cwd); active = null; settingText = true; editor.Text = ""; settingText = false;
+        showsDetail = false; cwd = session.Record.Cwd; files = new(cwd); active = null; settingText = true; editor.Text = ""; settingText = false;
         save.IsEnabled = false; location.Text = Path.GetFileName(cwd); loadGeneration++;
         await GuardAsync(RefreshTreeAsync);
     }
@@ -125,6 +160,7 @@ public sealed class FilesPanel : UserControl
         var generation = loadGeneration; var entries = await files.ListChildrenAsync();
         if (generation != loadGeneration) return;
         tree.RootNodes.Clear(); foreach (var entry in entries) tree.RootNodes.Add(Node(entry));
+        UpdateLayoutMode();
     }
     public async Task OpenAsync(string relativePath)
     {
@@ -136,7 +172,7 @@ public sealed class FilesPanel : UserControl
             if (generation != loadGeneration) return;
             buffers[key] = buffer;
         }
-        active = buffer; settingText = true; editor.Text = buffer.Text; settingText = false;
+        active = buffer; showsDetail = true; UpdateLayoutMode(); settingText = true; editor.Text = buffer.Text; settingText = false;
         save.IsEnabled = buffer.Dirty; UpdateLocation();
     }
     private async Task SaveAsync() => await GuardAsync(async () =>

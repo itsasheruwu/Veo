@@ -52,7 +52,7 @@ public sealed partial class MainPage : Page
     Microsoft.UI.System.ThemeSettings? themeSettings;
     public MainPage()
     {
-        InitializeComponent(); InitializeUtilityLayout(); InitializeComposerControls(); viewReady = true; Timeline.ItemsSource = messages;
+        InitializeComponent(); InitializeMinimap(); InitializeUtilityLayout(); InitializeComposerControls(); viewReady = true; Timeline.ItemsSource = messages;
         Composer.TextCompositionStarted += (_, _) => { imeComposing = true; CloseCompletions(); };
         Composer.TextCompositionEnded += (_, _) => { imeComposing = false; _ = RefreshCompletionsAsync(); };
         ActualThemeChanged += (_, _) => ApplyTheme();
@@ -98,7 +98,11 @@ public sealed partial class MainPage : Page
             });
             ready.TrySetResult();
         };
-        SizeChanged += (_, _) => ApplyWorkspaceWidth();
+        SizeChanged += (_, _) =>
+        {
+            ApplyWorkspaceWidth();
+            if (!terminalWorkspaceExpanded && TerminalHeight.Height.Value > 0) SetDockHeight(workspace.Preferences.TerminalDockHeight);
+        };
         AddAccelerator(VirtualKey.I, VirtualKeyModifiers.Control | VirtualKeyModifiers.Menu, ToggleUtilityPanelAsync);
     }
     void SystemEffectsChanged(Windows.UI.ViewManagement.UISettings sender, object args) => DispatcherQueue.TryEnqueue(ApplyTheme);
@@ -110,11 +114,14 @@ public sealed partial class MainPage : Page
         try
         {
         if (App.Main?.Content is FrameworkElement root) { root.RequestedTheme = workspace.Preferences.Appearance switch { "Light" => ElementTheme.Light, "Dark" => ElementTheme.Dark, _ => ElementTheme.Default }; Services.WorkspaceAppearance.ApplyAccent(root, workspace.Preferences.Accent); }
-        Shell.Background = WorkspaceAppearance.Region(this, workspace.Preferences.CanvasMaterial, WorkspaceSurface.Canvas);
-        SidebarPanel.Background = WorkspaceAppearance.Region(this, workspace.Preferences.SidebarMaterial, WorkspaceSurface.Sidebar);
-        UtilityPanel.Background = WorkspaceAppearance.Region(this, workspace.Preferences.UtilityMaterial, WorkspaceSurface.Utility);
-        ComposerPanel.Background = WorkspaceAppearance.Region(this, workspace.Preferences.ComposerMaterial, WorkspaceSurface.Composer);
-        Notice.Background = WorkspaceAppearance.Region(this, workspace.Preferences.NotificationMaterial, WorkspaceSurface.Notice);
+        WorkspaceAppearance.ApplyRegion(Shell, workspace.Preferences.CanvasMaterial, WorkspaceSurface.Canvas);
+        WorkspaceAppearance.ApplyRegion(SidebarPanel, workspace.Preferences.SidebarMaterial, WorkspaceSurface.Sidebar);
+        terminalPanel?.ApplyWorkspaceMaterials();
+        WorkspaceAppearance.ApplyRegion(UtilityPanel, workspace.Preferences.UtilityMaterial, WorkspaceSurface.Utility);
+        WorkspaceAppearance.ApplyRegion(TurnSummary, workspace.Preferences.ComposerMaterial, WorkspaceSurface.Composer);
+        WorkspaceAppearance.ApplyRegion(ComposerSurface, workspace.Preferences.ComposerMaterial, WorkspaceSurface.Composer);
+        WorkspaceAppearance.ApplyRegion(MinimapSurface, workspace.Preferences.MinimapMaterial, WorkspaceSurface.Minimap);
+        WorkspaceAppearance.ApplyRegion(NoticeSurface, workspace.Preferences.NotificationMaterial, WorkspaceSurface.Notice);
         settingsPanel?.RefreshPalette();
         }
         finally { applyingAppearance = false; }
@@ -140,6 +147,20 @@ public sealed partial class MainPage : Page
         loading = true;
         try
         {
+            if (current?.Record.VeoId != session.Record.VeoId)
+            {
+                restoringUtilityTab = true;
+                try
+                {
+                    foreach (var tab in UtilityTabs.TabItems.OfType<TabViewItem>().Where(tab => Equals(tab.Tag, 4) || Equals(tab.Tag, 5)).ToArray())
+                    {
+                        planTabs.Remove(tab);
+                        UtilityTabs.TabItems.Remove(tab);
+                    }
+                    if (UtilityTabs.TabItems.Count == 0) UtilityTabs.SelectedItem = AddUtilityTab(0);
+                }
+                finally { restoringUtilityTab = false; }
+            }
             current = session; messages.Clear(); attachments.Clear(); pendingSignature = ""; queueSignature = "";
             ApprovalReviewHost.Content = new ApprovalReviewsPanel(App.RuntimeManagement, session);
             RestoreComposerDraft(session);
@@ -182,15 +203,18 @@ public sealed partial class MainPage : Page
             ToolTipService.SetToolTip(RuntimeLabel, workspace.Status);
         ReadyRuntimeDot.Visibility = workspace.Runtime.RuntimeState == CodexRuntimeState.Ready ? Visibility.Visible : Visibility.Collapsed;
         if (current is null) return;
-        ChatTitle.Text = current.Record.Title; CwdLabel.Text = current.Record.Cwd;
+        ChatTitle.Text = current.Record.Title;
+        ToolTipService.SetToolTip(ChatTitle, current.Record.Cwd);
         StopButton.Visibility = current.Timeline.IsRunning ? Visibility.Visible : Visibility.Collapsed;
         RenderFollowUpSend(current);
         RenderContextIndicator(current);
         UpdateSendAvailability();
         RenderComposerControls();
         UpdateConversationRows(current);
+        UpdateMinimap();
         if (current.DispatchWarning is { } warning) { Notice.Message = warning; Notice.IsOpen = true; }
         else if (App.Routing.Notice(current) is { } routingNotice) { Notice.Severity = InfoBarSeverity.Informational; Notice.Message = routingNotice; Notice.IsOpen = true; }
+        UpdateAgentList();
         RenderPending(); RenderQueue(); UpdateConversationChrome();
     }
     void RenderPending()
@@ -299,9 +323,27 @@ public sealed partial class MainPage : Page
     async Task ShowUtilityAsync()
     {
         if (current is null || UtilityHost is null) return;
-        switch (UtilityTabs.SelectedIndex)
+        switch (SelectedUtilityKind)
         {
-            case 1: browser ??= new(workspace); UtilityHost.Content = browser; await browser.LoadAsync(current); break;
+            case -1: UtilityHost.Content = null; break;
+            case 1:
+                var owner = (TabViewItem)UtilityTabs.SelectedItem;
+                var panel = Browser(); UtilityHost.Content = panel;
+                await panel.LoadAsync(current);
+                if (!ReferenceEquals(UtilityTabs.SelectedItem, owner)) break;
+                if (browserPages.TryGetValue(owner, out var page)) panel.SelectPage(page);
+                SyncBrowserStrip();
+                break;
+            case 4: UpdateAgentList(); break;
+            case 5:
+                if (UtilityTabs.SelectedItem is TabViewItem planTab && planTabs.TryGetValue(planTab, out var reference))
+                {
+                    var plan = new Controls.PlanPanel(App.Plans, reference.Session, reference.Item, () => Controls.TimelineMessageView.Snapshot(reference.Session), inInspector: true);
+                    plan.OpenThreadRequested += selected => _ = NavigateToThreadAsync(selected);
+                    plan.SourceRequested += source => _ = NavigateQuoteAsync(new(source.ThreadId, source.ItemId));
+                    UtilityHost.Content = plan;
+                }
+                break;
             case 2: files ??= new(workspace); UtilityHost.Content = files; await files.LoadAsync(current); break;
             case 3: var side = SideChat(); UtilityHost.Content = side; side.Show(current); break;
             default:
@@ -312,20 +354,63 @@ public sealed partial class MainPage : Page
     async Task ToggleTerminalAsync()
     {
         if (current is null) return;
-        if (TerminalHeight.Height.Value > 0) { ApplyTerminalExpansion(false); TerminalHeight.Height = new GridLength(0); UpdateConversationChrome(); return; }
+        if (TerminalHeight.Height.Value > 0) { ApplyTerminalExpansion(false); TerminalHeight.Height = new GridLength(0); TerminalDockGrip.Visibility = Visibility.Collapsed; UpdateConversationChrome(); return; }
         if (terminalPanel is null)
         {
             terminalPanel = new(workspace);
             terminalPanel.AddSelectionToChat += text => _ = Run(() => AddTerminalSelectionToComposerAsync(text));
+            terminalPanel.SettingsRequested += () => _ = Run(() => ShowSettingsAsync("Terminal"));
             terminalPanel.ExpandedChanged += ApplyTerminalExpansion;
+            terminalPanel.HideRequested += () => _ = Run(ToggleTerminalAsync);
         }
-        TerminalHost.Content = terminalPanel; TerminalHeight.Height = new GridLength(250); UpdateConversationChrome(); await terminalPanel.OpenAsync(current);
+        TerminalHost.Content = terminalPanel; SetDockHeight(workspace.Preferences.TerminalDockHeight); UpdateConversationChrome(); await terminalPanel.OpenAsync(current);
     }
+    double DockHeight(double requested) => Math.Clamp(double.IsFinite(requested) ? requested : 288, 148, Math.Max(148, ActualHeight - 240));
+
+    void SetDockHeight(double requested)
+    {
+        TerminalHeight.Height = new GridLength(DockHeight(requested));
+        TerminalDockGrip.Visibility = Visibility.Visible;
+    }
+
+    void TerminalDock_DragDelta(object sender, Microsoft.UI.Xaml.Controls.Primitives.DragDeltaEventArgs e)
+        => SetDockHeight(TerminalHeight.Height.Value - e.VerticalChange);
+
+    async void TerminalDock_DragCompleted(object sender, Microsoft.UI.Xaml.Controls.Primitives.DragCompletedEventArgs e)
+    {
+        workspace.Preferences.TerminalDockHeight = TerminalHeight.Height.Value;
+        await Run(PersistUtilityLayoutAsync);
+    }
+
+    async void TerminalDock_KeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (e.Key is not (VirtualKey.Up or VirtualKey.Down)) return;
+        e.Handled = true;
+        SetDockHeight(TerminalHeight.Height.Value + (e.Key == VirtualKey.Up ? 16 : -16));
+        workspace.Preferences.TerminalDockHeight = TerminalHeight.Height.Value;
+        await Run(PersistUtilityLayoutAsync);
+    }
+
+    bool terminalWorkspaceExpanded;
+
     void ApplyTerminalExpansion(bool expanded)
     {
+        terminalWorkspaceExpanded = expanded;
+        UpdateMinimap();
+        ConversationPane.Margin = expanded ? new Thickness(0) : new Thickness(12, 0, 12, 10);
+        terminalPanel!.ApplyWorkspaceMaterials();
+        Grid.SetColumn(ConversationPane, expanded ? 0 : 1);
+        Grid.SetColumnSpan(ConversationPane, expanded ? 4 : 1);
+        ApplyUtilityLayout();
+        SidebarPanel.Visibility = expanded ? Visibility.Collapsed : Visibility.Visible;
         TimelineHeight.Height = expanded ? new GridLength(0) : new GridLength(1, GridUnitType.Star);
-        TerminalHeight.Height = expanded ? new GridLength(1, GridUnitType.Star) : new GridLength(250);
-        foreach (var surface in new FrameworkElement[] { ChatHeader, Timeline, ApprovalReviewHost, PendingPanel, ComposerPanel }) surface.Visibility = expanded ? Visibility.Collapsed : Visibility.Visible;
+        if (expanded)
+        {
+            TerminalDockGrip.Visibility = Visibility.Collapsed;
+            TerminalHeight.Height = new GridLength(1, GridUnitType.Star);
+        }
+        else SetDockHeight(workspace.Preferences.TerminalDockHeight);
+        foreach (var surface in new FrameworkElement[] { ChatHeader, Timeline, ApprovalReviewHost, PendingPanel, ComposerDock }) surface.Visibility = expanded ? Visibility.Collapsed : Visibility.Visible;
         UpdateConversationChrome();
     }
     void UpdateConversationChrome()
@@ -336,12 +421,12 @@ public sealed partial class MainPage : Page
         WelcomeHeading.Visibility = welcome ? Visibility.Visible : Visibility.Collapsed;
         WelcomeBottom.Height = welcome ? new GridLength(1, GridUnitType.Star) : new GridLength(0);
         ChatIdentity.Visibility = welcome ? Visibility.Collapsed : Visibility.Visible;
-        ComposerPanel.MaxWidth = welcome ? 680 : (double)Resources["ConversationMaxWidth"];
+
         Composer.MinHeight = welcome ? 70 : 34;
         Composer.MaxHeight = welcome ? 130 : 110;
         Composer.FontSize = welcome ? 15 : 14;
         Composer.PlaceholderText = welcome ? $"Message {ComposerProviderName.Text} in this workspace…" : "Send follow-up";
-        WelcomeProjectRow.Visibility = welcome && !DictationActive ? Visibility.Visible : Visibility.Collapsed;
+        WelcomeProjectRow.Visibility = !DictationActive ? Visibility.Visible : Visibility.Collapsed;
         if (DictationActive && !CanDictate()) CancelDictation();
         UpdateDictationControl();
     }
@@ -364,7 +449,7 @@ public sealed partial class MainPage : Page
         try { await SaveDraftNowAsync(); }
         finally
         {
-            try { if (browser is not null) await browser.DisposeAsync(); }
+            try { if (browser is not null) await browser.DisposeAsync(); browserPages.Clear(); }
             finally { if (terminalPanel is not null) await terminalPanel.DisposeAsync(); }
         }
     }
@@ -379,7 +464,8 @@ public sealed partial class MainPage : Page
     public async Task QuoteIntoComposerAsync(QuoteReference reference, string text)
     {
         ShowWorkspace(restoreFocus: false);
-        InsertAtComposerCaret(reference.Markdown(text));
+        var passage = string.Join("\n", text.Trim().ReplaceLineEndings("\n").Split('\n').Select(line => "> " + line));
+        InsertAtComposerCaret($"[Quote]({reference.Uri.AbsoluteUri}):\n{passage}\n\n");
         await SaveDraftNowAsync(); Composer.Focus(FocusState.Programmatic);
     }
     private async Task AppendReviewCommentToDraftAsync(ThreadSession session, string text)

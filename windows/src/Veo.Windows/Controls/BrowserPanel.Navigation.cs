@@ -149,7 +149,7 @@ public sealed partial class BrowserPanel
         {
             state.Value.DesktopSite = desktop.IsChecked == true;
             await state.SaveAsync();
-            foreach (var tab in browsers.Values)
+            foreach (var tab in browsers)
                 if (tab.View.CoreWebView2 is { } core)
                     ApplyPreferences(tab, core);
         });

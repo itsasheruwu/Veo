@@ -12,6 +12,8 @@ namespace Veo_Windows;
 public sealed partial class MainPage
 {
     bool showEntireQueue;
+    string? editingQueueItem;
+    string queueEditDraft = "";
 
     bool CanSteer(ThreadSession session) => session.Timeline.IsRunning
         && !session.ProtectedTurn && !session.HasManagedGoal
@@ -36,6 +38,8 @@ public sealed partial class MainPage
         var queue = session.Queue;
         var signature = session.Record.VeoId + "|" + showEntireQueue + "|" + CanSteer(session) + "|" + session.Timeline.IsRunning
             + "|" + string.Join("|", queue.Select(item => item.ClientId + ":" + item.Text));
+        if (editingQueueItem is not null && !queue.Any(item => item.ClientId == editingQueueItem)) editingQueueItem = null;
+        signature += "|" + editingQueueItem;
         if (signature == queueSignature) return;
         queueSignature = signature;
 
@@ -70,42 +74,79 @@ public sealed partial class MainPage
             row.Children.Add(preview);
             var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 5, VerticalAlignment = VerticalAlignment.Center };
 
-            void Add(string title, Func<Task> action, string? glyph = null)
+            void Add(string title, Func<Task> action)
             {
-                var button = new Button { Height = 24, MinHeight = 0, FontSize = 11.5 };
-                if (glyph is null)
-                {
-                    button.Content = title;
-                    button.Padding = new(8, 0, 8, 0);
-                }
-                else
-                {
-                    button.Style = (Style)Resources["ComposerChromeButton"];
-                    button.Content = new FontIcon { Glyph = glyph, FontSize = 11 };
-                    button.Padding = new(0);
-                    button.Width = 24;
-                    button.CornerRadius = new(5);
-                    ToolTipService.SetToolTip(button, title);
-                }
-                AutomationProperties.SetName(button, title);
+                var button = new Button { Content = title, Height = 24, MinHeight = 0, Padding = new(8, 0, 8, 0), FontSize = 11.5 };
                 button.Click += async (_, _) => await Run(action);
                 actions.Children.Add(button);
             }
 
-            if (CanSteer(session) && !queued.StartGoal && queued.Daybreak is null && !ComposerModePolicy.RequiresNewTurn(queued))
-                Add("Steer now", () => App.Queue.SteerAsync(session, queued));
-            else if (!session.Timeline.IsRunning && queued.ClientId == queue[0].ClientId)
-                Add("Send now", () => workspace.DispatchNextQueuedAsync(session));
-
-            Add("Edit queued message", async () =>
+            void EndEdit()
             {
-                var editor = new TextBox { Text = queued.Text, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MaxHeight = 180 };
-                var dialog = new ContentDialog { Title = "Edit queued message", XamlRoot = XamlRoot, Content = editor,
-                    PrimaryButtonText = "Save", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary };
-                if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+                editingQueueItem = null;
+                queueEditDraft = "";
+                RenderQueue();
+            }
+
+            if (editingQueueItem == queued.ClientId)
+            {
+                var editor = new TextBox { Text = queueEditDraft, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MaxHeight = 100 };
+                AutomationProperties.SetName(editor, "Edit queued message");
+                editor.TextChanged += (_, _) => queueEditDraft = editor.Text;
+                editor.KeyDown += (_, args) =>
+                {
+                    if (args.Key == Windows.System.VirtualKey.Escape) { args.Handled = true; EndEdit(); }
+                };
+                row.Children.Clear();
+                row.Children.Add(editor);
+                Add("Cancel", () => { EndEdit(); return Task.CompletedTask; });
+                Add("Save", async () =>
+                {
                     await App.Queue.EditAsync(session, queued.ClientId, editor.Text, queued.Attachments);
-            }, "");
-            Add("Remove queued message", () => App.Queue.RemoveAsync(session, queued.ClientId), "");
+                    EndEdit();
+                });
+                editor.Loaded += (_, _) => { editor.Focus(FocusState.Programmatic); editor.Select(editor.Text.Length, 0); };
+            }
+            else
+            {
+                if (CanSteer(session) && !queued.StartGoal && queued.Daybreak is null && !ComposerModePolicy.RequiresNewTurn(queued))
+                    Add("Steer now", () => App.Queue.SteerAsync(session, queued));
+                else if (!session.Timeline.IsRunning && queued.ClientId == queue[0].ClientId)
+                    Add("Send now", () => workspace.DispatchNextQueuedAsync(session));
+
+                var menu = new MenuFlyout();
+                void Command(string title, Func<Task> action, bool enabled = true)
+                {
+                    var item = new MenuFlyoutItem { Text = title, IsEnabled = enabled };
+                    item.Click += async (_, _) => await Run(action);
+                    menu.Items.Add(item);
+                }
+                Command("Edit message", () =>
+                {
+                    editingQueueItem = queued.ClientId;
+                    queueEditDraft = queued.Text;
+                    RenderQueue();
+                    return Task.CompletedTask;
+                });
+                if (queue.Count > 1)
+                {
+                    Task Move(int delta)
+                    {
+                        var ids = session.Queue.Select(item => item.ClientId).ToList();
+                        int index = ids.IndexOf(queued.ClientId), target = index + delta;
+                        if (index < 0 || target < 0 || target >= ids.Count) return Task.CompletedTask;
+                        (ids[index], ids[target]) = (ids[target], ids[index]);
+                        return App.Queue.ReorderAsync(session, ids);
+                    }
+                    Command("Move up", () => Move(-1), queued.ClientId != queue[0].ClientId);
+                    Command("Move down", () => Move(1), queued.ClientId != queue[^1].ClientId);
+                }
+                Command("Remove from queue", () => App.Queue.RemoveAsync(session, queued.ClientId));
+                var more = new Button { Style = (Style)Resources["ComposerChromeButton"], Content = new SymbolIcon(Symbol.More),
+                    Flyout = menu, Height = 24, Width = 28, Padding = new(0), MinHeight = 0 };
+                AutomationProperties.SetName(more, "Queued message actions");
+                actions.Children.Add(more);
+            }
 
             Grid.SetColumn(actions, 1);
             row.Children.Add(actions);
@@ -138,7 +179,7 @@ public sealed partial class MainPage
             Children =
             {
                 new FontIcon { Glyph = "", FontSize = 11 },
-                new TextBlock { Text = "Queued", FontSize = 11, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                new TextBlock { Text = "Up next", FontSize = 11, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
                     VerticalAlignment = VerticalAlignment.Center }
             }
         });

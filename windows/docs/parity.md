@@ -571,3 +571,7 @@ UI Automation measured 7 pixels between the options button and model pill at thi
 Selecting Solid, Mica, and Acrylic through Appearance persisted all six region settings. With system transparency disabled, dark sidebar captures sampled #191A1B, #242629, and #2C2F33 respectively. Light appearance was also exercised. This machine verified the fallback rendering. Desktop translucency with Windows transparency enabled remains unverified. In the populated light fixture, the thread minimap and turn status appeared and could be hidden, and all three context usage styles persisted.
 
 The existing Start menu shortcut opened the normal profile in a visible 1380 × 900 Veo window. The installed assembly SHA-256 was `A7FD873C5990753F33628F12E8A81DC49FBA65C177071A6689A58CD1B2B64260`. The previous installation was retained.
+
+### 2.7.0 Beta 1 release verification
+
+On November 28, 2026, Astra-PC built the x64 installer, portable ZIP and update feed from the Windows beta branch. The application launched from the extracted release ZIP in an isolated profile with OpenCode selected. Native UI Automation read “Change provider, OpenCode” from the composer and activated the provider-management control from Settings. Both Runtime and Account exposed that control. The provider, composer and terminal workspace suites passed 44, 49 and 30 checks respectively. The installer and updater package were hash-verified. This pass did not exercise a clean-machine installation.

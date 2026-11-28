@@ -12,6 +12,7 @@ struct MarkdownMessageView: View {
     let artifacts: [DesktopToolArtifact]
     let citations: [DesktopCitationEntry]
     let workspaceURL: URL?
+    let onQuote: ((String) -> Void)?
     var isStreaming = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage(DesktopAppearancePreferences.textStreamingModeKey) private var streamingModeRaw =
@@ -29,7 +30,8 @@ struct MarkdownMessageView: View {
         artifacts: [DesktopToolArtifact] = [],
         citations: [DesktopCitationEntry] = [],
         workspaceURL: URL? = nil,
-        isStreaming: Bool = false
+        isStreaming: Bool = false,
+        onQuote: ((String) -> Void)? = nil
     ) {
         self.source = source
         self.fontSize = fontSize
@@ -37,6 +39,7 @@ struct MarkdownMessageView: View {
         self.citations = citations
         self.workspaceURL = workspaceURL
         self.isStreaming = isStreaming
+        self.onQuote = onQuote
     }
 
     var body: some View {
@@ -65,6 +68,8 @@ struct MarkdownMessageView: View {
                                 cursorOpacity: Self.cursorOpacity(at: context.date)
                             )
                         }
+                    } else if let onQuote, !isStreaming {
+                        DesktopQuotableText(attributed, size: fontSize, quote: onQuote)
                     } else {
                         proseText(attributed)
                     }
@@ -73,7 +78,7 @@ struct MarkdownMessageView: View {
                        let diagram = SafeMermaidDiagram.parse(block.text) {
                         SafeMermaidPreviewView(diagram: diagram, source: block.text)
                     } else {
-                        CodeBlockView(code: block.text, language: block.language)
+                        CodeBlockView(code: block.text, language: block.language, onQuote: isStreaming ? nil : onQuote)
                     }
                 }
             }
@@ -181,24 +186,27 @@ struct MarkdownMessageView: View {
     }
 
     private func receiveStreamUpdate(_ updatedSource: String) {
-        updateParagraphPresentation(updatedSource)
-        let isAppend = updatedSource.hasPrefix(previousSource)
+        let canResumeParagraph = isStreaming && streamingMode == .paragraph && !completedParagraphSource.isEmpty
+            && updatedSource.utf8.starts(with: previousSource.utf8)
+        updateParagraphPresentation(updatedSource, resume: canResumeParagraph)
+        let isAppend = usesTokenReveal && updatedSource.hasPrefix(previousSource)
         previousSource = updatedSource
-        targetCharacterCount = updatedSource.count
+        let count = updatedSource.count
+        targetCharacterCount = count
 
         guard usesTokenReveal else {
-            displayedCharacterCount = updatedSource.count
+            displayedCharacterCount = count
             return
         }
 
         if !isAppend {
             // A reconciliation can replace text rather than append it. Show the
             // corrected content immediately instead of replaying stale characters.
-            displayedCharacterCount = updatedSource.count
+            displayedCharacterCount = count
             return
         }
 
-        displayedCharacterCount = min(displayedCharacterCount, updatedSource.count)
+        displayedCharacterCount = min(displayedCharacterCount, count)
         startRevealLoopIfNeeded()
     }
 
@@ -216,12 +224,12 @@ struct MarkdownMessageView: View {
         startRevealLoopIfNeeded()
     }
 
-    private func updateParagraphPresentation(_ source: String) {
+    private func updateParagraphPresentation(_ source: String, resume: Bool = false) {
         guard isStreaming, streamingMode == .paragraph else {
             completedParagraphSource = ""
             return
         }
-        completedParagraphSource = DesktopParagraphStreaming.completedPrefix(in: source)
+        completedParagraphSource = DesktopParagraphStreaming.completedPrefix(in: source, appendingAfter: resume ? completedParagraphSource : "")
     }
 
     private func startRevealLoopIfNeeded() {
@@ -285,6 +293,7 @@ private struct DesktopStreamingTextCursor: View {
 private struct CodeBlockView: View {
     let code: String
     let language: String?
+    var onQuote: ((String) -> Void)? = nil
     @State private var didCopy = false
 
     var body: some View {
@@ -314,10 +323,17 @@ private struct CodeBlockView: View {
             Divider().opacity(0.4)
 
             ScrollView(.horizontal, showsIndicators: false) {
-                Text(code)
-                    .font(.system(size: 12, design: .monospaced))
-                    .textSelection(.enabled)
-                    .padding(10)
+                Group {
+                    if let onQuote {
+                        DesktopQuotableText(AttributedString(code), size: 12, code: true, quote: onQuote)
+                            .fixedSize()
+                    } else {
+                        Text(code)
+                            .font(.system(size: 12, design: .monospaced))
+                            .textSelection(.enabled)
+                    }
+                }
+                .padding(10)
             }
         }
         .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
@@ -341,7 +357,15 @@ struct MarkdownBlock: Identifiable {
     let text: String
     let language: String?
 
+    private static let otherLineEndings = CharacterSet.newlines.subtracting(CharacterSet(charactersIn: "\n"))
+
     static func parse(_ source: String) -> [MarkdownBlock] {
+        if !source.utf8.contains(0x60) {
+            let normalized = source.rangeOfCharacter(from: otherLineEndings) == nil
+                ? source : source.components(separatedBy: .newlines).joined(separator: "\n")
+            let text = normalized.trimmingCharacters(in: .whitespacesAndNewlines)
+            return text.isEmpty ? [] : [MarkdownBlock(id: "prose:plain:0", kind: .prose, text: text, language: nil)]
+        }
         var blocks: [MarkdownBlock] = []
         var buffer: [String] = []
         var bufferStartLine: Int?
@@ -368,7 +392,7 @@ struct MarkdownBlock: Identifiable {
         }
 
         for (lineNumber, line) in source.components(separatedBy: .newlines).enumerated() {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            let trimmed = line.utf8.contains(0x60) ? line.trimmingCharacters(in: .whitespaces) : ""
             if trimmed.hasPrefix("```") {
                 if isInFence {
                     flush(as: .code, language: fenceLanguage)

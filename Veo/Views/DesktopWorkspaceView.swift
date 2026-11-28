@@ -23,7 +23,7 @@ enum DesktopTheme {
     static let sidebarWidth: CGFloat = 318
     static let conversationWidth: CGFloat = 820
     static let conversationMinWidth: CGFloat = 560
-    static let welcomeWidth: CGFloat = 680
+    static let composerWidth: CGFloat = 621
     static let canvas = Color(nsColor: NSColor(name: nil) { appearance in
         Self.isDark(appearance)
             ? NSColor(srgbRed: 0.075, green: 0.078, blue: 0.082, alpha: 1)
@@ -367,6 +367,8 @@ struct DesktopWorkspaceView: View {
         DesktopNotificationMaterial.mica.rawValue
     @StateObject private var terminalHub = DesktopLocalTerminalHub()
     @StateObject private var utilityPanel = DesktopUtilityPanelModel()
+    @AppStorage(DesktopAppearancePreferences.windowMaterialKey) private var windowMaterialRaw =
+        DesktopWindowMaterial.solid.rawValue
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var showsInteractiveTerminal = false
     @State private var isTerminalWorkspace = false
@@ -415,12 +417,17 @@ struct DesktopWorkspaceView: View {
                     .allowsHitTesting(navigation.page == .workspace)
                     .accessibilityHidden(navigation.page != .workspace)
 
-                DesktopSettingsPage(store: store, navigation: navigation)
-                    .opacity(navigation.page == .settings ? 1 : 0)
-                    .allowsHitTesting(navigation.page == .settings)
-                    .accessibilityHidden(navigation.page != .settings)
+                if navigation.page == .settings {
+                    DesktopSettingsPage(store: store, navigation: navigation)
+                }
+            }
+            .background {
+                DesktopWindowChromeBackground(material: DesktopWindowMaterial(rawValue: windowMaterialRaw) ?? .solid)
+                    .ignoresSafeArea(.container, edges: .top)
+                    .allowsHitTesting(false)
             }
             .toolbar(id: "workspace") { workspaceToolbar }
+            .toolbarBackground(.hidden, for: .windowToolbar)
         }
         .navigationSplitViewStyle(.balanced)
         .frame(minWidth: 920, minHeight: 640)
@@ -1502,22 +1509,11 @@ private struct DesktopSidebarView: View {
            !store.isLoadingCodexThreads,
            store.runtimeState.isReady {
             let isSearching = !store.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            // Keep the empty state outside List: list-row accessibility otherwise
-            // merges the recovery button into a non-actionable row.
-            ContentUnavailableView {
-                Label(
-                    isSearching ? "No matching chats" : (store.isBrowsingArchivedThreads ? "No archived chats" : "No chats yet"),
-                    systemImage: isSearching ? "magnifyingglass" : "text.bubble"
-                )
-            } description: {
-                Text(
-                    isSearching
-                        ? "Try another search or clear it to show your chats."
-                        : (store.isBrowsingArchivedThreads
-                            ? "Chats you archive will appear here."
-                            : "Start a new chat, or enable Codex threads in the sidebar options to browse Codex CLI history.")
-                )
-            } actions: {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(isSearching ? "No matching chats" : (store.isBrowsingArchivedThreads ? "No archived chats" : "No chats yet"))
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+
                 if isSearching {
                     Button("Clear search") {
                         store.searchText = ""
@@ -1526,7 +1522,9 @@ private struct DesktopSidebarView: View {
                     .controlSize(.small)
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(.horizontal, 20)
+            .padding(.top, 8)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         } else {
             List(selection: selection) {
                 veoThreadSections
@@ -1842,32 +1840,34 @@ private struct DesktopSidebarView: View {
     }
 
     private var primaryActions: some View {
-        VStack(spacing: 2) {
+        HStack(spacing: 5) {
             Button {
                 store.beginNewChat()
             } label: {
                 Label("New Chat", systemImage: "square.and.pencil")
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .padding(.horizontal, 10)
+                    .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
                     .contentShape(Rectangle())
             }
+            .buttonStyle(DesktopSidebarActionStyle(isEmphasized: true))
 
             Button {
                 withAnimation(reduceMotion ? nil : .easeOut(duration: 0.16)) { showsSearch.toggle() }
                 if showsSearch { searchFocused = true }
             } label: {
-                Label("Search", systemImage: "magnifyingglass")
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 13, weight: .medium))
+                    .frame(width: 32, height: 32)
                     .contentShape(Rectangle())
             }
+            .buttonStyle(DesktopSidebarActionStyle(isEmphasized: showsSearch))
+            .accessibilityLabel("Search chats")
+            .help("Search chats")
         }
-        .buttonStyle(.plain)
-        .font(.system(size: 13.5, weight: .medium))
-        .labelStyle(VeoSidebarLabelStyle())
-        .padding(.horizontal, 10)
-        .padding(.top, DesktopTheme.spaceXS)
-        // The expanded search field supplies its own spacing, so the standing
-        // gap below the buttons would otherwise read as dead space.
-        .padding(.bottom, showsSearch ? DesktopTheme.spaceXS : DesktopTheme.spaceL)
+        .padding(.horizontal, 12)
+        .padding(.top, 6)
+        .padding(.bottom, showsSearch ? 5 : 12)
     }
 
     private var repositoryHeader: some View {
@@ -2095,7 +2095,7 @@ private struct DesktopSidebarView: View {
         VStack(spacing: 0) {
             Divider()
             VStack(spacing: 0) {
-                updateStatusRow
+                if showsUpdateDetail { updateStatusRow }
                 HStack(spacing: 8) {
                     Button {
                         if store.runtimeState.isReady {
@@ -2119,6 +2119,21 @@ private struct DesktopSidebarView: View {
 
                     Spacer(minLength: 8)
 
+                    if !showsUpdateDetail {
+                        Menu {
+                            Button("Check for Updates") { updateService.checkForUpdates(userInitiated: true) }
+                            Button("Update Settings…", action: openUpdates)
+                        } label: {
+                            Image(systemName: "arrow.down.circle")
+                                .frame(width: 24, height: 26)
+                        }
+                        .menuStyle(.borderlessButton)
+                        .menuIndicator(.hidden)
+                        .fixedSize()
+                        .help(updateStatusTitle)
+                        .accessibilityLabel("Software update")
+                        .accessibilityValue(updateStatusTitle)
+                    }
                     Button(action: openSettingsFromGear) {
                         Image(systemName: "gearshape")
                             .font(.system(size: 13))
@@ -2195,6 +2210,13 @@ private struct DesktopSidebarView: View {
         .help(updateStatusHelp)
         .accessibilityLabel("Software update")
         .accessibilityValue(updateStatusTitle)
+    }
+
+    private var showsUpdateDetail: Bool {
+        switch updateService.phase {
+        case .checking, .available, .downloading, .installing, .readyToRelaunch, .failed: true
+        default: false
+        }
     }
 
     private var updateIsActionable: Bool {
@@ -2629,16 +2651,12 @@ private struct DesktopForkThreadView: View {
     }
 }
 
-private struct VeoSidebarLabelStyle: LabelStyle {
+struct DesktopSidebarActionStyle: ButtonStyle {
+    let isEmphasized: Bool
     func makeBody(configuration: Configuration) -> some View {
-        HStack(spacing: 10) {
-            configuration.icon
-                .foregroundStyle(.secondary)
-                .frame(width: 17)
-            configuration.title
-        }
-        .padding(.horizontal, 8)
-        .frame(height: 34)
+        configuration.label
+            .background(.primary.opacity(configuration.isPressed ? 0.13 : isEmphasized ? 0.065 : 0.025),
+                        in: RoundedRectangle(cornerRadius: 7, style: .continuous))
     }
 }
 
@@ -2672,7 +2690,7 @@ private struct DesktopThreadRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Color.clear.frame(width: CGFloat(treeDepth) * 13, height: 1)
+            if treeDepth > 0 { Color.clear.frame(width: CGFloat(treeDepth) * 13, height: 1) }
             if hasChildren {
                 Button {
                     toggleExpanded?()
@@ -2699,7 +2717,7 @@ private struct DesktopThreadRow: View {
                 HStack(spacing: 5) {
                     DesktopShimmerText(
                         text: thread.title,
-                        font: .system(size: 12.5, weight: .regular),
+                        font: .system(size: 12.5, weight: isSelected ? .semibold : .regular),
                         baseStyle: AnyShapeStyle(.primary),
                         isActive: showsActiveTurn
                     )
@@ -2755,8 +2773,10 @@ private struct DesktopThreadRow: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            .font(.system(size: 10.5, weight: .medium))
+            .font(.system(size: 10.5))
+            .monospacedDigit()
         }
+        .padding(.horizontal, 5)
         .padding(.vertical, DesktopTheme.spaceXS)
         .contentShape(Rectangle())
         .help(thread.isSubagent
@@ -2768,7 +2788,7 @@ private struct DesktopThreadRow: View {
     /// Inset rounded selection matching macOS sidebar conventions.
     private var rowBackground: some View {
         RoundedRectangle(cornerRadius: 6, style: .continuous)
-            .fill(isSelected ? veoAccent.opacity(0.22) : Color.clear)
+            .fill(isSelected ? veoAccent.opacity(0.15) : Color.clear)
             .padding(.horizontal, 6)
             .padding(.vertical, 1)
     }
@@ -2926,8 +2946,6 @@ private struct DesktopConversationView: View {
     @AppStorage(DesktopAppearancePreferences.threadMinimapVisibleKey) private var showsThreadMinimap = true
     @AppStorage(DesktopAppearancePreferences.threadMinimapMaterialKey) private var threadMinimapMaterialRaw =
         DesktopMinimapMaterial.liquidGlass.rawValue
-    @AppStorage(DesktopAppearancePreferences.windowMaterialKey) private var windowMaterialRaw =
-        DesktopWindowMaterial.solid.rawValue
     @State private var isPinnedToBottom = true
     @State private var composerHeight: CGFloat = 0
     @State private var expandedWorkTurns: Set<String> = []
@@ -2949,9 +2967,7 @@ private struct DesktopConversationView: View {
     var body: some View {
         VStack(spacing: 0) {
             ZStack {
-                DesktopWindowChromeBackground(
-                    material: DesktopWindowMaterial(rawValue: windowMaterialRaw) ?? .solid
-                )
+                Color.clear
 
                 switch store.runtimeState {
                 case .starting:
@@ -2959,9 +2975,7 @@ private struct DesktopConversationView: View {
                 case .unavailable(let message):
                     runtimeUnavailable(message)
                 case .ready:
-                    if store.selectedThreadID == nil, store.timeline.isEmpty {
-                        DesktopWelcomeView(store: store)
-                    } else if showsEmptyChat {
+                    if (store.selectedThreadID == nil && store.timeline.isEmpty) || showsEmptyChat {
                         DesktopEmptyChatView(
                             store: store,
                             composerTransitionNamespace: composerTransitionNamespace
@@ -3646,29 +3660,6 @@ private struct DesktopEmptyChatView: View {
     }
 }
 
-private struct DesktopWelcomeView: View {
-    @Bindable var store: DesktopCodexStore
-
-    var body: some View {
-        VStack(spacing: 0) {
-            Spacer(minLength: DesktopTheme.spaceXL)
-
-            VStack(alignment: .leading, spacing: DesktopTheme.spaceM) {
-                DesktopComposerView(store: store, isWelcome: true)
-            }
-            .frame(maxWidth: DesktopTheme.welcomeWidth)
-            .padding(.horizontal, 30)
-
-            Spacer(minLength: DesktopTheme.spaceXL)
-
-            Text("Veo runs Codex locally in a temporary workspace or a project folder you choose.")
-                .font(.system(size: 11.5, weight: .medium))
-                .foregroundStyle(.secondary)
-                .padding(.bottom, 28)
-        }
-    }
-}
-
 private struct DesktopTimelineRow: View {
     @Environment(DesktopMessageSendTransition.self) private var messageSendTransition: DesktopMessageSendTransition?
     let store: DesktopCodexStore
@@ -3704,7 +3695,8 @@ private struct DesktopTimelineRow: View {
         }
         .contextMenu {
             if item.kind == .assistant {
-                Button("Quote response…") { showsQuoteEditor = true }
+                Button("Quote response") { store.quoteResponse(item, excerpt: item.body) }
+                Button("Quote excerpt…") { showsQuoteEditor = true }
             }
             if item.kind == .user, item.turnID != nil {
                 Button("Edit from here…") { confirmsEditFromHere = true }
@@ -3726,9 +3718,6 @@ private struct DesktopTimelineRow: View {
         } message: {
             Text("The prompt and attachments return to your draft. Restoring files replaces tracked and nonignored workspace files and staged changes with the saved checkpoint, including removing new files. A recovery checkpoint is saved first. External actions are not undone.")
         }
-        .sheet(isPresented: $showsQuoteEditor) {
-            DesktopQuoteEditor(item: item, threadID: store.selectedThreadID ?? "") { store.insertContextAtCaret($0) }
-        }
         .confirmationDialog(
             "Revert conversation history?",
             isPresented: $confirmsHistoryRevert,
@@ -3748,17 +3737,14 @@ private struct DesktopTimelineRow: View {
             Spacer(minLength: 90)
             VStack(alignment: .leading, spacing: 8) {
                 if !item.body.isEmpty {
-                    Text(DesktopInlineContext.displayText(item.body))
+                    Text(DesktopInlineContext.linkedText(item.body))
+                        .environment(\.openURL, OpenURLAction { url in
+                            store.openInlineContext(url)
+                            return .handled
+                        })
                         .font(.system(size: 14))
                         .textSelection(.enabled)
                         .modifier(DesktopSendGeometry(part: .text, role: .message(item.clientID)))
-                }
-                ForEach(DesktopInlineContext.scan(item.body), id: \.range.location) { reference in
-                    Button(reference.label, systemImage: reference.url.scheme == "veo-quote" ? "quote.bubble" : "link") {
-                        store.openInlineContext(reference.url)
-                    }
-                    .buttonStyle(.borderless)
-                    .font(.caption)
                 }
                 if !item.attachments.isEmpty {
                     DesktopAttachmentStrip(attachments: item.attachments, sendRole: .message(item.clientID))
@@ -3781,25 +3767,16 @@ private struct DesktopTimelineRow: View {
 
     private var assistantRow: some View {
         VStack(alignment: .leading, spacing: 7) {
-            HStack {
-                Text(item.title)
-                    .font(.system(size: 12, weight: .semibold))
-                Spacer(minLength: 12)
-                Button { showsQuoteEditor = true } label: {
-                    Label("Quote response", systemImage: "quote.bubble")
-                }
-                .labelStyle(.iconOnly)
-                .buttonStyle(.borderless)
-                .help("Quote response")
-                .disabled(item.body.isEmpty)
-            }
-            .foregroundStyle(.secondary)
+            Text(item.title)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.secondary)
             MarkdownMessageView(
                 source: item.body,
                 artifacts: item.artifacts.filter { artifact in !item.generatedConcepts.contains(where: { $0.source == artifact.source }) },
                 citations: item.citations,
                 workspaceURL: workspaceURL,
-                isStreaming: isActivelyStreamingResponse
+                isStreaming: isActivelyStreamingResponse,
+                onQuote: { store.quoteResponse(item, excerpt: $0) }
             )
             if item.generatedConcepts.count > 1 {
                 DesktopGeneratedConcepts(artifacts: item.generatedConcepts, workspaceURL: workspaceURL) { concepts, feedback in
@@ -3808,6 +3785,12 @@ private struct DesktopTimelineRow: View {
             } else if let concept = item.generatedConcepts.first {
                 DesktopConceptImage(artifact: concept, workspaceURL: workspaceURL, label: "Generated image")
                     .frame(maxWidth: 360)
+            }
+            if showsQuoteEditor {
+                DesktopQuoteEditor(excerpt: item.body, cancel: { showsQuoteEditor = false }) { excerpt in
+                    showsQuoteEditor = false
+                    store.quoteResponse(item, excerpt: excerpt)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -4145,24 +4128,26 @@ private struct DesktopComposerView: View {
     @State private var dictatedSelection: (text: String, offset: Int)?
 
     @State private var isOptionsPresented = false
+    @State private var showsDeliveryOptions = false
     @State private var recalledPromptIndex: Int?
     @State private var isAttachmentDropTarget = false
     @State private var askQuestionDraftsByRequestID: [String: DesktopAskQuestionsComposerDraft] = [:]
 
     var body: some View {
-        Group {
-            if isWelcome {
-                composerCard
-            } else {
-                VStack(spacing: 10) {
-                    if !dictation.isActive { DesktopTurnStatusView(store: store, onOpenSubagent: onOpenSubagent) }
-                    composerCard
-                }
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 18)
-                    .frame(maxWidth: .infinity)
+        VStack(spacing: 5) {
+            if !isWelcome && !dictation.isActive {
+                DesktopTurnStatusView(store: store, onOpenSubagent: onOpenSubagent)
+                    .padding(.bottom, 5)
+            }
+            composerCard
+            if !dictation.isActive, store.selectedUserInputRequest == nil || isWelcome {
+                DesktopComposerProjectBar(store: store, isWelcome: isWelcome)
             }
         }
+        .frame(maxWidth: DesktopTheme.composerWidth)
+        .padding(.horizontal, isWelcome ? 0 : 16)
+        .padding(.bottom, isWelcome ? 0 : 12)
+        .frame(maxWidth: .infinity)
         .onAppear { requestFocus() }
         .onDisappear { dictation.cancel() }
         .onChange(of: isInputVisible) { _, visible in
@@ -4283,7 +4268,7 @@ private struct DesktopComposerView: View {
     }
 
     private func requestFocus() {
-        guard isInputVisible, store.hasExplicitWorkspace, store.selectedUserInputRequest == nil else { return }
+        guard isInputVisible, store.canComposeDraft, store.selectedUserInputRequest == nil else { return }
         focusToken += 1
     }
 
@@ -4365,14 +4350,12 @@ private struct DesktopComposerView: View {
             ZStack(alignment: .topLeading) {
                 ComposerTextView(
                     text: $store.draft,
-                    placeholder: isWelcome
-                        ? "Message \(store.providerTitle) in this workspace…"
-                        : (reviewPlan == nil ? "Send follow-up" : "Ask Codex to revise this plan…"),
+                    placeholder: composerPlaceholder,
                     placeholderColor: composerPlaceholderColor,
                     fontSize: isWelcome ? 15 : 14,
                     minHeight: isWelcome ? 70 : 34,
                     maxHeight: isWelcome ? 130 : 110,
-                    isEditable: isInputVisible && store.hasExplicitWorkspace && store.visionFallbackStatus == nil && !dictation.isActive,
+                    isEditable: isInputVisible && store.canComposeDraft && store.visionFallbackStatus == nil && !dictation.isActive,
                     focusToken: focusToken,
                     selectionAfterUpdate: dictatedSelection,
                     onSubmit: {
@@ -4414,63 +4397,15 @@ private struct DesktopComposerView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-
             if !dictation.isActive {
             VStack(alignment: .leading, spacing: 9) {
-                DesktopComposerToolbarLayout {
-                    DesktopWrappingControlsLayout(spacing: 7) {
-                    Button {
-                        isOptionsPresented.toggle()
-                    } label: {
-                        Image(systemName: "plus")
-                            .font(.system(size: 12, weight: .semibold))
-                            .frame(width: 27, height: 27)
-                            .background(DesktopTheme.raised, in: Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .help("Composer options")
-                    .accessibilityLabel("Composer options")
-                    .popover(isPresented: $isOptionsPresented, arrowEdge: .top) {
-                        DesktopComposerOptionsView(store: store, openProject: {
-                            isOptionsPresented = false
-                            DispatchQueue.main.async { store.chooseWorkspace() }
-                        }, didInsertPlugin: { isOptionsPresented = false })
-                    }
-                    .disabled(store.visionFallbackStatus != nil)
-                    .layoutPriority(1)
-
-                    DesktopComposerProviderPicker(store: store)
-                    DesktopModelMenu(store: store)
-                    DesktopComposerPermissionsPicker(store: store)
-                    }
-                    HStack(spacing: 8) {
-                        if showsContextWindowUsage, let usage = store.selectedTokenUsage, usage.fractionUsed != nil {
-                            DesktopContextWindowUsageView(
-                                usage: usage,
-                                style: DesktopContextWindowUsageStyle(rawValue: contextWindowUsageStyleRaw) ?? .percent,
-                                modelName: store.modelDisplayName,
-                                isCompacting: store.isSelectedThreadCompacting
-                            )
-                        }
+                HStack(spacing: 7) {
+                    optionsButton
+                    composerSettings
                     DesktopComposerModePills(store: store)
-                        .layoutPriority(1)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
                     dictationButton
-                    Button {
-                        submitDraft()
-                    } label: {
-                        Image(systemName: store.isBusyTurn ? store.followUpBehavior.systemImage : "arrow.up")
-                            .font(.system(size: 12, weight: .bold))
-                            .frame(width: 28, height: 28)
-                            .background(.white, in: Circle())
-                            .foregroundStyle(.black)
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(!store.canSend || dictation.isActive)
-                    .opacity(store.canSend && !dictation.isActive ? 1 : 0.42)
-                    .help(sendButtonHelp)
-                    .accessibilityLabel(sendButtonHelp)
-                    .layoutPriority(1)
-
+                    deliveryButton
                     if store.isRunningTurn || store.isRoutingSelectedModel {
                         Button {
                             store.stopTurn()
@@ -4488,15 +4423,10 @@ private struct DesktopComposerView: View {
                         .layoutPriority(1)
                     }
                 }
-                    }
-                    .environment(\.desktopComposerPickerGroup, pickerGroup)
+                .environment(\.desktopComposerPickerGroup, pickerGroup)
 
                 if hasSecondaryComposerControls {
                     DesktopWrappingControlsLayout(spacing: 8) {
-                        if store.isBusyTurn {
-                            followUpMenu
-                                .layoutPriority(1)
-                        }
                         if let plan = reviewPlan {
                             Button {
                                 store.navigateToPlan(plan.reference)
@@ -4615,9 +4545,6 @@ private struct DesktopComposerView: View {
             }
             .padding(DesktopTheme.spaceM)
 
-            if isWelcome && !dictation.isActive {
-                DesktopComposerProjectBar(store: store)
-            }
             }
         }
         .modifier(DesktopFloatingMaterialSurface(
@@ -4632,7 +4559,6 @@ private struct DesktopComposerView: View {
         .animation(askQuestionsAnimation, value: store.selectedUserInputRequest?.id)
         .animation(askQuestionsAnimation, value: reviewPlan?.reference.itemID)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: isAttachmentDropTarget)
-        .frame(maxWidth: isWelcome ? DesktopTheme.welcomeWidth : DesktopTheme.conversationWidth)
         .frame(maxWidth: .infinity)
         .dropDestination(
             for: URL.self,
@@ -4701,7 +4627,7 @@ private struct DesktopComposerView: View {
     }
 
     private var hasSecondaryComposerControls: Bool {
-        store.isBusyTurn || reviewPlan != nil
+        reviewPlan != nil
             || (store.realtimeVoiceEnabled && store.capabilities.supports(.realtimeVoice) && store.selectedThreadID != nil)
     }
 
@@ -4711,7 +4637,7 @@ private struct DesktopComposerView: View {
         // which left the placeholder almost invisible on the darker materials.
         // Liquid Glass is the busiest backdrop, so it gets a touch more contrast.
         let material = DesktopComposerMaterial(rawValue: composerMaterialRaw) ?? .liquidGlass
-        let alpha: CGFloat = material == .liquidGlass ? 0.34 : 0.30
+        let alpha: CGFloat = material == .liquidGlass ? 0.62 : 0.58
         return colorScheme == .dark
             ? NSColor(white: 1, alpha: alpha)
             : NSColor(white: 0, alpha: alpha)
@@ -4736,32 +4662,124 @@ private struct DesktopComposerView: View {
         }
     }
 
-    private var followUpMenu: some View {
-        Menu {
-            ForEach(DesktopFollowUpBehavior.allCases) { behavior in
-                Button {
-                    store.setFollowUpBehavior(behavior)
-                } label: {
-                    Label(behavior.title, systemImage: behavior.systemImage)
-                }
-                .disabled(behavior == .steer && !store.capabilities.supports(.turnSteering))
-            }
+    private var optionsButton: some View {
+        Button {
+            isOptionsPresented.toggle()
         } label: {
-            Label(store.followUpBehavior.shortTitle, systemImage: store.followUpBehavior.systemImage)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.secondary)
+            Image(systemName: "plus")
+                .font(.system(size: 12, weight: .semibold))
+                .frame(width: 27, height: 27)
+                .background(DesktopTheme.raised, in: Circle())
         }
-        .menuStyle(.borderlessButton)
-        .help("Choose how messages sent during an active turn are handled")
+        .buttonStyle(.plain)
+        .help("Composer options")
+        .accessibilityLabel("Composer options")
+        .popover(isPresented: $isOptionsPresented, arrowEdge: .top) {
+            DesktopComposerOptionsView(store: store, openProject: {
+                isOptionsPresented = false
+                DispatchQueue.main.async { store.chooseWorkspace() }
+            }, didInsertPlugin: { isOptionsPresented = false })
+        }
+        .disabled(store.visionFallbackStatus != nil)
     }
 
-    private var sendButtonHelp: String {
-        if store.isRunningTurn {
-            return store.followUpBehavior == .steer ? "Steer current turn" : "Queue next message"
+    @ViewBuilder
+    private var composerSettings: some View {
+        DesktopModelMenu(store: store)
+        DesktopComposerPermissionsPicker(store: store)
+        if showsContextWindowUsage, let usage = store.selectedTokenUsage, usage.fractionUsed != nil {
+            DesktopContextWindowUsageView(
+                usage: usage, style: DesktopContextWindowUsageStyle(rawValue: contextWindowUsageStyleRaw) ?? .percent,
+                modelName: store.modelDisplayName, isCompacting: store.isSelectedThreadCompacting
+            )
         }
-        if store.isSubmittingTurn { return "Queue next message" }
-        return "Send (Return)"
     }
+
+    private var composerPlaceholder: String {
+        if isWelcome { return "Ask \(store.providerTitle) to build, fix, or explain something…" }
+        if reviewPlan != nil { return "Ask Codex to revise this plan…" }
+        if showsDeliveryChoice {
+            return store.currentFollowUpBehavior == .steer ? "Guide the current turn…" : "Add a message to the queue…"
+        }
+        return "Send follow-up"
+    }
+
+    private var showsDeliveryChoice: Bool { store.isBusyTurn && store.activeAgent == nil }
+
+    @ViewBuilder
+    private var deliveryButton: some View {
+        if showsDeliveryChoice {
+            let behavior = store.currentFollowUpBehavior
+            HStack(spacing: 0) {
+                Button(action: submitDraft) {
+                    Label(behavior.shortTitle, systemImage: behavior.systemImage)
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .padding(.leading, 9)
+                        .padding(.trailing, 6)
+                        .frame(height: 28)
+                        .contentShape(Rectangle())
+                }
+                .disabled(!store.canSend)
+                .accessibilityLabel(behavior.title)
+                .help(behavior.title + " (Return)")
+                Rectangle().fill(.quaternary).frame(width: 1, height: 13)
+                Button { showsDeliveryOptions.toggle() } label: {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 9, weight: .semibold))
+                        .frame(width: 22, height: 28)
+                        .contentShape(Rectangle())
+                }
+                .popover(isPresented: $showsDeliveryOptions, arrowEdge: .top) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        ForEach(DesktopFollowUpBehavior.allCases) { option in
+                            Button {
+                                store.setFollowUpBehavior(option)
+                                showsDeliveryOptions = false
+                            } label: {
+                                HStack(spacing: 8) {
+                                    Image(systemName: option.systemImage).frame(width: 16)
+                                    Text(option.title)
+                                    Spacer()
+                                    if option == behavior { Image(systemName: "checkmark") }
+                                }
+                                .font(.system(size: 12, weight: .medium))
+                                .padding(7)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel(option.title)
+                            .accessibilityAddTraits(option == behavior ? .isSelected : [])
+                            .disabled(option == .steer && !store.canSteerCurrentDraft)
+                        }
+                    }
+                    .padding(6)
+                    .frame(width: 192)
+                }
+                .onChange(of: store.selectedThreadID) { showsDeliveryOptions = false }
+                .onDisappear { showsDeliveryOptions = false }
+                .help("Choose how to send this follow-up")
+                .accessibilityLabel("Follow-up delivery")
+                .accessibilityValue(behavior.title)
+            }
+            .buttonStyle(.plain)
+            .fixedSize()
+            .background(veoAccent.opacity(0.14), in: Capsule())
+        } else {
+            Button(action: submitDraft) {
+                Image(systemName: "arrow.up")
+                    .font(.system(size: 12, weight: .bold))
+                    .frame(width: 28, height: 28)
+                    .background(.white, in: Circle())
+                    .foregroundStyle(.black)
+            }
+            .buttonStyle(.plain)
+            .disabled(!store.canSend || dictation.isActive)
+            .opacity(store.canSend && !dictation.isActive ? 1 : 0.42)
+            .help("Send (Return)")
+            .accessibilityLabel("Send")
+        }
+    }
+
 }
 
 /// A compact secondary control row that wraps instead of shrinking labels or

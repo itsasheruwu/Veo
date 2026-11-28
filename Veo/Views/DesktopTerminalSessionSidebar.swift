@@ -52,7 +52,7 @@ struct DesktopTerminalSessionSidebar: View {
                     .tag(tab.id)
                     .listRowBackground(
                         ((hub.focusedSessionID ?? hub.selectedTabID) == tab.id)
-                            ? veoAccent.opacity(0.22)
+                            ? veoAccent.opacity(0.15)
                             : Color.clear
                     )
                     .onHover { hovering in
@@ -76,30 +76,29 @@ struct DesktopTerminalSessionSidebar: View {
     }
 
     private var primaryActions: some View {
-        VStack(spacing: 2) {
-            Button {
-                addSession()
-            } label: {
+        HStack(spacing: 5) {
+            Button(action: addSession) {
                 Label("New Session", systemImage: "plus")
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .padding(.horizontal, 10)
+                    .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
                     .contentShape(Rectangle())
             }
+            .buttonStyle(DesktopSidebarActionStyle(isEmphasized: true))
             .disabled(!store.hasExplicitWorkspace)
 
-            Button {
-                isWorkspace = false
-            } label: {
-                Label("Back to Chat", systemImage: "text.bubble")
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            Button { isWorkspace = false } label: {
+                Image(systemName: "bubble.left")
+                    .frame(width: 32, height: 32)
                     .contentShape(Rectangle())
             }
+            .buttonStyle(DesktopSidebarActionStyle(isEmphasized: false))
+            .accessibilityLabel("Back to Chat")
+            .help("Back to Chat")
         }
-        .buttonStyle(.plain)
-        .font(.system(size: 13.5, weight: .medium))
-        .labelStyle(DesktopTerminalSidebarLabelStyle())
-        .padding(.horizontal, 10)
-        .padding(.top, DesktopTheme.spaceXS)
-        .padding(.bottom, DesktopTheme.spaceL)
+        .padding(.horizontal, 12)
+        .padding(.top, 6)
+        .padding(.bottom, 12)
     }
 
     private var sidebarFooter: some View {
@@ -175,20 +174,20 @@ private struct DesktopTerminalSessionRow: View {
                 .fill(session.isRunning ? veoAccent : Color.secondary.opacity(0.35))
                 .frame(width: 5, height: 5)
 
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text(session.tabTitle)
-                    .font(.system(size: 12.5, weight: .regular))
+                    .font(.system(size: 12.5, weight: isSelected ? .semibold : .regular))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
                 Text(session.agentLabel)
-                    .font(.system(size: 9.5, weight: .medium, design: .monospaced))
-                    .foregroundStyle(isSelected ? veoAccent : .secondary)
+                    .font(.system(size: 10.5, weight: .regular, design: .monospaced))
+                    .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
 
             Spacer(minLength: 8)
 
-            if isVisibleInGrid {
+            if isVisibleInGrid && !isSelected {
                 Image(systemName: "square.split.2x1")
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(.tertiary)
@@ -212,18 +211,5 @@ private struct DesktopTerminalSessionRow: View {
         .help(session.workingDirectoryPath)
         .accessibilityElement(children: .contain)
         .accessibilityValue(session.isRunning ? "Running" : "Stopped")
-    }
-}
-
-private struct DesktopTerminalSidebarLabelStyle: LabelStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        HStack(spacing: 10) {
-            configuration.icon
-                .foregroundStyle(.secondary)
-                .frame(width: 17)
-            configuration.title
-        }
-        .padding(.horizontal, 8)
-        .frame(height: 34)
     }
 }

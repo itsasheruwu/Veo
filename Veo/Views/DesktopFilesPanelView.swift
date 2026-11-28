@@ -112,10 +112,15 @@ struct DesktopFilesPanelView: View {
 
     private var filesToolbar: some View {
         HStack(spacing: 7) {
-            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-            TextField("Filter files", text: $files.searchText)
-                .textFieldStyle(.plain)
-            Spacer(minLength: 4)
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField("Filter files", text: $files.searchText)
+                    .textFieldStyle(.plain)
+            }
+            .font(.system(size: 12))
+            .padding(.horizontal, 8)
+            .frame(height: 26)
+            .background(.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 6))
             if files.isLoadingTree { ProgressView().controlSize(.mini) }
             Button { files.refresh() } label: { Image(systemName: "arrow.clockwise") }
                 .help("Refresh Files")

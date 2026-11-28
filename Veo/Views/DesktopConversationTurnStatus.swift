@@ -39,19 +39,28 @@ struct DesktopConversationTurnStatus: View {
         HStack(spacing: 10) {
             if interactive {
                 Button(action: toggle) {
-                    Label(label, systemImage: isExpanded ? "chevron.down" : "chevron.right")
-                        .contentShape(Rectangle())
+                    HStack(spacing: 7) {
+                        Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                            .font(.system(size: 9, weight: .semibold))
+                        Text(label)
+                        summaryText
+                    }
+                    .padding(.horizontal, 8)
+                    .frame(minHeight: 26)
+                    .background(.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 7))
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .focusable(interactions: .edit)
+                .onKeyPress(keys: [.space, .return]) { _ in
+                    toggle()
+                    return .handled
+                }
+                .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
                 .accessibilityHint(isExpanded ? "Hide turn activity" : "Show turn activity")
             } else {
                 Text(label)
-            }
-            if let summary, !summary.isEmpty {
-                Text(summary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .foregroundStyle(.tertiary)
+                summaryText
             }
             Rectangle()
                 .fill(.quaternary)
@@ -62,6 +71,17 @@ struct DesktopConversationTurnStatus: View {
         .monospacedDigit()
         .foregroundStyle(.secondary)
     }
+
+    @ViewBuilder
+    private var summaryText: some View {
+        if let summary, !summary.isEmpty {
+            Text(summary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .foregroundStyle(.secondary)
+        }
+    }
+
 }
 
 struct DesktopConversationTurnAnchors {

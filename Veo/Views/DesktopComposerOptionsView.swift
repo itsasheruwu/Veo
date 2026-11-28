@@ -275,28 +275,91 @@ private extension DesktopInteractionMode {
 struct DesktopComposerModePills: View {
     @Bindable var store: DesktopCodexStore
 
+    @State private var showsOverflow = false
+
+    private enum Pill: Hashable { case interaction, wild, goal }
+
+    private var active: [Pill] {
+        var pills: [Pill] = []
+        if store.interactionMode != .agentic { pills.append(.interaction) }
+        if store.isWildEnabled { pills.append(.wild) }
+        if store.isGoalModeEnabled { pills.append(.goal) }
+        return pills
+    }
+
     var body: some View {
-        if store.interactionMode != .agentic || store.isGoalModeEnabled || store.isWildEnabled {
-            HStack(spacing: 6) {
-                let mode = store.interactionMode
-                if mode != .agentic {
-                    DesktopComposerModePill(
-                        title: mode.title,
-                        systemImage: mode.systemImage,
-                        color: mode == .plan ? .orange : mode == .debug ? .purple : mode == .roblox ? .red : .blue,
-                        onPress: { store.setInteractionMode(.agentic) }
-                    )
-                }
+        let pills = active
+        if !pills.isEmpty {
+            ViewThatFits(in: .horizontal) {
+                row(pills, visible: pills.count)
+                if pills.count > 2 { row(pills, visible: 2) }
+                if pills.count > 1 { row(pills, visible: 1) }
+                row(pills, visible: 0)
+            }
+            .onChange(of: pills) { showsOverflow = false }
+            .onChange(of: store.selectedThreadID) { showsOverflow = false }
+        } else {
+            Spacer(minLength: 0)
+        }
+    }
 
-                if store.isWildEnabled {
-                    DesktopComposerModePill(title: "Wild", systemImage: "veo.wild", color: .pink,
-                                            onPress: { store.setWildEnabled(false) })
+    private func row(_ pills: [Pill], visible: Int) -> some View {
+        HStack(spacing: 6) {
+            ForEach(pills.prefix(visible), id: \.self) { pill($0) }
+            if visible < pills.count {
+                let hidden = pills.dropFirst(visible)
+                Button { showsOverflow.toggle() } label: {
+                    Text("+\(hidden.count)")
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .monospacedDigit()
+                        .padding(.horizontal, 8)
+                        .frame(height: 24)
+                        .background(.quaternary, in: Capsule())
+                        .contentShape(Capsule())
                 }
-
-                if store.isGoalModeEnabled {
-                    DesktopGoalModePicker(store: store)
+                .buttonStyle(.plain)
+                .focusable(interactions: .activate)
+                .onKeyPress(keys: [.space, .return]) { _ in
+                    showsOverflow.toggle()
+                    return .handled
+                }
+                .accessibilityLabel("More active modes")
+                .accessibilityValue(hidden.map(title).joined(separator: ", "))
+                .help(hidden.map(title).joined(separator: ", "))
+                .popover(isPresented: $showsOverflow, arrowEdge: .top) {
+                    VStack(alignment: .leading, spacing: 7) {
+                        ForEach(hidden, id: \.self) { pill($0) }
+                    }
+                    .padding(10)
                 }
             }
+        }
+        .fixedSize()
+    }
+
+    private func title(_ pill: Pill) -> String {
+        switch pill {
+        case .interaction: store.interactionMode.title
+        case .wild: "Wild"
+        case .goal: "Goal"
+        }
+    }
+
+    @ViewBuilder
+    private func pill(_ item: Pill) -> some View {
+        switch item {
+        case .interaction:
+            let mode = store.interactionMode
+            DesktopComposerModePill(
+                title: mode.title, systemImage: mode.systemImage,
+                color: mode == .plan ? .orange : mode == .debug ? .purple : mode == .roblox ? .red : .blue,
+                onPress: { store.setInteractionMode(.agentic) }
+            )
+        case .wild:
+            DesktopComposerModePill(title: "Wild", systemImage: "veo.wild", color: .pink,
+                                    onPress: { store.setWildEnabled(false) })
+        case .goal:
+            DesktopGoalModePicker(store: store)
         }
     }
 }
@@ -467,6 +530,7 @@ private struct DesktopComposerModePill: View {
                     Text(title)
                 } icon: {
                     DesktopModeGlyph(name: systemImage)
+                        .offset(y: systemImage == "veo.wild" ? 2.5 : 0)
                 }
                     .blur(radius: showsAction ? 3.5 : 0)
                     .opacity(showsAction ? 0.2 : 1)

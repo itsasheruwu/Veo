@@ -138,37 +138,39 @@ struct DesktopInteractiveTerminalPanel: View {
 
     private var tabBar: some View {
         HStack(spacing: 6) {
-            Image(systemName: "terminal")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .padding(.leading, 10)
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 4) {
+                        ForEach(hub.tabs) { tab in
+                            terminalTabChip(tab)
+                                .id(tab.id)
+                        }
 
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 4) {
-                    ForEach(hub.tabs) { tab in
-                        terminalTabChip(tab)
+                        Button {
+                            guard store.hasExplicitWorkspace else { return }
+                            hub.addTab(
+                                in: store.effectiveWorkspaceURL,
+                                columns: bootstrapCols,
+                                rows: bootstrapRows
+                            )
+                        } label: {
+                            Image(systemName: "plus")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 26, height: 26)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .help("New terminal tab")
+                        .accessibilityLabel("New terminal tab")
+                        .disabled(!store.hasExplicitWorkspace)
                     }
-
-                    Button {
-                        guard store.hasExplicitWorkspace else { return }
-                        hub.addTab(
-                            in: store.effectiveWorkspaceURL,
-                            columns: bootstrapCols,
-                            rows: bootstrapRows
-                        )
-                    } label: {
-                        Image(systemName: "plus")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 20, height: 20)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .help("New terminal tab")
-                    .accessibilityLabel("New terminal tab")
-                    .disabled(!store.hasExplicitWorkspace)
+                }
+                .onChange(of: hub.selectedTabID, initial: true) { _, id in
+                    if let id { proxy.scrollTo(id) }
                 }
             }
+            .padding(.leading, 8)
 
             if activeSession?.isStarting == true {
                 ProgressView()
@@ -177,15 +179,13 @@ struct DesktopInteractiveTerminalPanel: View {
 
             DesktopBackgroundAgentTerminalsButton(store: store)
 
-            Spacer(minLength: 8)
-
             Button {
                 isWorkspace = true
             } label: {
                 Image(systemName: "arrow.up.left.and.arrow.down.right")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.secondary)
-                    .frame(width: 22, height: 22)
+                    .frame(width: 26, height: 26)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -199,7 +199,7 @@ struct DesktopInteractiveTerminalPanel: View {
                 Image(systemName: "xmark")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.secondary)
-                    .frame(width: 22, height: 22)
+                    .frame(width: 26, height: 26)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -207,22 +207,31 @@ struct DesktopInteractiveTerminalPanel: View {
             .accessibilityLabel("Hide terminal panel")
             .padding(.trailing, 8)
         }
-        .frame(height: 32)
+        .frame(height: 36)
         .background(DesktopTheme.raised)
     }
 
     private func terminalTabChip(_ tab: DesktopLocalTerminalSession) -> some View {
         let isSelected = tab.id == hub.selectedTabID
-        return HStack(spacing: 6) {
+        return HStack(spacing: 0) {
             Button {
                 hub.selectTab(tab.id)
             } label: {
-                Text(tab.tabTitle)
-                    .font(.system(size: 11.5, weight: .medium, design: .monospaced))
+                Label(tab.tabTitle, systemImage: "terminal")
+                    .font(.system(size: 11.5, weight: isSelected ? .semibold : .medium))
                     .lineLimit(1)
-                    .foregroundStyle(isSelected ? Color.primary : Color.secondary)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: 170, alignment: .leading)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .padding(.leading, 9)
+                    .padding(.trailing, 4)
+                    .frame(height: 26)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .foregroundStyle(isSelected ? Color.primary : .secondary)
+            .accessibilityAddTraits(isSelected ? .isSelected : [])
+            .help(tab.workingDirectoryPath)
 
             Button {
                 if !hub.closeTab(tab.id) {
@@ -233,17 +242,15 @@ struct DesktopInteractiveTerminalPanel: View {
                 Image(systemName: "xmark")
                     .font(.system(size: 8, weight: .bold))
                     .foregroundStyle(.secondary)
-                    .frame(width: 14, height: 14)
+                    .frame(width: 22, height: 26)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help("Close terminal tab")
             .accessibilityLabel("Close terminal \(tab.tabTitle)")
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
         .background(
-            Color.primary.opacity(isSelected ? 0.085 : 0.035),
+            Color.primary.opacity(isSelected ? 0.085 : 0),
             in: RoundedRectangle(cornerRadius: 6, style: .continuous)
         )
         .overlay(
@@ -294,6 +301,9 @@ struct DesktopInteractiveTerminalPanel: View {
                     )
                         .frame(width: geo.size.width, height: geo.size.height)
                 }
+                .padding(.horizontal, 9)
+                .padding(.vertical, 6)
+                .background(Color(nsColor: .textBackgroundColor))
                 .id(session.id)
                 .blur(radius: dropOrPermissionBlur)
                 .allowsHitTesting(!hub.isAgentCLIPermissionPromptPresented)

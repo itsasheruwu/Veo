@@ -31,12 +31,12 @@ struct DesktopSubagentsPanelView: View {
 
     private var agentList: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 24) {
+            LazyVStack(alignment: .leading, spacing: 18) {
                 agentSection(title: "Active", agents: agents.filter(\.isActive), showsEmptyState: true)
                 agentSection(title: "Finished", agents: agents.filter { !$0.isActive }, showsEmptyState: false)
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 22)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 14)
         }
     }
 
@@ -48,7 +48,10 @@ struct DesktopSubagentsPanelView: View {
     ) -> some View {
         if !agents.isEmpty || showsEmptyState {
             VStack(alignment: .leading, spacing: 10) {
-                Text("\(title) · \(agents.count)")
+                HStack(spacing: 6) {
+                    Text(title).fontWeight(.semibold)
+                    Text(agents.count, format: .number).monospacedDigit().foregroundStyle(.tertiary)
+                }
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.secondary)
 

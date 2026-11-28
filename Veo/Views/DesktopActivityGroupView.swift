@@ -192,6 +192,7 @@ struct DesktopActivityGroupView: View {
 
     private var stepLabel: String? {
         guard group.items.count > 1 else { return nil }
+        if liveItem == nil, !group.hasFailure, group.items.allSatisfy({ $0.kind == .command }) { return nil }
         return "\(group.items.count) steps"
     }
 
@@ -203,66 +204,69 @@ struct DesktopActivityGroupView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 7) {
                 Button(action: toggleExpanded) {
-                    ZStack(alignment: .leading) {
-                        HStack(spacing: 8) {
-                            if group.isRoblox || group.isResearch {
-                                DesktopModeGlyph(name: group.isRoblox ? "veo.roblox" : "veo.wild")
-                                    .foregroundStyle(group.isRoblox ? Color.red : .pink)
-                                    .accessibilityHidden(true)
-                            } else if let liveItem {
-                                Image(systemName: liveItem.activityGlyph)
-                                    .font(.system(size: 10, weight: .medium))
-                                    .symbolEffect(.pulse, options: .repeating, isActive: !reduceMotion)
-                                    .frame(width: 12, height: 12)
-                                    .accessibilityHidden(true)
-                            } else {
-                                DesktopActivityCompletionMark(isLoading: false, hasFailure: hasFailure)
-                                    .frame(width: 12, height: 12)
-                            }
+                    HStack(spacing: 7) {
+                        ZStack(alignment: .leading) {
+                            HStack(spacing: 8) {
+                                if group.isRoblox || group.isResearch {
+                                    DesktopModeGlyph(name: group.isRoblox ? "veo.roblox" : "veo.wild")
+                                        .foregroundStyle(group.isRoblox ? Color.red : .pink)
+                                        .accessibilityHidden(true)
+                                } else if let liveItem {
+                                    Image(systemName: liveItem.activityGlyph)
+                                        .font(.system(size: 10, weight: .medium))
+                                        .symbolEffect(.pulse, options: .repeating, isActive: !reduceMotion)
+                                        .frame(width: 12, height: 12)
+                                        .accessibilityHidden(true)
+                                } else {
+                                    DesktopActivityCompletionMark(isLoading: false, hasFailure: hasFailure)
+                                        .frame(width: 12, height: 12)
+                                }
 
-                            Text(title)
-                                .font(.system(size: 11.5, weight: .medium))
-                                .lineLimit(1)
+                                Text(title)
+                                    .font(.system(size: 12, weight: .medium))
+                                    .lineLimit(1)
+                            }
+                            .modifier(DesktopShimmerStyle(isActive: liveItem != nil && (!group.isResearch || (isVisible && windowState != .inactive))))
+                            .id(headerID)
+                            .transition(reduceMotion ? .identity : .asymmetric(
+                                insertion: .modifier(
+                                    active: DesktopActivityReveal(fraction: 0),
+                                    identity: DesktopActivityReveal(fraction: 1)
+                                ).combined(with: .opacity),
+                                removal: .opacity
+                            ))
                         }
-                        .modifier(DesktopShimmerStyle(isActive: liveItem != nil && (!group.isResearch || (isVisible && windowState != .inactive))))
-                        .id(headerID)
-                        .transition(reduceMotion ? .identity : .asymmetric(
-                            insertion: .modifier(
-                                active: DesktopActivityReveal(fraction: 0),
-                                identity: DesktopActivityReveal(fraction: 1)
-                            ).combined(with: .opacity),
-                            removal: .opacity
-                        ))
+                        .frame(height: 15)
+                        .clipped()
+                        .animation(reduceMotion ? nil : .easeOut(duration: 0.24), value: headerID)
+                        if let stepLabel, !group.isRoblox {
+                            Text(stepLabel)
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                        }
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9, weight: .semibold))
+                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
                     }
-                    .frame(height: 15)
-                    .clipped()
-                    .animation(reduceMotion ? nil : .easeOut(duration: 0.24), value: headerID)
+                    .padding(.horizontal, 8)
+                    .frame(minHeight: 26)
+                    .background(.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 7))
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("\(isExpanded ? "Hide" : "Show") work details: \(title)")
+                .help(isExpanded ? "Hide work details" : "Show work details")
+                .focusable(interactions: .edit)
+                .onKeyPress(keys: [.space, .return]) { _ in
+                    toggleExpanded()
+                    return .handled
+                }
+                .accessibilityLabel(title)
+                .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+                .accessibilityHint("Toggle work details")
 
                 if !sites.isEmpty {
                     DesktopActivitySiteStrip(sites: sites)
                 }
-
-                Button(action: toggleExpanded) {
-                    HStack(spacing: 4) {
-                        if let stepLabel, !group.isRoblox {
-                            Text(stepLabel)
-                                .font(.system(size: 10.5))
-                                .foregroundStyle(.tertiary)
-                        }
-
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 8.5, weight: .semibold))
-                            .foregroundStyle(.tertiary)
-                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("\(isExpanded ? "Collapse" : "Expand") \(group.items.count)-step work trace")
 
                 Spacer(minLength: 0)
             }
@@ -652,6 +656,8 @@ private struct DesktopActivityStepView: View {
     let workspaceURL: URL?
 
     @State private var showsFullOutput = false
+    @State private var visibleBodyHeight: CGFloat = 0
+    @State private var fullBodyHeight: CGFloat = 0
     @State private var blockedArtifactURLMessage: String?
 
     private var symbol: String {
@@ -678,9 +684,10 @@ private struct DesktopActivityStepView: View {
                     .foregroundStyle(.tertiary)
                     .frame(width: 12)
                 Text(heading)
-                    .font(.system(size: 10.5, weight: .medium, design: item.kind == .command ? .monospaced : .default))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .font(.system(size: 12, weight: .medium, design: item.kind == .command ? .monospaced : .default))
+                    .foregroundStyle(.primary)
+                    .lineLimit(showsFullOutput ? nil : 2)
+                    .textSelection(.enabled)
                 Spacer(minLength: 8)
                 if let duration = item.toolMetadata?.durationMilliseconds {
                     Text(formatDuration(duration))
@@ -690,11 +697,23 @@ private struct DesktopActivityStepView: View {
             }
 
             if !item.body.isEmpty {
-                Text(renderedBody)
-                    .font(.system(size: item.kind == .command ? 10.5 : 11.5, design: item.kind == .command ? .monospaced : .default))
-                    .foregroundStyle(.secondary)
+                let text = Text(renderedBody)
+                    .font(.system(size: 12, design: item.kind == .command ? .monospaced : .default))
+                text
+                    .foregroundStyle(.primary.opacity(0.82))
                     .lineLimit(showsFullOutput ? nil : bodyLineLimit)
                     .textSelection(.enabled)
+                    .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { visibleBodyHeight = $0 }
+                    .background(alignment: .topLeading) {
+                        text
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .hidden()
+                            .accessibilityHidden(true)
+                            .allowsHitTesting(false)
+                            .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { fullBodyHeight = $0 }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.leading, 19)
             }
 
@@ -742,8 +761,7 @@ private struct DesktopActivityStepView: View {
     }
 
     private var shouldOfferFullOutput: Bool {
-        // Wrapped paragraphs can exceed the display limit without source newlines.
-        !item.body.isEmpty
+        showsFullOutput || fullBodyHeight > visibleBodyHeight + 0.5
     }
 
     @ViewBuilder
@@ -761,8 +779,8 @@ private struct DesktopActivityStepView: View {
                         .lineLimit(1)
                 }
             }
-            .font(.system(size: 9.5, design: .monospaced))
-            .foregroundStyle(.tertiary)
+            .font(.system(size: 10.5, design: .monospaced))
+            .foregroundStyle(.secondary)
 
             if let arguments = metadata.argumentsJSON, !arguments.isEmpty {
                 DisclosureGroup("Inputs") {

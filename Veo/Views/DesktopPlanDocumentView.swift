@@ -383,7 +383,8 @@ struct DesktopPlanPanelView: View {
                 fallbackMarkdown: store.planArtifact(for: reference)?.originalMarkdown ?? "",
                 showsSidebarAction: false
             )
-            .padding(16)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .navigationTitle("Plan")

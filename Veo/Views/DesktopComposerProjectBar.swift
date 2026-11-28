@@ -1,132 +1,63 @@
 // FILE: DesktopComposerProjectBar.swift
-// Purpose: Owns the project chooser shown only on the new-chat composer.
+// Purpose: Keeps workspace and provider choices beneath the chat composer.
 // Layer: Desktop app view
 
 import SwiftUI
 
 struct DesktopComposerProjectBar: View {
-    @Environment(\.veoAccent) private var veoAccent
     @Bindable var store: DesktopCodexStore
     @AppStorage("VeoDesktop.projectDisplayNames") private var projectDisplayNamesJSON = "{}"
-    @State private var isChooserPresented = false
+    let isWelcome: Bool
 
     var body: some View {
-        HStack {
-            Spacer(minLength: 0)
-
-            Button {
-                isChooserPresented.toggle()
-            } label: {
-                HStack(spacing: 7) {
-                    Image(systemName: "folder")
-                    Text(selectedProjectTitle)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 8, weight: .semibold))
-                        .foregroundStyle(.tertiary)
-                }
-                .font(.system(size: 11.5, weight: .semibold))
-                .frame(width: 220, height: 18)
-                .contentShape(Rectangle())
+        HStack(spacing: 12) {
+            DesktopComposerFooterMenu(title: selectedProjectTitle, accessibilityName: "Choose workspace") {
+                Image(systemName: "folder")
+            } content: {
+                projectChoices
             }
-            .buttonStyle(.plain)
-            .help(store.currentWorkspaceKind == .project ? store.effectiveWorkspaceURL.path : "Choose the project for this chat")
-            .accessibilityLabel("Choose project")
-            .accessibilityValue(selectedProjectTitle)
-            .popover(isPresented: $isChooserPresented, arrowEdge: .bottom) {
-                projectChooser
-            }
+            .help(store.currentWorkspaceKind == .project ? store.effectiveWorkspaceURL.path : "Choose workspace")
 
             Spacer(minLength: 0)
+
+            DesktopComposerProviderPicker(store: store)
         }
-        .frame(maxWidth: .infinity)
-        .padding(.horizontal, DesktopTheme.spaceM)
-        .padding(.vertical, 10)
-        .overlay(alignment: .top) {
-            Divider()
-                .opacity(0.7)
-                .allowsHitTesting(false)
-        }
+        .padding(.horizontal, 8)
+        .frame(minHeight: 26)
     }
 
     private var selectedProjectTitle: String {
-        guard store.hasExplicitWorkspace else { return "Choose project" }
         guard store.currentWorkspaceKind == .project else { return "Temporary workspace" }
         let path = store.effectiveWorkspaceURL.path
         return projectDisplayNames[path] ?? store.effectiveWorkspaceURL.lastPathComponent
     }
 
-    private var projectChooser: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Choose project")
-                .font(.system(size: 13, weight: .semibold))
-
-            if knownProjects.isEmpty {
-                Text("No existing projects yet")
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(.secondary)
-                    .padding(.vertical, 6)
-            } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 2) {
-                        ForEach(knownProjects, id: \.path) { project in
-                            Button {
-                                isChooserPresented = false
-                                store.beginProjectChat(at: URL(fileURLWithPath: project.path, isDirectory: true))
-                            } label: {
-                                HStack(spacing: 9) {
-                                    Image(systemName: "folder")
-                                        .foregroundStyle(veoAccent)
-                                        .frame(width: 16)
-                                    VStack(alignment: .leading, spacing: 1) {
-                                        Text(project.name)
-                                            .font(.system(size: 11.5, weight: .medium))
-                                            .lineLimit(1)
-                                        Text(project.path)
-                                            .font(.system(size: 9.5, design: .monospaced))
-                                            .foregroundStyle(.secondary)
-                                            .lineLimit(1)
-                                            .truncationMode(.middle)
-                                    }
-                                    Spacer(minLength: 8)
-                                    if project.path == store.effectiveWorkspaceURL.path,
-                                       store.currentWorkspaceKind == .project {
-                                        Image(systemName: "checkmark")
-                                            .font(.system(size: 10, weight: .bold))
-                                            .foregroundStyle(veoAccent)
-                                    }
-                                }
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 7)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .help(project.path)
-                            .accessibilityLabel("Use project \(project.name)")
-                        }
-                    }
-                }
-                .frame(maxHeight: 220)
-            }
-
-            Divider()
-
+    @ViewBuilder
+    private var projectChoices: some View {
+        let projects = knownProjects
+        let names = Dictionary(grouping: projects, by: \.name)
+        let inProject = store.currentWorkspaceKind == .project
+        Section(isWelcome ? "Workspace" : "Start a new chat in") {
             Button {
-                isChooserPresented = false
-                DispatchQueue.main.async { store.chooseWorkspace() }
+                if inProject { store.beginNewChat() }
             } label: {
-                Label("Add project…", systemImage: "folder.badge.plus")
-                    .font(.system(size: 11.5, weight: .medium))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
+                Label("Temporary workspace", systemImage: inProject ? "folder" : "checkmark")
             }
-            .buttonStyle(.plain)
+            ForEach(projects, id: \.path) { project in
+                let selected = inProject && project.path == store.effectiveWorkspaceURL.path
+                Button {
+                    if !selected {
+                        store.beginProjectChat(at: URL(fileURLWithPath: project.path, isDirectory: true))
+                    }
+                } label: {
+                    let hasDuplicateName = (names[project.name]?.count ?? 0) > 1
+                    Label(hasDuplicateName ? project.path : project.name, systemImage: selected ? "checkmark" : "folder")
+                }
+                .help(project.path)
+            }
         }
-        .padding(12)
-        .frame(width: 310)
-        .background(.regularMaterial)
+        Divider()
+        Button("Open project…", systemImage: "folder.badge.plus") { store.chooseWorkspace() }
     }
 
     private var projectDisplayNames: [String: String] {
@@ -146,5 +77,35 @@ struct DesktopComposerProjectBar: View {
         return latestUpdateByPath.sorted { $0.value > $1.value }.map { path, _ in
             (path: path, name: projectDisplayNames[path] ?? URL(fileURLWithPath: path).lastPathComponent)
         }
+    }
+}
+
+struct DesktopComposerFooterMenu<Icon: View, Content: View>: View {
+    let title: String
+    let accessibilityName: String
+    @ViewBuilder var icon: () -> Icon
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        Menu(content: content) {
+            HStack(spacing: 5) {
+                icon()
+                Text(title)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .semibold))
+            }
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 2)
+            .frame(minHeight: 24)
+            .contentShape(Rectangle())
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .accessibilityLabel(accessibilityName)
+        .accessibilityValue(title)
     }
 }

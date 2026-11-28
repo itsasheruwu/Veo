@@ -59,7 +59,7 @@ enum DesktopSettingsCategory: String, CaseIterable, Identifiable {
         case .notifications: return "Alerts, menu bar, and sounds"
         case .terminal: return "Docked terminal and agent CLIs"
         case .browser: return "Search engine, tabs, passwords, and website data"
-        case .runtime: return "Local Codex connection"
+        case .runtime: return "Active provider connection"
         case .updates: return "Version checks and auto updates"
         case .account: return "Identity, usage, and limits"
         case .integrations: return "Skills, plugins, apps, and MCP"

@@ -3,9 +3,16 @@
 import Foundation
 
 enum DesktopParagraphStreaming {
-    static func completedPrefix(in source: String) -> String {
+    static func completedPrefix(in source: String, appendingAfter previouslyVisible: String = "") -> String {
         var lineStart = source.startIndex
-        var visibleEnd = source.startIndex
+        // A completed paragraph ends outside a fence. Only its unfinished tail needs parsing.
+        // Callers supply this prefix only for a confirmed append. A split CR/LF can move its boundary.
+        if !previouslyVisible.isEmpty {
+            let boundary = source.utf8.index(source.utf8.startIndex, offsetBy: previouslyVisible.utf8.count)
+            if let index = boundary.samePosition(in: source) { lineStart = index }
+        }
+        let scanStart = lineStart
+        var visibleEnd = lineStart
         var fence: (marker: Character, length: Int)?
 
         func processLine(endingAt end: String.Index, nextLine: String.Index, terminated: Bool) {
@@ -28,13 +35,14 @@ enum DesktopParagraphStreaming {
             }
         }
 
-        for index in source.indices where source[index].isNewline {
+        for index in source[scanStart...].indices where source[index].isNewline {
             let nextLine = source.index(after: index)
             processLine(endingAt: index, nextLine: nextLine, terminated: true)
             lineStart = nextLine
         }
         // Wait for a newline before accepting a closing fence: a later delta can
         // still append code to that line. Completion always flushes the full source.
+        if visibleEnd == scanStart && scanStart != source.startIndex { return previouslyVisible }
         return String(source[..<visibleEnd])
     }
 }

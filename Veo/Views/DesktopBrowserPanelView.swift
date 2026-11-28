@@ -108,14 +108,15 @@ private struct DesktopBrowserActiveTabPanel: View {
                 onSubmit: { model.navigate(address: addressDraft) }
             )
             .padding(.horizontal, 8)
-            .frame(height: 26)
+            .frame(height: 27)
             .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
                     .fill(Color.primary.opacity(0.06))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .stroke(Color.primary.opacity(0.12), lineWidth: 1)
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.09), lineWidth: 1)
+                    .allowsHitTesting(false)
             )
 
             Button {
@@ -125,6 +126,7 @@ private struct DesktopBrowserActiveTabPanel: View {
             }
             .disabled(tab.isStartPage)
             .help("AutoFill from Keychain")
+            .accessibilityLabel("AutoFill from Keychain")
 
             Menu {
                 Picker("Viewport", selection: $model.viewport) {

@@ -98,31 +98,26 @@ struct DesktopPromptLibraryView: View {
 }
 
 struct DesktopQuoteEditor: View {
-    let item: DesktopTimelineItem
-    let threadID: String
+    @State var excerpt: String
+    let cancel: () -> Void
     let add: (String) -> Void
-    @Environment(\.dismiss) private var dismiss
-    @State private var excerpt = ""
-    @State private var comment = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Quote response").font(.headline)
-            Text("Keep the passage you want to discuss, then add your comment.").font(.caption).foregroundStyle(.secondary)
-            TextEditor(text: $excerpt).frame(height: 180)
-            TextField("Your comment", text: $comment, axis: .vertical).lineLimit(2...5)
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Quote excerpt").font(.caption.weight(.semibold))
+            TextField("Passage to quote", text: $excerpt, axis: .vertical)
+                .lineLimit(2...5)
+                .textFieldStyle(.roundedBorder)
+                .onExitCommand(perform: cancel)
             HStack {
                 Spacer()
-                Button("Cancel", role: .cancel) { dismiss() }
-                Button("Add to draft") {
-                    let quote = excerpt.split(separator: "\n", omittingEmptySubsequences: false).map { "> \($0)" }.joined(separator: "\n")
-                    let source = DesktopQuoteReference(threadID: threadID, itemID: item.id).url.absoluteString
-                    add("[Quoted response](\(source)):\n\(quote)\n\n\(comment)")
-                    dismiss()
-                }.disabled(excerpt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    .keyboardShortcut(.defaultAction)
+                Button("Cancel", action: cancel)
+                Button("Insert quote") { add(excerpt) }
+                    .disabled(excerpt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
-        }.padding(22).frame(width: 510)
-        .onAppear { excerpt = item.body }
+            .controlSize(.small)
+        }
+        .padding(10)
+        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 9))
     }
 }

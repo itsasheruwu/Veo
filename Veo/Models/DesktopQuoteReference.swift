@@ -12,9 +12,11 @@ struct DesktopQuoteReference {
         return components.url!
     }
 
+    private static let sourcePattern = try! NSRegularExpression(pattern: #"veo-quote://source\?[^\s)]+"#)
+
     static func parse(_ text: String) -> [DesktopQuoteReference] {
-        guard let regex = try? NSRegularExpression(pattern: #"veo-quote://source\?[^\s)]+"#) else { return [] }
-        return regex.matches(in: text, range: NSRange(text.startIndex..., in: text)).compactMap { match in
+        guard text.utf8.contains(0x3A) else { return [] }
+        return sourcePattern.matches(in: text, range: NSRange(text.startIndex..., in: text)).compactMap { match in
             guard let range = Range(match.range, in: text),
                   let parts = URLComponents(string: String(text[range])),
                   let threadID = parts.queryItems?.first(where: { $0.name == "thread" })?.value,

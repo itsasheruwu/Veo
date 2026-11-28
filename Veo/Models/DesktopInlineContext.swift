@@ -6,16 +6,49 @@ struct DesktopInlineContext {
     let url: URL
     let source: String
 
-    private static let pattern = try! NSRegularExpression(pattern: #"\[([^\]\n]+)\]\(((?:veo-(?:context|quote)|plugin)://[^\s)]+)\)"#)
+    // A quote keeps its full Markdown passage in the draft and occupies one editor attachment.
+    private static let pattern = try! NSRegularExpression(pattern: #"\[([^\]\n]+)\]\((veo-quote://[^\s)]+)\):\n(>[^\n]*(?:\n>[^\n]*)*)(?:\n\n)?|\[([^\]\n]+)\]\(((?:veo-(?:context|quote)|plugin)://[^\s)]+)\)"#)
 
     static func scan(_ draft: String) -> [Self] {
+        guard draft.utf8.contains(0x5B) else { return [] }
         let source = draft as NSString
         return pattern.matches(in: draft, range: NSRange(location: 0, length: source.length)).compactMap { match in
-            guard let url = URL(string: source.substring(with: match.range(at: 2))) else { return nil }
-            let text = source.substring(with: match.range(at: 1))
-            let label = url.scheme == "plugin" && !text.hasPrefix("@") ? "@" + text : text
+            let isQuote = match.range(at: 3).location != NSNotFound
+            guard let url = URL(string: source.substring(with: match.range(at: isQuote ? 2 : 5))) else { return nil }
+            let label: String
+            if isQuote {
+                let passage = source.substring(with: match.range(at: 3))
+                    .components(separatedBy: "\n")
+                    .map { $0.dropFirst().trimmingCharacters(in: .whitespaces) }
+                    .filter { !$0.isEmpty }
+                    .joined(separator: " ")
+                let preview = passage.count > 36 ? String(passage.prefix(35)) + "…" : passage
+                label = "“\(preview)”"
+            } else {
+                let text = source.substring(with: match.range(at: 4))
+                label = url.scheme == "plugin" && !text.hasPrefix("@") ? "@" + text : text
+            }
             return .init(range: match.range, label: label, url: url, source: source.substring(with: match.range))
         }
+    }
+
+    static func linkedText(_ draft: String) -> AttributedString {
+        let source = draft as NSString
+        var result = AttributedString()
+        var offset = 0
+        for context in scan(draft) {
+            result += AttributedString(source.substring(with: NSRange(location: offset, length: context.range.location - offset)))
+            var link = AttributedString(context.label)
+            link.link = context.url
+            result += link
+            offset = NSMaxRange(context.range)
+            if context.url.scheme == "veo-quote", context.source.hasSuffix("\n\n"), offset < source.length,
+               !CharacterSet.whitespacesAndNewlines.contains(UnicodeScalar(source.character(at: offset)) ?? " ") {
+                result += AttributedString(" ")
+            }
+        }
+        result += AttributedString(source.substring(from: offset))
+        return result
     }
 
     static func reference(_ label: String, kind: String, value: String, line: Int? = nil) -> String {
@@ -61,8 +94,10 @@ struct DesktopInlineContext {
     }
 
     static func displayText(_ source: String) -> String {
+        let contexts = scan(source)
+        guard !contexts.isEmpty else { return source }
         let result = NSMutableString(string: source)
-        for context in scan(source).reversed() { result.replaceCharacters(in: context.range, with: context.label) }
+        for context in contexts.reversed() { result.replaceCharacters(in: context.range, with: context.label) }
         return result as String
     }
 }

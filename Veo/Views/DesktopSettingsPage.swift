@@ -343,7 +343,7 @@ struct DesktopSettingsPage: View {
         .task(id: settingsRefreshID) {
             guard navigation.page == .settings else { return }
             notifications.refreshAuthorizationStatus()
-            if navigation.settingsCategory == .account {
+            if navigation.settingsCategory == .account && !usesProviderSettings {
                 store.refreshAccountOverview()
             } else if navigation.settingsCategory == .updates {
                 updateService.loadChangelog()
@@ -426,7 +426,7 @@ struct DesktopSettingsPage: View {
     }
 
     private var settingsRefreshID: String {
-        "\(navigation.page)-\(navigation.settingsCategory.rawValue)"
+        "\(navigation.page)-\(navigation.settingsCategory.rawValue)-\(store.providerTitle)"
     }
 
     @ViewBuilder
@@ -808,238 +808,10 @@ struct DesktopSettingsPage: View {
             browserSettings
 
         case .runtime:
-            VStack(alignment: .leading, spacing: 22) {
-                HStack {
-                    sectionTitle("Local connection")
-                    Spacer()
-                    if store.isLoadingRuntimeConfiguration {
-                        ProgressView().controlSize(.small)
-                    }
-                    Button("Refresh") { store.refreshRuntimeConfiguration() }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                        .disabled(store.runtimeState != .ready || store.isLoadingRuntimeConfiguration)
-                }
-
-                SettingsPanel {
-                    SettingsRow(
-                        title: "Codex runtime",
-                        detail: store.runtimeState.title,
-                        systemImage: runtimeSymbol,
-                        iconColor: runtimeColor
-                    ) {
-                        Button("Reconnect") { store.reconnect() }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                            .disabled(!store.canReconnect)
-                            .help(DesktopErrorRecoveryAction.reconnect.help)
-                    }
-
-                    SettingsPanelDivider()
-
-                    SettingsRow(
-                        title: "Connection",
-                        detail: "Codex CLI on this Mac",
-                        systemImage: "terminal"
-                    ) {
-                        Button("Unload Inactive") { store.unloadInactiveRuntimeThreads() }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                            .disabled(!store.capabilities.supports(.threadSubscriptions)
-                                || store.integrationMutationID != nil)
-                    }
-
-                    SettingsPanelDivider()
-
-                    SettingsRow(
-                        title: "Realtime voice (experimental)",
-                        detail: "Opt-in microphone and audio through the configured model provider. Audio is not saved by Veo.",
-                        systemImage: "waveform.and.mic"
-                    ) {
-                        Toggle("Realtime voice", isOn: Binding(
-                            get: { store.realtimeVoiceEnabled },
-                            set: { store.setRealtimeVoiceEnabled($0) }
-                        ))
-                        .labelsHidden()
-                        .toggleStyle(.switch)
-                        .controlSize(.small)
-                        .disabled(!store.capabilities.supports(.realtimeVoice))
-                    }
-
-                    SettingsPanelDivider()
-
-                    SettingsRow(
-                        title: "Voice history protocol",
-                        detail: "Automatic prefers the item-level v3 timeline and falls back to the existing v2 stream without enabling the microphone.",
-                        systemImage: "point.3.filled.connected.trianglepath.dotted"
-                    ) {
-                        Picker("Voice history protocol", selection: Binding(
-                            get: { store.realtimeProtocolChoice },
-                            set: { store.setRealtimeProtocolChoice($0) }
-                        )) {
-                            ForEach(DesktopRealtimeProtocolChoice.allCases) { choice in
-                                Text(choice.title).tag(choice)
-                            }
-                        }
-                        .labelsHidden()
-                        .pickerStyle(.menu)
-                        .controlSize(.small)
-                        .frame(width: 130)
-                    }
-
-                    if store.realtimeVoiceEnabled, !store.realtimeVoices.isEmpty {
-                        SettingsPanelDivider()
-                        SettingsRow(
-                            title: "Voice",
-                            detail: "Used only for experimental realtime audio output.",
-                            systemImage: "speaker.wave.2"
-                        ) {
-                            Picker("Voice", selection: Binding(
-                                get: { store.selectedRealtimeVoiceID ?? store.realtimeVoices.first?.id ?? "" },
-                                set: { store.selectRealtimeVoice($0) }
-                            )) {
-                                ForEach(store.realtimeVoices) { voice in
-                                    Text(voice.displayName).tag(voice.id)
-                                }
-                            }
-                            .labelsHidden()
-                            .pickerStyle(.menu)
-                            .controlSize(.small)
-                            .frame(width: 120)
-                        }
-                    }
-                }
-
-                if !store.permissionProfiles.isEmpty || !store.managedRequirements.isEmpty {
-                    VStack(alignment: .leading, spacing: 10) {
-                        sectionTitle("Permissions and requirements")
-                        SettingsPanel {
-                            if !store.permissionProfiles.isEmpty {
-                                ForEach(Array(store.permissionProfiles.enumerated()), id: \.element.id) { index, profile in
-                                    if index > 0 { SettingsPanelDivider() }
-                                    SettingsRow(
-                                        title: profile.id,
-                                        detail: profile.description ?? "Permission profile reported by Codex.",
-                                        systemImage: profile.isAllowed ? "checkmark.shield" : "xmark.shield"
-                                    ) {
-                                        Text(profile.isAllowed ? "Allowed" : "Managed off")
-                                            .font(.system(size: 10.5, weight: .semibold))
-                                            .foregroundStyle(profile.isAllowed ? .green : .secondary)
-                                    }
-                                }
-                            }
-
-                            if !store.permissionProfiles.isEmpty, !store.managedRequirements.isEmpty {
-                                SettingsPanelDivider()
-                            }
-
-                            if !store.managedRequirements.isEmpty {
-                                SettingsRow(
-                                    title: "Managed policy",
-                                    detail: managedRequirementsDetail,
-                                    systemImage: "building.2.crop.circle"
-                                ) { EmptyView() }
-                            }
-                        }
-                    }
-                }
-
-                if !store.codexConfigDetails.isEmpty {
-                    VStack(alignment: .leading, spacing: 10) {
-                        sectionTitle("Effective Codex configuration")
-                        SettingsPanel {
-                            ForEach(Array(store.codexConfigDetails.enumerated()), id: \.offset) { index, detail in
-                                if index > 0 { SettingsPanelDivider() }
-                                SettingsRow(
-                                    title: detail,
-                                    detail: "Resolved through Codex configuration layering.",
-                                    systemImage: "slider.horizontal.3"
-                                ) { EmptyView() }
-                            }
-                        }
-                    }
-                }
-
-                if !store.experimentalFeatures.isEmpty {
-                    VStack(alignment: .leading, spacing: 10) {
-                        sectionTitle("Codex features")
-                        SettingsPanel {
-                            ForEach(Array(store.experimentalFeatures.enumerated()), id: \.element.id) { index, feature in
-                                if index > 0 { SettingsPanelDivider() }
-                                SettingsRow(
-                                    title: feature.displayName,
-                                    detail: feature.description ?? "\(feature.stage.capitalized) Codex feature.",
-                                    systemImage: "flask"
-                                ) {
-                                    Toggle(feature.displayName, isOn: Binding(
-                                        get: { feature.isEnabled },
-                                        set: { store.setExperimentalFeature(feature, enabled: $0) }
-                                    ))
-                                    .labelsHidden()
-                                    .toggleStyle(.switch)
-                                    .controlSize(.small)
-                                    .disabled(store.managedRequirements.featureRequirements[feature.id] != nil
-                                        || store.integrationMutationID != nil)
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if !store.hookRecords.isEmpty {
-                    VStack(alignment: .leading, spacing: 10) {
-                        sectionTitle("Lifecycle hooks")
-                        SettingsPanel {
-                            ForEach(Array(store.hookRecords.enumerated()), id: \.element.id) { index, hook in
-                                if index > 0 { SettingsPanelDivider() }
-                                SettingsRow(
-                                    title: hook.eventName,
-                                    detail: "\(hook.handlerType.capitalized) · \(hook.sourcePath)",
-                                    systemImage: "arrow.trianglehead.branch"
-                                ) {
-                                    Text(hook.isEnabled ? (hook.isManaged ? "Managed" : hook.trustStatus.capitalized) : "Disabled")
-                                        .font(.system(size: 10.5, weight: .semibold))
-                                        .foregroundStyle(hook.isEnabled ? .secondary : .tertiary)
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if !store.runtimeNotices.isEmpty {
-                    VStack(alignment: .leading, spacing: 10) {
-                        sectionTitle("Recent runtime notices")
-                        SettingsPanel {
-                            ForEach(Array(store.runtimeNotices.prefix(8).enumerated()), id: \.element.id) { index, notice in
-                                if index > 0 { SettingsPanelDivider() }
-                                SettingsRow(
-                                    title: notice.title,
-                                    detail: notice.detail,
-                                    systemImage: notice.severity == .error ? "xmark.octagon" : "exclamationmark.triangle"
-                                ) {
-                                    Text(notice.createdAt, style: .time)
-                                        .font(.system(size: 10.5))
-                                        .foregroundStyle(.tertiary)
-                                }
-                            }
-                        }
-                    }
-                }
-
-                Label(
-                    "Veo works directly in your local project folders. Chats and changes stay connected to the Codex CLI running on this Mac.",
-                    systemImage: "lock.shield"
-                )
-                .font(.system(size: 11.5))
-                .foregroundStyle(.secondary)
-                .labelStyle(SettingsNoteLabelStyle())
-
-                if let message = store.runtimeConfigurationMessage {
-                    Label(message, systemImage: "exclamationmark.triangle")
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(.secondary)
-                        .labelStyle(SettingsNoteLabelStyle())
-                }
+            if usesProviderSettings {
+                providerSettings(account: false)
+            } else {
+                codexRuntimeSettings
             }
 
         case .updates:
@@ -1181,148 +953,10 @@ struct DesktopSettingsPage: View {
             }
 
         case .account:
-            VStack(alignment: .leading, spacing: 22) {
-                settingsRefreshHeader(
-                    "Account status",
-                    isLoading: store.isLoadingAccountOverview,
-                    refresh: store.refreshAccountOverview
-                )
-
-                SettingsPanel {
-                    SettingsRow(
-                        title: store.accountOverview.accountType,
-                        detail: store.accountOverview.email
-                            ?? (store.accountOverview.requiresOpenAIAuth
-                                ? "Authentication required"
-                                : "Local Codex account"),
-                        systemImage: "person.crop.circle"
-                    ) {
-                        if let plan = store.accountOverview.plan {
-                            Text(plan)
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-
-                    SettingsPanelDivider()
-
-                    SettingsRow(
-                        title: "Primary limit",
-                        detail: accountLimitDetail(
-                            usedPercent: store.accountOverview.primaryUsedPercent,
-                            resetsAt: store.accountOverview.primaryResetsAt
-                        ),
-                        systemImage: "gauge.with.dots.needle.50percent"
-                    ) {
-                        accountLimitProgress(store.accountOverview.primaryUsedPercent)
-                    }
-
-                    SettingsPanelDivider()
-
-                    SettingsRow(
-                        title: "Secondary limit",
-                        detail: accountLimitDetail(
-                            usedPercent: store.accountOverview.secondaryUsedPercent,
-                            resetsAt: store.accountOverview.secondaryResetsAt
-                        ),
-                        systemImage: "clock.arrow.2.circlepath"
-                    ) {
-                        accountLimitProgress(store.accountOverview.secondaryUsedPercent)
-                    }
-
-                    SettingsPanelDivider()
-
-                    SettingsRow(
-                        title: "Lifetime usage",
-                        detail: store.accountOverview.lifetimeTokens.map {
-                            $0.formatted(.number.notation(.compactName)) + " tokens"
-                        } ?? "Not reported by this runtime",
-                        systemImage: "sum"
-                    ) {
-                        EmptyView()
-                    }
-                }
-
-                VStack(alignment: .leading, spacing: 10) {
-                    sectionTitle("Usage-limit continuation")
-                    SettingsPanel {
-                        SettingsRow(
-                            title: "Automatically continue after usage limits",
-                            detail: "Use this as the default for future interrupted turns.",
-                            systemImage: "arrow.clockwise.circle"
-                        ) {
-                            Toggle("Automatically continue", isOn: $autoContinueUsageLimits)
-                                .labelsHidden()
-                                .toggleStyle(.switch)
-                                .controlSize(.small)
-                        }
-
-                        SettingsPanelDivider()
-
-                        SettingsRow(
-                            title: "When Veo is closed",
-                            detail: autoContinueWakePolicyBinding.wrappedValue == .wakeQuietly
-                                ? "Allow a bundled helper to wake Veo without showing its window."
-                                : "Pending work resumes the next time Veo opens.",
-                            systemImage: "moon.zzz"
-                        ) {
-                            Picker("When Veo is closed", selection: autoContinueWakePolicyBinding) {
-                                ForEach(DesktopAutoContinuationWakePolicy.allCases) { policy in
-                                    Text(policy.title).tag(policy)
-                                }
-                            }
-                            .labelsHidden()
-                            .frame(width: 190)
-                        }
-                    }
-
-                    if let message = store.autoContinuationHelperMessage {
-                        HStack(spacing: 8) {
-                            Label(message, systemImage: "exclamationmark.triangle")
-                                .font(.system(size: 11.5))
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            Button("Open Login Items") { store.openAutoContinuationLoginItemsSettings() }
-                                .buttonStyle(.bordered)
-                                .controlSize(.small)
-                        }
-                    } else if autoContinueWakePolicyBinding.wrappedValue == .wakeQuietly {
-                        Label(
-                            store.autoContinuationHelperStatus == .enabled
-                                ? "Quiet wake is ready. The helper never runs Codex or edits projects."
-                                : "The helper registers only while an auto-continuation is pending.",
-                            systemImage: "checkmark.shield"
-                        )
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(.secondary)
-                    }
-                }
-
-                accountActions
-
-                if !store.workspaceMessages.isEmpty {
-                    VStack(alignment: .leading, spacing: 10) {
-                        sectionTitle("Workspace messages")
-                        SettingsPanel {
-                            ForEach(Array(store.workspaceMessages.enumerated()), id: \.element.id) { index, message in
-                                if index > 0 { SettingsPanelDivider() }
-                                SettingsRow(
-                                    title: message.type.capitalized,
-                                    detail: message.body,
-                                    systemImage: message.type == "headline" ? "megaphone" : "bubble.left.and.text.bubble.right"
-                                ) {
-                                    if let createdAt = message.createdAt {
-                                        Text(createdAt, style: .date)
-                                            .font(.system(size: 10.5))
-                                            .foregroundStyle(.tertiary)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                accountOverviewNote
+            if usesProviderSettings {
+                providerSettings(account: true)
+            } else {
+                codexAccountSettings
             }
 
         case .integrations:
@@ -1341,6 +975,410 @@ struct DesktopSettingsPage: View {
 
                 accountResourcesNote
             }
+        }
+    }
+
+    private var usesProviderSettings: Bool {
+        store.activeAgent != nil || store.selectedModel?.isExternal == true
+    }
+
+    private func providerSettings(account: Bool) -> some View {
+        let connection = store.activeAgent.flatMap { store.agents.connections[$0] }
+        return VStack(alignment: .leading, spacing: 16) {
+            sectionTitle(account ? "Provider account" : "Provider runtime")
+            SettingsPanel {
+                SettingsRow(title: store.providerTitle,
+                            detail: account
+                                ? (connection == nil ? "Manage API credentials in Providers." : "Sign-in and usage are managed by this provider’s CLI.")
+                                : (connection?.executable ?? "API provider connection"),
+                            systemImage: account ? "person.crop.circle" : "network",
+                            providerID: store.activeAgent) {
+                    Button("Manage provider") { navigation.showSettings(.providers) }
+                        .buttonStyle(.bordered).controlSize(.small)
+                }
+            }
+        }
+    }
+
+    private var codexRuntimeSettings: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            HStack {
+                sectionTitle("Local connection")
+                Spacer()
+                if store.isLoadingRuntimeConfiguration {
+                    ProgressView().controlSize(.small)
+                }
+                Button("Refresh") { store.refreshRuntimeConfiguration() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(store.runtimeState != .ready || store.isLoadingRuntimeConfiguration)
+            }
+
+            SettingsPanel {
+                SettingsRow(
+                    title: "Codex runtime",
+                    detail: store.runtimeState.title,
+                    systemImage: runtimeSymbol,
+                    iconColor: runtimeColor
+                ) {
+                    Button("Reconnect") { store.reconnect() }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(!store.canReconnect)
+                        .help(DesktopErrorRecoveryAction.reconnect.help)
+                }
+
+                SettingsPanelDivider()
+
+                SettingsRow(
+                    title: "Connection",
+                    detail: "Codex CLI on this Mac",
+                    systemImage: "terminal"
+                ) {
+                    Button("Unload Inactive") { store.unloadInactiveRuntimeThreads() }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(!store.capabilities.supports(.threadSubscriptions)
+                            || store.integrationMutationID != nil)
+                }
+
+                SettingsPanelDivider()
+
+                SettingsRow(
+                    title: "Realtime voice (experimental)",
+                    detail: "Opt-in microphone and audio through the configured model provider. Audio is not saved by Veo.",
+                    systemImage: "waveform.and.mic"
+                ) {
+                    Toggle("Realtime voice", isOn: Binding(
+                        get: { store.realtimeVoiceEnabled },
+                        set: { store.setRealtimeVoiceEnabled($0) }
+                    ))
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .disabled(!store.capabilities.supports(.realtimeVoice))
+                }
+
+                SettingsPanelDivider()
+
+                SettingsRow(
+                    title: "Voice history protocol",
+                    detail: "Automatic prefers the item-level v3 timeline and falls back to the existing v2 stream without enabling the microphone.",
+                    systemImage: "point.3.filled.connected.trianglepath.dotted"
+                ) {
+                    Picker("Voice history protocol", selection: Binding(
+                        get: { store.realtimeProtocolChoice },
+                        set: { store.setRealtimeProtocolChoice($0) }
+                    )) {
+                        ForEach(DesktopRealtimeProtocolChoice.allCases) { choice in
+                            Text(choice.title).tag(choice)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .controlSize(.small)
+                    .frame(width: 130)
+                }
+
+                if store.realtimeVoiceEnabled, !store.realtimeVoices.isEmpty {
+                    SettingsPanelDivider()
+                    SettingsRow(
+                        title: "Voice",
+                        detail: "Used only for experimental realtime audio output.",
+                        systemImage: "speaker.wave.2"
+                    ) {
+                        Picker("Voice", selection: Binding(
+                            get: { store.selectedRealtimeVoiceID ?? store.realtimeVoices.first?.id ?? "" },
+                            set: { store.selectRealtimeVoice($0) }
+                        )) {
+                            ForEach(store.realtimeVoices) { voice in
+                                Text(voice.displayName).tag(voice.id)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .controlSize(.small)
+                        .frame(width: 120)
+                    }
+                }
+            }
+
+            if !store.permissionProfiles.isEmpty || !store.managedRequirements.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    sectionTitle("Permissions and requirements")
+                    SettingsPanel {
+                        if !store.permissionProfiles.isEmpty {
+                            ForEach(Array(store.permissionProfiles.enumerated()), id: \.element.id) { index, profile in
+                                if index > 0 { SettingsPanelDivider() }
+                                SettingsRow(
+                                    title: profile.id,
+                                    detail: profile.description ?? "Permission profile reported by Codex.",
+                                    systemImage: profile.isAllowed ? "checkmark.shield" : "xmark.shield"
+                                ) {
+                                    Text(profile.isAllowed ? "Allowed" : "Managed off")
+                                        .font(.system(size: 10.5, weight: .semibold))
+                                        .foregroundStyle(profile.isAllowed ? .green : .secondary)
+                                }
+                            }
+                        }
+
+                        if !store.permissionProfiles.isEmpty, !store.managedRequirements.isEmpty {
+                            SettingsPanelDivider()
+                        }
+
+                        if !store.managedRequirements.isEmpty {
+                            SettingsRow(
+                                title: "Managed policy",
+                                detail: managedRequirementsDetail,
+                                systemImage: "building.2.crop.circle"
+                            ) { EmptyView() }
+                        }
+                    }
+                }
+            }
+
+            if !store.codexConfigDetails.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    sectionTitle("Effective Codex configuration")
+                    SettingsPanel {
+                        ForEach(Array(store.codexConfigDetails.enumerated()), id: \.offset) { index, detail in
+                            if index > 0 { SettingsPanelDivider() }
+                            SettingsRow(
+                                title: detail,
+                                detail: "Resolved through Codex configuration layering.",
+                                systemImage: "slider.horizontal.3"
+                            ) { EmptyView() }
+                        }
+                    }
+                }
+            }
+
+            if !store.experimentalFeatures.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    sectionTitle("Codex features")
+                    SettingsPanel {
+                        ForEach(Array(store.experimentalFeatures.enumerated()), id: \.element.id) { index, feature in
+                            if index > 0 { SettingsPanelDivider() }
+                            SettingsRow(
+                                title: feature.displayName,
+                                detail: feature.description ?? "\(feature.stage.capitalized) Codex feature.",
+                                systemImage: "flask"
+                            ) {
+                                Toggle(feature.displayName, isOn: Binding(
+                                    get: { feature.isEnabled },
+                                    set: { store.setExperimentalFeature(feature, enabled: $0) }
+                                ))
+                                .labelsHidden()
+                                .toggleStyle(.switch)
+                                .controlSize(.small)
+                                .disabled(store.managedRequirements.featureRequirements[feature.id] != nil
+                                    || store.integrationMutationID != nil)
+                            }
+                        }
+                    }
+                }
+            }
+
+            if !store.hookRecords.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    sectionTitle("Lifecycle hooks")
+                    SettingsPanel {
+                        ForEach(Array(store.hookRecords.enumerated()), id: \.element.id) { index, hook in
+                            if index > 0 { SettingsPanelDivider() }
+                            SettingsRow(
+                                title: hook.eventName,
+                                detail: "\(hook.handlerType.capitalized) · \(hook.sourcePath)",
+                                systemImage: "arrow.trianglehead.branch"
+                            ) {
+                                Text(hook.isEnabled ? (hook.isManaged ? "Managed" : hook.trustStatus.capitalized) : "Disabled")
+                                    .font(.system(size: 10.5, weight: .semibold))
+                                    .foregroundStyle(hook.isEnabled ? .secondary : .tertiary)
+                            }
+                        }
+                    }
+                }
+            }
+
+            if !store.runtimeNotices.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    sectionTitle("Recent runtime notices")
+                    SettingsPanel {
+                        ForEach(Array(store.runtimeNotices.prefix(8).enumerated()), id: \.element.id) { index, notice in
+                            if index > 0 { SettingsPanelDivider() }
+                            SettingsRow(
+                                title: notice.title,
+                                detail: notice.detail,
+                                systemImage: notice.severity == .error ? "xmark.octagon" : "exclamationmark.triangle"
+                            ) {
+                                Text(notice.createdAt, style: .time)
+                                    .font(.system(size: 10.5))
+                                    .foregroundStyle(.tertiary)
+                            }
+                        }
+                    }
+                }
+            }
+
+            Label(
+                "Veo works directly in your local project folders. Chats and changes stay connected to the Codex CLI running on this Mac.",
+                systemImage: "lock.shield"
+            )
+            .font(.system(size: 11.5))
+            .foregroundStyle(.secondary)
+            .labelStyle(SettingsNoteLabelStyle())
+
+            if let message = store.runtimeConfigurationMessage {
+                Label(message, systemImage: "exclamationmark.triangle")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.secondary)
+                    .labelStyle(SettingsNoteLabelStyle())
+            }
+        }
+    }
+
+    private var codexAccountSettings: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            settingsRefreshHeader(
+                "Account status",
+                isLoading: store.isLoadingAccountOverview,
+                refresh: store.refreshAccountOverview
+            )
+
+            SettingsPanel {
+                SettingsRow(
+                    title: store.accountOverview.accountType,
+                    detail: store.accountOverview.email
+                        ?? (store.accountOverview.requiresOpenAIAuth
+                            ? "Authentication required"
+                            : "Local Codex account"),
+                    systemImage: "person.crop.circle"
+                ) {
+                    if let plan = store.accountOverview.plan {
+                        Text(plan)
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                SettingsPanelDivider()
+
+                SettingsRow(
+                    title: "Primary limit",
+                    detail: accountLimitDetail(
+                        usedPercent: store.accountOverview.primaryUsedPercent,
+                        resetsAt: store.accountOverview.primaryResetsAt
+                    ),
+                    systemImage: "gauge.with.dots.needle.50percent"
+                ) {
+                    accountLimitProgress(store.accountOverview.primaryUsedPercent)
+                }
+
+                SettingsPanelDivider()
+
+                SettingsRow(
+                    title: "Secondary limit",
+                    detail: accountLimitDetail(
+                        usedPercent: store.accountOverview.secondaryUsedPercent,
+                        resetsAt: store.accountOverview.secondaryResetsAt
+                    ),
+                    systemImage: "clock.arrow.2.circlepath"
+                ) {
+                    accountLimitProgress(store.accountOverview.secondaryUsedPercent)
+                }
+
+                SettingsPanelDivider()
+
+                SettingsRow(
+                    title: "Lifetime usage",
+                    detail: store.accountOverview.lifetimeTokens.map {
+                        $0.formatted(.number.notation(.compactName)) + " tokens"
+                    } ?? "Not reported by this runtime",
+                    systemImage: "sum"
+                ) {
+                    EmptyView()
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                sectionTitle("Usage-limit continuation")
+                SettingsPanel {
+                    SettingsRow(
+                        title: "Automatically continue after usage limits",
+                        detail: "Use this as the default for future interrupted turns.",
+                        systemImage: "arrow.clockwise.circle"
+                    ) {
+                        Toggle("Automatically continue", isOn: $autoContinueUsageLimits)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .controlSize(.small)
+                    }
+
+                    SettingsPanelDivider()
+
+                    SettingsRow(
+                        title: "When Veo is closed",
+                        detail: autoContinueWakePolicyBinding.wrappedValue == .wakeQuietly
+                            ? "Allow a bundled helper to wake Veo without showing its window."
+                            : "Pending work resumes the next time Veo opens.",
+                        systemImage: "moon.zzz"
+                    ) {
+                        Picker("When Veo is closed", selection: autoContinueWakePolicyBinding) {
+                            ForEach(DesktopAutoContinuationWakePolicy.allCases) { policy in
+                                Text(policy.title).tag(policy)
+                            }
+                        }
+                        .labelsHidden()
+                        .frame(width: 190)
+                    }
+                }
+
+                if let message = store.autoContinuationHelperMessage {
+                    HStack(spacing: 8) {
+                        Label(message, systemImage: "exclamationmark.triangle")
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Open Login Items") { store.openAutoContinuationLoginItemsSettings() }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                    }
+                } else if autoContinueWakePolicyBinding.wrappedValue == .wakeQuietly {
+                    Label(
+                        store.autoContinuationHelperStatus == .enabled
+                            ? "Quiet wake is ready. The helper never runs Codex or edits projects."
+                            : "The helper registers only while an auto-continuation is pending.",
+                        systemImage: "checkmark.shield"
+                    )
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.secondary)
+                }
+            }
+
+            accountActions
+
+            if !store.workspaceMessages.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    sectionTitle("Workspace messages")
+                    SettingsPanel {
+                        ForEach(Array(store.workspaceMessages.enumerated()), id: \.element.id) { index, message in
+                            if index > 0 { SettingsPanelDivider() }
+                            SettingsRow(
+                                title: message.type.capitalized,
+                                detail: message.body,
+                                systemImage: message.type == "headline" ? "megaphone" : "bubble.left.and.text.bubble.right"
+                            ) {
+                                if let createdAt = message.createdAt {
+                                    Text(createdAt, style: .date)
+                                        .font(.system(size: 10.5))
+                                        .foregroundStyle(.tertiary)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            accountOverviewNote
         }
     }
 

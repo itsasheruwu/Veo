@@ -63,32 +63,3 @@ struct DesktopComposerPermissionsPicker: View {
         }
     }
 }
-
-struct DesktopComposerToolbarLayout: Layout {
-    private let spacing: CGFloat = 8
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        guard subviews.count == 2 else { return .zero }
-        let left = subviews[0].sizeThatFits(.unspecified)
-        let right = subviews[1].sizeThatFits(.unspecified)
-        let width = proposal.width ?? left.width + spacing + right.width
-        if left.width + spacing + right.width <= width {
-            return CGSize(width: width, height: max(left.height, right.height))
-        }
-        let wrapped = subviews[0].sizeThatFits(ProposedViewSize(width: width, height: nil))
-        return CGSize(width: width, height: wrapped.height + spacing + right.height)
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        guard subviews.count == 2 else { return }
-        let left = subviews[0].sizeThatFits(.unspecified)
-        let right = subviews[1].sizeThatFits(.unspecified)
-        if left.width + spacing + right.width <= bounds.width {
-            subviews[0].place(at: CGPoint(x: bounds.minX, y: bounds.midY), anchor: .leading, proposal: .unspecified)
-            subviews[1].place(at: CGPoint(x: bounds.maxX, y: bounds.midY), anchor: .trailing, proposal: .unspecified)
-        } else {
-            subviews[0].place(at: bounds.origin, anchor: .topLeading, proposal: ProposedViewSize(width: bounds.width, height: nil))
-            subviews[1].place(at: CGPoint(x: bounds.maxX, y: bounds.maxY), anchor: .bottomTrailing, proposal: .unspecified)
-        }
-    }
-}

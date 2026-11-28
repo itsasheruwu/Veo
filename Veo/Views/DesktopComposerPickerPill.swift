@@ -1,7 +1,7 @@
 import SwiftUI
 
 enum DesktopComposerPickerKind: Equatable {
-    case provider, model, permissions
+    case model, permissions
 }
 
 @MainActor

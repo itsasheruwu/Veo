@@ -175,7 +175,14 @@ struct ComposerTextView: NSViewRepresentable {
             case #selector(NSResponder.moveDown(_:)):
                 return parent.onMoveAutocomplete(1) || (!textView.hasMarkedText() && textView.selectedRange().length == 0 && parent.onRecallPrompt(1))
             case #selector(NSResponder.insertTab(_:)):
-                return parent.onMoveAutocomplete(1)
+                if parent.onMoveAutocomplete(1) { return true }
+                guard textView.string.isEmpty || NSApp.isFullKeyboardAccessEnabled else { return false }
+                textView.window?.selectNextKeyView(textView)
+                return true
+            case #selector(NSResponder.insertBacktab(_:)):
+                if parent.onMoveAutocomplete(-1) { return true }
+                textView.window?.selectPreviousKeyView(textView)
+                return true
             case #selector(NSResponder.cancelOperation(_:)):
                 return parent.onDismissAutocomplete()
             case #selector(NSResponder.insertNewline(_:)):

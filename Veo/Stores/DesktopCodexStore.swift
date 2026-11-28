@@ -1339,8 +1339,7 @@ final class DesktopCodexStore {
             transientError = "Switch to Agentic and turn off Goal to send to this provider."
             return
         }
-        let thread = selectedThread ?? createNewChat(workspaceKind:.projectless, projectURL:nil)
-        guard let thread, !agents.running.contains(thread.id) else { return }
+        guard let thread = selectedThread, !agents.running.contains(thread.id) else { return }
         agents.choose(agent, thread:thread.id)
         let history = timeline.filter { $0.kind == .user || $0.kind == .assistant }.map { ["role":$0.kind == .user ? "user":"assistant", "text":$0.body] }
         let providerName = VeoAgent.catalog.first { $0.id == agent }?.name ?? agent
@@ -1376,16 +1375,19 @@ final class DesktopCodexStore {
         }
     }
 
+    var canComposeDraft: Bool {
+        selectedThreadID == nil || hasExplicitWorkspace
+    }
+
     var canSend: Bool {
         if activeAgent != nil { return !isBusyTurn && !isLoadingTimeline && !draft.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty && (selectedThread == nil || selectedThread?.origin == .veo) }
         guard runtimeState.isReady,
               visionFallbackStatus == nil,
               (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty),
-              hasExplicitWorkspace else { return false }
+              canComposeDraft else { return false }
         if selectedThreadID != nil, !selectedThreadAcceptsDirectInput { return false }
         guard isBusyTurn else { return true }
-        guard selectedThreadID != nil else { return false }
-        return followUpBehavior == .queue || capabilities.supports(.turnSteering)
+        return selectedThreadID != nil
     }
 
     var isBusyTurn: Bool {
@@ -4047,15 +4049,27 @@ final class DesktopCodexStore {
         }
         performWorkspaceChange { [weak self] in
             guard let self else { return }
-            self.applyWorkspace(url)
-            if self.createNewChat(workspaceKind: .project, projectURL: url) != nil { onCreated?() }
+            // A prompt typed before choosing its first folder belongs to the new chat.
+            if self.selectedThreadID == nil, self.workspaceURL == nil, !self.draft.isEmpty {
+                guard self.createNewChat(workspaceKind: .project, projectURL: url, continuingDraft: true) != nil else { return }
+                self.applyWorkspace(url)
+                self.applyProjectDefaults(at: url.path)
+            } else {
+                self.applyWorkspace(url)
+                guard self.createNewChat(workspaceKind: .project, projectURL: url) != nil else { return }
+            }
+            onCreated?()
         }
     }
 
     /// Switching away from a running thread is allowed: the turn keeps running on the
     /// runtime and `thread/resume` rehydrates its state when the thread is selected again.
     @discardableResult
-    private func createNewChat(workspaceKind: DesktopWorkspaceKind, projectURL: URL?) -> DesktopThread? {
+    private func createNewChat(
+        workspaceKind: DesktopWorkspaceKind,
+        projectURL: URL?,
+        continuingDraft: Bool = false
+    ) -> DesktopThread? {
         let bareID = UUID().uuidString
         let targetWorkspaceURL: URL
         do {
@@ -4113,12 +4127,17 @@ final class DesktopCodexStore {
         isSubmittingTurn = false
         isRunningTurn = false
         applyPendingOverlayReloadIfNeeded()
-        interactionMode = .agentic
-        isWildEnabled = false
-        routingMode = availableRoutingMode(defaultRoutingMode)
-        selectedModelID = defaults.string(forKey: "VeoDesktop.modelID")
-        selectedReasoningEffort = defaults.string(forKey: "VeoDesktop.reasoningEffort")
-        selectedServiceTier = defaults.string(forKey: "VeoDesktop.serviceTier")
+        if continuingDraft {
+            persistInteractionMode(interactionMode, threadID: created.id)
+            persistWild(isWildEnabled, threadID: created.id)
+        } else {
+            interactionMode = .agentic
+            isWildEnabled = false
+            routingMode = availableRoutingMode(defaultRoutingMode)
+            selectedModelID = defaults.string(forKey: "VeoDesktop.modelID")
+            selectedReasoningEffort = defaults.string(forKey: "VeoDesktop.reasoningEffort")
+            selectedServiceTier = defaults.string(forKey: "VeoDesktop.serviceTier")
+        }
         persistRoutingMode(routingMode, threadID: created.id)
         restoreGoalSelection(for: selectedThreadID)
         transientError = nil
@@ -4126,7 +4145,7 @@ final class DesktopCodexStore {
         composerSuggestions = []
         isBrowsingArchivedThreads = false
         restoreDraft()
-        if workspaceKind == .project { applyProjectDefaults(at: targetWorkspaceURL.path) }
+        if workspaceKind == .project && !continuingDraft { applyProjectDefaults(at: targetWorkspaceURL.path) }
         refreshInvalidatedGitContextIfNeeded()
         if runtimeState.isReady {
             Task {
@@ -4927,6 +4946,25 @@ final class DesktopCodexStore {
         return String(candidate.dropFirst(workspace.count + 1))
     }
 
+    private func requiresNewTurn(mode: DesktopInteractionMode, wild: Bool, access: DesktopAccessMode?, threadID: String) -> Bool {
+        wild || mode == .ask || mode == .roblox || protectedTurnThreadIDs.contains(threadID)
+            || dispatchedComposerByThread[threadID]?.accessMode != access
+    }
+
+    var canSteerCurrentDraft: Bool {
+        guard let selectedThreadID, isRunningTurn, capabilities.supports(.turnSteering) else { return false }
+        return !requiresNewTurn(mode: interactionMode, wild: isWildEnabled, access: accessMode, threadID: selectedThreadID)
+    }
+
+    var currentFollowUpBehavior: DesktopFollowUpBehavior {
+        canSteerCurrentDraft ? followUpBehavior : .queue
+    }
+
+    func canSteerQueuedDraft(_ payload: DesktopComposerPayload) -> Bool {
+        guard let selectedThreadID, isRunningTurn, capabilities.supports(.turnSteering) else { return false }
+        return !requiresNewTurn(mode: payload.interactionMode, wild: payload.wild, access: payload.accessMode, threadID: selectedThreadID)
+    }
+
     func setFollowUpBehavior(_ behavior: DesktopFollowUpBehavior) {
         followUpBehavior = behavior
         defaults.set(behavior.rawValue, forKey: "VeoDesktop.followUpBehavior")
@@ -5030,6 +5068,15 @@ final class DesktopCodexStore {
 
     func isCurrentDictationDraft(_ snapshot: DesktopDictationDraft) -> Bool {
         snapshot.context == currentDraftContextID && snapshot.text == draft
+    }
+
+    func quoteResponse(_ item: DesktopTimelineItem, excerpt: String) {
+        guard let selectedThreadID, !excerpt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let url = DesktopQuoteReference(threadID: selectedThreadID, itemID: item.id).url.absoluteString
+            .replacingOccurrences(of: ")", with: "%29")
+        let passage = excerpt.components(separatedBy: "\n").map { "> " + $0 }.joined(separator: "\n")
+        insertContextAtCaret("[Quoted response](\(url)):\n\(passage)\n\n")
+        composerFocusRevision += 1
     }
 
     func insertContextAtCaret(_ text: String) {
@@ -5708,6 +5755,14 @@ final class DesktopCodexStore {
             transientError = reason
             return
         }
+        // Bind the first prompt to its real folder before resolving any file mentions or sending.
+        if selectedThreadID == nil {
+            guard createNewChat(
+                workspaceKind: workspaceURL == nil ? .projectless : .project,
+                projectURL: workspaceURL,
+                continuingDraft: true
+            ) != nil else { return }
+        }
         if let agent=activeAgent { sendAgentDraft(agent,message:message); return }
         if let issue = daybreakTurnIssue {
             transientError = issue
@@ -5864,10 +5919,8 @@ final class DesktopCodexStore {
                 return
             }
             enqueue(payload, queueKey: threadID)
-            let needsNewTurn = payload.wild || payload.interactionMode == .ask || payload.interactionMode == .roblox
-                || protectedTurnThreadIDs.contains(threadID)
-                || dispatchedComposerByThread[threadID]?.accessMode != payload.accessMode
-            if followUpBehavior == .steer, isRunningTurn, !needsNewTurn {
+            let needsNewTurn = requiresNewTurn(mode: payload.interactionMode, wild: payload.wild, access: payload.accessMode, threadID: threadID)
+            if followUpBehavior == .steer, isRunningTurn, capabilities.supports(.turnSteering), !needsNewTurn {
                 steerQueuedDraft(payload.id)
             } else if payload.daybreakEnabled == nil, !needsNewTurn, capabilities.supports(.serverQueue),
                       findThread(threadID)?.workspaceKind != .temporary,
@@ -6192,9 +6245,8 @@ final class DesktopCodexStore {
         guard let threadID = selectedThreadID,
               !queuedDeliveryInFlightIDs.contains(id), !serverQueueUncertainClientIDs.contains(id),
               let payload = queuedDraftsByThreadID[threadID]?.first(where: { $0.id == id }) else { return }
-        guard !protectedTurnThreadIDs.contains(threadID),
-              dispatchedComposerByThread[threadID]?.accessMode == payload.accessMode else {
-            transientError = "Start a new turn to apply the follow-up’s permissions."
+        guard canSteerQueuedDraft(payload) else {
+            transientError = "This follow-up needs a new turn."
             return
         }
         if serverQueueManagedClientIDs.contains(id) {

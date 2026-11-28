@@ -240,61 +240,35 @@ private struct AgentSetup: View {
 struct DesktopComposerProviderPicker: View {
   @Bindable var store: DesktopCodexStore
   @EnvironmentObject var navigation: DesktopNavigationState
-  @State private var open = false
-  private struct Selection: Equatable {
-    let name: String
-    let mark: String?
-  }
-
   var body: some View {
-    let selection = Selection(name: store.providerTitle,
-                              mark: store.activeAgent ?? (store.selectedModel?.isExternal == true ? nil : "codex"))
-    DesktopComposerPickerPill(kind: .provider, value: selection, isOpen: $open,
-                              spokenValue: { $0.name }) { displayed in
-      DesktopProviderMark(id: displayed.mark, size: 17)
-      Text(displayed.name).lineLimit(1)
-    }
-    .accessibilityLabel("Change provider")
-    .popover(isPresented: $open) {
-      VStack(alignment: .leading, spacing: 5) {
-        Text("Provider").font(.caption.weight(.semibold)).foregroundStyle(.secondary).padding(
-          .horizontal, 6)
+    let mark = store.activeAgent ?? (store.selectedModel?.isExternal == true ? nil : "codex")
+    DesktopComposerFooterMenu(title: store.providerTitle, accessibilityName: "Change provider") {
+      DesktopProviderMark(id: mark, size: 15)
+    } content: {
+      Section("Provider") {
         choice("Codex", id: nil)
         ForEach(VeoAgent.catalog.filter { store.agents.connections[$0.id] != nil }) {
           choice($0.name, id: $0.id)
         }
-        ForEach(
-          store.connectedExternalProviders.filter {
-            !$0.enabledModels.isEmpty && store.includeExternalModels
-          }
-        ) { p in choice(p.name, id: p.id) }
-        Divider()
-        Button {
-          open = false
-          navigation.showSettings(.providers)
-        } label: {
-          Label("Connect a provider…", systemImage: "plus").frame(
-            maxWidth: .infinity, alignment: .leading)
-        }
-        .buttonStyle(.plain).padding(6)
-      }.padding(10).frame(width: 218)
-    }
-  }
-  private func choice(_ name: String, id: String?) -> some View {
-    Button {
-      store.chooseProvider(id)
-      open = false
-    } label: {
-      HStack(spacing: 8) {
-        DesktopProviderMark(id: id ?? "codex", size: 20)
-        Text(name)
-        Spacer()
-        if store.providerTitle == name {
-          Image(systemName: "checkmark").foregroundStyle(Color.accentColor)
+        ForEach(store.connectedExternalProviders.filter { !$0.enabledModels.isEmpty && store.includeExternalModels }) {
+          choice($0.name, id: $0.id)
         }
       }
-      .padding(6).contentShape(Rectangle())
-    }.buttonStyle(.plain).disabled(store.isBusyTurn)
+      Divider()
+      Button("Connect a provider…", systemImage: "plus") { navigation.showSettings(.providers) }
+    }
+    .help("Change provider")
+  }
+
+  private func choice(_ name: String, id: String?) -> some View {
+    Button { store.chooseProvider(id) } label: {
+      if store.providerTitle == name {
+        Label(name, systemImage: "checkmark")
+      } else {
+        Text(name)
+      }
+    }
+    .disabled(store.isBusyTurn)
   }
 }
 

@@ -62,11 +62,6 @@ struct DesktopTerminalWorkspaceView: View {
 
     private var chrome: some View {
         HStack(spacing: 6) {
-            Image(systemName: "terminal")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .padding(.leading, 10)
-
             Menu {
                 ForEach(DesktopTerminalGridTemplate.allCases) { template in
                     Button {
@@ -86,7 +81,7 @@ struct DesktopTerminalWorkspaceView: View {
             .disabled(!store.hasExplicitWorkspace)
             .help("Terminal grid layout")
 
-            DesktopBackgroundAgentTerminalsButton(store: store)
+            Divider().frame(height: 16)
 
             Button {
                 split(.horizontal)
@@ -94,7 +89,7 @@ struct DesktopTerminalWorkspaceView: View {
                 Image(systemName: "rectangle.split.2x1")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.secondary)
-                    .frame(width: 22, height: 22)
+                    .frame(width: 26, height: 26)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -109,7 +104,7 @@ struct DesktopTerminalWorkspaceView: View {
                 Image(systemName: "rectangle.split.1x2")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.secondary)
-                    .frame(width: 22, height: 22)
+                    .frame(width: 26, height: 26)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -124,6 +119,7 @@ struct DesktopTerminalWorkspaceView: View {
             }
 
             Spacer(minLength: 8)
+            DesktopBackgroundAgentTerminalsButton(store: store)
 
             Button {
                 isWorkspace = false
@@ -131,7 +127,7 @@ struct DesktopTerminalWorkspaceView: View {
                 Image(systemName: "arrow.down.right.and.arrow.up.left")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.secondary)
-                    .frame(width: 22, height: 22)
+                    .frame(width: 26, height: 26)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -145,15 +141,15 @@ struct DesktopTerminalWorkspaceView: View {
                 Image(systemName: "xmark")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.secondary)
-                    .frame(width: 22, height: 22)
+                    .frame(width: 26, height: 26)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help("Hide terminal panel")
             .accessibilityLabel("Hide terminal panel")
-            .padding(.trailing, 8)
         }
-        .frame(height: 32)
+        .padding(.horizontal, 10)
+        .frame(height: 38)
         .background(DesktopTheme.raised)
     }
 
@@ -168,6 +164,7 @@ struct DesktopTerminalWorkspaceView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let tree = hub.paneTree {
             DesktopTerminalPaneTreeView(node: tree, hub: hub, onClosePane: closePane)
+                .padding(6)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .clipped()
         } else {
@@ -306,14 +303,14 @@ private struct DesktopTerminalSplitStack: View {
 
     private func splitHandle(total usable: CGFloat) -> some View {
         Rectangle()
-            .fill(Color.primary.opacity(dividerFocused ? 0.12 : 0.045))
+            .fill(dividerFocused ? veoAccent.opacity(0.10) : Color.clear)
             .frame(
                 width: axis == .horizontal ? handleThickness : nil,
                 height: axis == .vertical ? handleThickness : nil
             )
             .overlay {
                 Rectangle()
-                    .fill(dividerFocused ? veoAccent : Color.primary.opacity(0.22))
+                    .fill(dividerFocused ? veoAccent : Color.secondary.opacity(0.36))
                     .frame(
                         width: axis == .horizontal ? 1 : 28,
                         height: axis == .vertical ? 1 : 28
@@ -394,13 +391,14 @@ private struct DesktopTerminalWorkspaceLeaf: View {
             terminalSurface
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .clipped()
+        .background(Color(nsColor: .textBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay {
-            Rectangle()
-                .stroke(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(
                     isFileDropTargeted || isDropTarget
-                        ? veoAccent.opacity(0.85)
-                        : (isFocused ? veoAccent.opacity(0.55) : Color.primary.opacity(0.06)),
+                        ? veoAccent
+                        : (isFocused && hub.visibleSessionIDs.count > 1 ? veoAccent.opacity(0.48) : DesktopTheme.hairline),
                     lineWidth: isFileDropTargeted || isDropTarget ? 2 : 1
                 )
                 .allowsHitTesting(false)
@@ -409,9 +407,9 @@ private struct DesktopTerminalWorkspaceLeaf: View {
 
     private var paneBar: some View {
         HStack(spacing: 6) {
-            Image(systemName: "line.3.horizontal")
+            Image(systemName: hub.visibleSessionIDs.count > 1 ? "circle.grid.3x3.fill" : "terminal")
                 .font(.system(size: 9, weight: .bold))
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(isFocused ? veoAccent : Color.secondary)
                 .frame(width: 18, height: 22)
                 .contentShape(Rectangle())
                 .padding(.leading, 6)
@@ -436,12 +434,12 @@ private struct DesktopTerminalWorkspaceLeaf: View {
             } label: {
                 HStack(spacing: 6) {
                     Text(session.tabTitle)
-                        .font(.system(size: 11.5, weight: .medium, design: .monospaced))
+                        .font(.system(size: 12, weight: isFocused ? .semibold : .medium))
                         .foregroundStyle(isFocused ? Color.primary : Color.secondary)
                         .lineLimit(1)
                     Text(session.agentLabel)
                         .font(.system(size: 10, weight: .medium, design: .monospaced))
-                        .foregroundStyle(isFocused ? veoAccent : Color.secondary.opacity(0.8))
+                        .foregroundStyle(.secondary)
                         .lineLimit(1)
                     Spacer(minLength: 4)
                 }
@@ -468,7 +466,7 @@ private struct DesktopTerminalWorkspaceLeaf: View {
                     Image(systemName: "ellipsis")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(.secondary)
-                        .frame(width: 22, height: 22)
+                        .frame(width: 26, height: 26)
                         .contentShape(Rectangle())
                 }
                 .menuStyle(.borderlessButton)
@@ -481,7 +479,7 @@ private struct DesktopTerminalWorkspaceLeaf: View {
                 Image(systemName: "xmark")
                     .font(.system(size: 9, weight: .bold))
                     .foregroundStyle(.secondary)
-                    .frame(width: 22, height: 22)
+                    .frame(width: 26, height: 26)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -489,8 +487,8 @@ private struct DesktopTerminalWorkspaceLeaf: View {
             .accessibilityLabel("Close terminal")
             .padding(.trailing, 4)
         }
-        .frame(height: 28)
-        .background(Color.primary.opacity(isFocused ? 0.055 : 0.025))
+        .frame(height: 30)
+        .background(DesktopTheme.raised)
         .dropDestination(for: String.self) { items, _ in
             guard let raw = items.first, let dragged = UUID(uuidString: raw) else { return false }
             hub.swapWorkspacePanes(dragged, session.id)
@@ -525,12 +523,15 @@ private struct DesktopTerminalWorkspaceLeaf: View {
                         hub: hub,
                         viewportSize: geo.size,
                         requestsFocus: isFocused,
+                        onPointerFocus: { hub.focusWorkspaceSession(session.id) },
                         onAddContext: insertTerminalContext,
                         isFileDropTargeted: $isFileDropTargeted
                     )
                         .frame(width: geo.size.width, height: geo.size.height)
                         .clipped()
                 }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
                 .id(session.id)
                 .clipped()
                 .blur(radius: workspaceDropOrPermissionBlur)

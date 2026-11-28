@@ -15,6 +15,7 @@ struct DesktopTerminalView: NSViewRepresentable {
     /// Full terminal workspace panes should take keyboard focus when activated.
     /// Docked terminals remain click-to-focus so they do not steal composer focus.
     var requestsFocus = false
+    var onPointerFocus: (() -> Void)?
     var onAddContext: ((String) -> Void)?
     @Binding var isFileDropTargeted: Bool
 
@@ -24,6 +25,7 @@ struct DesktopTerminalView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> DesktopTerminalDropHostView {
         let terminalView = ContextTerminalView(frame: .zero)
+        terminalView.onPointerFocus = onPointerFocus
         terminalView.onAddContext = onAddContext
         terminalView.terminalDelegate = context.coordinator
         terminalView.configureNativeColors()
@@ -45,7 +47,10 @@ struct DesktopTerminalView: NSViewRepresentable {
     }
 
     func updateNSView(_ host: DesktopTerminalDropHostView, context: Context) {
-        (host.terminalView as? ContextTerminalView)?.onAddContext = onAddContext
+        if let terminal = host.terminalView as? ContextTerminalView {
+            terminal.onPointerFocus = onPointerFocus
+            terminal.onAddContext = onAddContext
+        }
         context.coordinator.hub = hub
         context.coordinator.isFileDropTargeted = $isFileDropTargeted
         if context.coordinator.session !== session {
@@ -149,7 +154,8 @@ struct DesktopTerminalView: NSViewRepresentable {
             // updateNSView can run before AppKit has attached the replacement
             // terminal to its window during the docked -> workspace transition.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
-                self?.focus()
+                guard let self, self.wasFocusRequested else { return }
+                self.focus()
             }
         }
 
@@ -473,6 +479,13 @@ final class DesktopTerminalDropHostView: NSView {
 }
 
 private final class ContextTerminalView: TerminalView {
+    var onPointerFocus: (() -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        onPointerFocus?()
+        super.mouseDown(with: event)
+    }
+
     var onAddContext: ((String) -> Void)?
 
     override func menu(for event: NSEvent) -> NSMenu? {

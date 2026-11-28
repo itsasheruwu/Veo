@@ -156,7 +156,7 @@ struct DesktopReviewPanelView: View {
     private var reviewToolbar: some View {
         HStack(spacing: 8) {
             if let repository = store.gitRepository {
-                Text(repository.branchName ?? (repository.isDetached ? "Detached HEAD" : "Unborn branch"))
+                Label(repository.branchName ?? (repository.isDetached ? "Detached HEAD" : "Unborn branch"), systemImage: "arrow.triangle.branch")
                     .font(.system(size: 10.5, weight: .medium, design: .monospaced))
                     .lineLimit(1)
                     .foregroundStyle(.secondary)

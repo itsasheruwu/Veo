@@ -19,7 +19,7 @@ struct DesktopQueuedDraftsView: View {
                         ForEach(queue) { payload in row(payload, queue: queue) }
                     }
                 }
-                .frame(height: min(168, CGFloat(queue.count) * 29 + 10))
+                .frame(height: min(168, CGFloat(queue.count) * 44 + (editedID == nil ? 0 : 64)))
                 .transition(.opacity)
             } else if let payload = queue.first {
                 row(payload, queue: queue)
@@ -47,7 +47,7 @@ struct DesktopQueuedDraftsView: View {
 
     private func header(count: Int) -> some View {
         HStack(spacing: 6) {
-            Label("Queued", systemImage: "text.line.last.and.arrowtriangle.forward")
+            Label("Up next", systemImage: "text.line.last.and.arrowtriangle.forward")
                 .foregroundStyle(.secondary)
             Spacer()
             if count > 1 {
@@ -75,6 +75,8 @@ struct DesktopQueuedDraftsView: View {
                 TextField("Queued message", text: $editedText, axis: .vertical)
                     .lineLimit(1...4)
                     .focused($editorFocused)
+                    .onAppear { editorFocused = true }
+                    .onExitCommand { editedID = nil }
                 HStack {
                     Spacer()
                     Button("Cancel") { editedID = nil }
@@ -99,39 +101,37 @@ struct DesktopQueuedDraftsView: View {
                             .foregroundStyle(.secondary)
                             .help("Check the queue before retrying")
                             .accessibilityLabel("Queue delivery needs to be checked")
-                    } else if store.isRunningTurn && store.capabilities.supports(.turnSteering) {
+                    } else if store.canSteerQueuedDraft(payload) {
                         Button("Steer now") { store.steerQueuedDraft(payload.id) }
                             .buttonStyle(.bordered)
                     } else if !store.isBusyTurn && queue.first?.id == payload.id {
                         Button("Send now") { store.sendNextQueuedDraft() }
                             .buttonStyle(.bordered)
                     }
-                    Button("Edit", systemImage: "pencil") {
-                        editedText = payload.text
-                        editedID = payload.id
-                        editorFocused = true
-                    }
-                    .labelStyle(.iconOnly)
-                    .buttonStyle(.borderless)
-                    .help("Edit queued message")
-                    .disabled(uncertain)
-                    Button("Remove", systemImage: "xmark") { store.removeQueuedDraft(payload.id) }
-                        .labelStyle(.iconOnly)
-                        .buttonStyle(.borderless)
-                        .help("Remove queued message")
-                    if showsAll {
-                        Menu {
+                    Menu {
+                        Button("Edit message", systemImage: "pencil") {
+                            editedText = payload.text
+                            editedID = payload.id
+                        }
+                        .disabled(uncertain)
+                        if queue.count > 1 {
                             Button("Move earlier", systemImage: "arrow.up") { store.moveQueuedDraft(payload.id, offset: -1) }
                                 .disabled(uncertain || queue.first?.id == payload.id)
                             Button("Move later", systemImage: "arrow.down") { store.moveQueuedDraft(payload.id, offset: 1) }
                                 .disabled(uncertain || queue.last?.id == payload.id)
-                        } label: {
-                            Label("Reorder queued message", systemImage: "ellipsis")
-                                .labelStyle(.iconOnly)
                         }
-                        .menuStyle(.borderlessButton)
-                        .fixedSize()
+                        Divider()
+                        Button("Remove from queue", systemImage: "minus.circle") { store.removeQueuedDraft(payload.id) }
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .frame(width: 24, height: 22)
+                            .contentShape(Rectangle())
                     }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .accessibilityLabel("Queued message actions")
+                    .help("Queued message actions")
                 }
             }
             if !payload.attachments.isEmpty {

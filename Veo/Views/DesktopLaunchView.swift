@@ -39,6 +39,8 @@ struct DesktopLaunchView: View {
         .background(TourWindowReader { attached in
             guard window !== attached else { return }
             window = attached
+            attached.titlebarAppearsTransparent = true
+            attached.titlebarSeparatorStyle = .none
             if touring { compact(attached, replay: false) }
         })
         .focusedSceneValue(\.showWorkspaceTour, touring ? nil : {

@@ -5,6 +5,12 @@
 import SwiftUI
 
 struct DesktopUtilityPanelView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Namespace private var selectedTabShape
+    @State private var tabsWidth: CGFloat?
+    @State private var tabFrames: [UUID: CGRect] = [:]
+    private let panelSurface = Color(nsColor: .controlBackgroundColor).opacity(0.55)
+
     @Bindable var store: DesktopCodexStore
     @ObservedObject var model: DesktopUtilityPanelModel
     @AppStorage(DesktopAppearancePreferences.rightSidebarMaterialKey) private var rightSidebarMaterialRaw =
@@ -13,45 +19,19 @@ struct DesktopUtilityPanelView: View {
     var body: some View {
         VStack(spacing: 0) {
             tabBar
-            Divider()
-
-            switch model.selectedTab?.content {
-            case .some(.plan(let reference)):
-                DesktopPlanPanelView(store: store, reference: reference)
-            case .some(.review):
-                if let diff = model.turnDiff {
-                    VStack(alignment: .leading) {
-                        HStack {
-                            Text("Changes from this turn").font(.headline)
-                            Spacer()
-                            Button("Workspace changes") { model.turnDiff = nil }
-                        }
-                        .padding()
-                        DesktopTurnChangesPopover(summary: .init(diff: diff), material: .solid, isInInspector: true)
-                            .id(diff.turnID)
-                        Spacer(minLength: 0)
-                    }
-                } else {
-                    DesktopReviewPanelView(store: store, presentsAIReview: $model.presentsAIReview)
-                }
-            case .some(.sideChat):
-                DesktopSideChatView(store: store)
-            case .some(.browser):
-                DesktopBrowserPanelView(
-                    model: model.browser,
-                    accountLoginSession: store.accountLoginSession,
-                    onCancelAccountLogin: { store.cancelAccountLogin() }
-                )
-            case .some(.files):
-                DesktopFilesPanelView(files: model.files, repository: store.gitRepository) { fileURL, workspaceURL in
-                    model.openWorkspaceFile(fileURL, workspaceURL: workspaceURL)
-                }
-            case .some(.subagents):
-                DesktopSubagentsPanelView(store: store, model: model)
-            case .none:
-                ContentUnavailableView("No utility tab", systemImage: "rectangle.stack")
-            }
+            panelContent
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .background(panelSurface)
         }
+        .background(Color.black.opacity(0.045))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(.primary.opacity(0.09), lineWidth: 1)
+                .allowsHitTesting(false)
+        }
+        .padding(.horizontal, 6)
+        .padding(.bottom, 6)
         // The inspector owns horizontal sizing. Declaring a second min/ideal
         // width here makes AppKit and SwiftUI continuously renegotiate the
         // split child's constraints on recent macOS releases.
@@ -61,78 +41,166 @@ struct DesktopUtilityPanelView: View {
         )
     }
 
+    @ViewBuilder
+    private var panelContent: some View {
+        switch model.selectedTab?.content {
+        case .some(.plan(let reference)):
+            DesktopPlanPanelView(store: store, reference: reference)
+        case .some(.review):
+            if let diff = model.turnDiff {
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack {
+                        Text("Changes from this turn").font(.headline)
+                        Spacer()
+                        Button("Workspace changes") { model.turnDiff = nil }
+                    }
+                    .padding(.horizontal, 12)
+                    .frame(minHeight: 38)
+                    Divider()
+                    DesktopTurnChangesPopover(summary: .init(diff: diff), material: .solid, isInInspector: true)
+                        .id(diff.turnID)
+                    Spacer(minLength: 0)
+                }
+            } else {
+                DesktopReviewPanelView(store: store, presentsAIReview: $model.presentsAIReview)
+            }
+        case .some(.sideChat):
+            DesktopSideChatView(store: store)
+        case .some(.browser):
+            DesktopBrowserPanelView(
+                model: model.browser,
+                accountLoginSession: store.accountLoginSession,
+                onCancelAccountLogin: { store.cancelAccountLogin() }
+            )
+        case .some(.files):
+            DesktopFilesPanelView(files: model.files, repository: store.gitRepository) { fileURL, workspaceURL in
+                model.openWorkspaceFile(fileURL, workspaceURL: workspaceURL)
+            }
+        case .some(.subagents):
+            DesktopSubagentsPanelView(store: store, model: model)
+        case .none:
+            ContentUnavailableView("No utility tab", systemImage: "rectangle.stack")
+        }
+    }
+
     private var tabBar: some View {
-        HStack(spacing: 0) {
-            ScrollViewReader { proxy in
-                ScrollView(.horizontal) {
-                    HStack(spacing: 1) {
-                        ForEach(Array(model.tabs.enumerated()), id: \.element.id) { index, item in
-                            tabButton(for: item, index: index)
-                                .id(item.id)
+        HStack(spacing: 2) {
+            GeometryReader { viewport in
+                ScrollViewReader { proxy in
+                    ScrollView(.horizontal) {
+                        HStack(spacing: 1) {
+                            ForEach(Array(model.tabs.enumerated()), id: \.element.id) { index, item in
+                                tabButton(for: item, index: index)
+                                    .background {
+                                        if model.selectedTabID == item.id {
+                                            DesktopJoinedTabShape()
+                                                .fill(panelSurface)
+                                                .matchedGeometryEffect(id: "selected", in: selectedTabShape)
+                                                .allowsHitTesting(false)
+                                        }
+                                    }
+                                    .background {
+                                        GeometryReader { tab in
+                                            Color.clear.preference(key: DesktopTabFrames.self, value: [
+                                                item.id: tab.frame(in: .named("utility-tab-viewport"))
+                                            ])
+                                        }
+                                    }
+                                    .id(item.id)
+                            }
+                        }
+                        .padding(.horizontal, 6)
+                        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { tabsWidth = $0 }
+                        .padding(.top, 4)
+                        .animation(reduceMotion ? nil : .easeInOut(duration: 0.19), value: model.selectedTabID)
+                    }
+                    .scrollIndicators(.hidden)
+                    .coordinateSpace(name: "utility-tab-viewport")
+                    .onPreferenceChange(DesktopTabFrames.self) { tabFrames = $0 }
+                    .overlay(alignment: .leading) {
+                        if let target = model.tabs.last(where: { (tabFrames[$0.id]?.minX ?? 0) < -0.5 }) {
+                            scrollButton(leading: true) { scroll(proxy, to: target.id, anchor: .leading) }
                         }
                     }
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 5)
-                }
-                .scrollIndicators(.hidden)
-                .onChange(of: model.selectedTabID) { _, id in
-                    if let id { proxy.scrollTo(id) }
-                }
-                .onAppear {
-                    if let id = model.selectedTabID { proxy.scrollTo(id) }
+                    .overlay(alignment: .trailing) {
+                        if let target = model.tabs.first(where: { (tabFrames[$0.id]?.maxX ?? 0) > viewport.size.width + 0.5 }) {
+                            scrollButton(leading: false) { scroll(proxy, to: target.id, anchor: .trailing) }
+                        }
+                    }
+                    .onChange(of: model.selectedTabID, initial: true) { _, id in
+                        if let id { proxy.scrollTo(id) }
+                    }
                 }
             }
-
-            newTabMenu
-                .padding(.trailing, 5)
+            .frame(maxWidth: tabsWidth)
+            .layoutPriority(1)
+            newTabMenu.padding(.horizontal, 2)
+            Spacer(minLength: 0)
+                .layoutPriority(-1)
         }
-        .frame(height: 40)
-        .background(Color.primary.opacity(0.025))
+        .frame(height: 36)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Utility tab bar")
     }
 
+    private func scroll(_ proxy: ScrollViewProxy, to id: UUID, anchor: UnitPoint) {
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.18)) { proxy.scrollTo(id, anchor: anchor) }
+    }
+
+    private func scrollButton(leading: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: leading ? "chevron.left" : "chevron.right")
+                .font(.system(size: 10, weight: .semibold))
+                .frame(width: 22, height: 29)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(leading ? "Scroll tabs left" : "Scroll tabs right")
+        .accessibilityLabel(leading ? "Scroll tabs left" : "Scroll tabs right")
+    }
+
     private var newTabMenu: some View {
         Menu {
-                Button {
-                    model.addTab(.review)
-                } label: {
-                    Label("Review", systemImage: DesktopUtilityPanelTab.review.systemImage)
-                }
-                Button {
-                    model.addTab(.browser)
-                } label: {
-                    Label("Browser Tab", systemImage: DesktopUtilityPanelTab.browser.systemImage)
-                }
-                Button {
-                    model.addTab(.files)
-                } label: {
-                    Label("Files", systemImage: DesktopUtilityPanelTab.files.systemImage)
-                }
-                Button {
-                    model.show(.sideChat)
-                } label: {
-                    Label("Side chat", systemImage: DesktopUtilityPanelTab.sideChat.systemImage)
-                }
-                .disabled(store.selectedThreadID == nil)
-                if model.subagentsAvailable {
-                    Button {
-                        model.addTab(.subagents)
-                    } label: {
-                        Label("Subagents", systemImage: DesktopUtilityPanelTab.subagents.systemImage)
-                    }
-                }
+            Button {
+                model.addTab(.review)
             } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 12, weight: .semibold))
-                    .frame(width: 30, height: 30)
-                    .contentShape(Rectangle())
+                Label("Review", systemImage: DesktopUtilityPanelTab.review.systemImage)
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .help("New utility tab")
-            .accessibilityLabel("New Tab")
+            Button {
+                model.addTab(.browser)
+            } label: {
+                Label("Browser Tab", systemImage: DesktopUtilityPanelTab.browser.systemImage)
+            }
+            Button {
+                model.addTab(.files)
+            } label: {
+                Label("Files", systemImage: DesktopUtilityPanelTab.files.systemImage)
+            }
+            Button {
+                model.show(.sideChat)
+            } label: {
+                Label("Side chat", systemImage: DesktopUtilityPanelTab.sideChat.systemImage)
+            }
+            .disabled(store.selectedThreadID == nil)
+            if model.subagentsAvailable {
+                Button {
+                    model.addTab(.subagents)
+                } label: {
+                    Label("Subagents", systemImage: DesktopUtilityPanelTab.subagents.systemImage)
+                }
+            }
+        } label: {
+            Image(systemName: "plus")
+                .font(.system(size: 12, weight: .semibold))
+                .frame(width: 30, height: 30)
+                .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("New utility tab")
+        .accessibilityLabel("New Tab")
     }
 
     @ViewBuilder
@@ -240,7 +308,7 @@ private struct DesktopUtilityTabButton: View {
     @State private var isHovering = false
 
     var body: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: 0) {
             Button(action: select) {
                 HStack(spacing: 6) {
                     if isLoading {
@@ -257,8 +325,11 @@ private struct DesktopUtilityTabButton: View {
                         .font(.system(size: 11.5, weight: isSelected ? .semibold : .medium))
                         .lineLimit(1)
                         .truncationMode(.tail)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .frame(minWidth: 26, maxWidth: 106, alignment: .leading)
                 }
+                .padding(.leading, 9)
+                .padding(.trailing, 5)
+                .frame(height: 32)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -270,29 +341,53 @@ private struct DesktopUtilityTabButton: View {
                 Image(systemName: "xmark")
                     .font(.system(size: 8.5, weight: .bold))
                     .foregroundStyle(.secondary)
-                    .frame(width: 16, height: 16)
-                    .contentShape(Circle())
+                    .frame(width: 16, height: 24)
+                    .padding(.trailing, 7)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help("Close " + title)
             .accessibilityLabel("Close " + title + " tab")
             .opacity(isSelected || isHovering ? 1 : 0.5)
         }
-        .padding(.leading, 9)
-        .padding(.trailing, 7)
-        .frame(minWidth: 96, idealWidth: 126, maxWidth: 164, minHeight: 29, maxHeight: 29)
+        .fixedSize(horizontal: true, vertical: false)
+        .frame(height: 32)
         .background {
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(Color.primary.opacity(isSelected ? 0.105 : isHovering ? 0.055 : 0))
-                .overlay {
-                    if isSelected {
-                        RoundedRectangle(cornerRadius: 7, style: .continuous)
-                            .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
-                    }
-                }
+            if isHovering && !isSelected {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(.primary.opacity(0.045))
+                    .padding(.vertical, 3)
+                    .allowsHitTesting(false)
+            }
         }
         .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         .onHover { isHovering = $0 }
         .accessibilityElement(children: .contain)
+    }
+}
+
+private struct DesktopTabFrames: PreferenceKey {
+    static let defaultValue: [UUID: CGRect] = [:]
+    static func reduce(value: inout [UUID: CGRect], nextValue: () -> [UUID: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    }
+}
+
+/// The lower corners turn outward so the selected tab joins the inspector surface.
+private struct DesktopJoinedTabShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        let w = rect.width, h = rect.height
+        let top: CGFloat = 9, foot: CGFloat = 5
+        var path = Path()
+        path.move(to: CGPoint(x: -foot, y: h))
+        path.addQuadCurve(to: CGPoint(x: 0, y: h - foot), control: CGPoint(x: 0, y: h))
+        path.addLine(to: CGPoint(x: 0, y: top))
+        path.addQuadCurve(to: CGPoint(x: top, y: 0), control: .zero)
+        path.addLine(to: CGPoint(x: w - top, y: 0))
+        path.addQuadCurve(to: CGPoint(x: w, y: top), control: CGPoint(x: w, y: 0))
+        path.addLine(to: CGPoint(x: w, y: h - foot))
+        path.addQuadCurve(to: CGPoint(x: w + foot, y: h), control: CGPoint(x: w, y: h))
+        path.closeSubpath()
+        return path
     }
 }
